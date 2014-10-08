@@ -497,7 +497,7 @@ static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
       return NULL;
    }
    if (is_zeroed) VG_(memset)(p, 0, req_szB);
-   actual_szB = VG_(malloc_usable_size)(p);
+   actual_szB = VG_(cli_malloc_usable_size)(p);
    tl_assert(actual_szB >= req_szB);
    slop_szB = actual_szB - req_szB;
 
@@ -644,7 +644,7 @@ static void* renew_block ( ThreadId tid, void* p_old, SizeT new_req_szB )
       }
       VG_(memcpy)(p_new, p_old, old_req_szB);
       VG_(cli_free)(p_old);
-      new_actual_szB = VG_(malloc_usable_size)(p_new);
+      new_actual_szB = VG_(cli_malloc_usable_size)(p_new);
       tl_assert(new_actual_szB >= new_req_szB);
       new_slop_szB = new_actual_szB - new_req_szB;
    }
@@ -967,7 +967,7 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
       return sbIn;
 
    // From lackey tool
-   tl_assert(gWordTy == hWordTy);
+   //tl_assert(gWordTy == hWordTy);
 
    sbOut = deepCopyIRSBExceptStmts(sbIn);
 
@@ -990,6 +990,7 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
          case Ist_MBE:
          case Ist_IMark:
          case Ist_WrTmp:
+         case Ist_LoadG:
          case Ist_Exit:
             addStmtToIRSB( sbOut, st );
             break;
@@ -1002,14 +1003,22 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
             addStmtToIRSB( sbOut, st );
             break;
 
+         case Ist_StoreG: 
+            dataTy = typeOfIRExpr(tyenv, st->Ist.StoreG.details->data);
+            argv   = mkIRExprVec_2( st->Ist.StoreG.details->addr, mkIRExpr_HWord( sizeofIRType( dataTy ) ) );
+            di     = unsafeIRDirty_0_N(/*regparms*/2, "trace_store", VG_(fnptr_to_fnentry)( trace_store ), argv);
+            addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
+            addStmtToIRSB( sbOut, st );
+            break;
+
          case Ist_LLSC:
             if (st->Ist.LLSC.storedata != NULL) {
                dataTy = typeOfIRExpr( tyenv, st->Ist.LLSC.storedata );
                argv   = mkIRExprVec_2( st->Ist.LLSC.addr, mkIRExpr_HWord( sizeofIRType( dataTy ) ) );
                di     = unsafeIRDirty_0_N(/*regparms*/2, "trace_store", VG_(fnptr_to_fnentry)( trace_store ), argv);
                addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
-               addStmtToIRSB( sbOut, st );
             }
+            addStmtToIRSB( sbOut, st );
             break;
 
          case Ist_Dirty:
