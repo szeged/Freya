@@ -1,0 +1,12 @@
+# discarded allocations
+-                   valgrind
+Test                freya_test
+
+# group for total consumption
+[total]
+  [FreyaTest]
+    (Test)
+
+# Everything else
+  [other]+
+
