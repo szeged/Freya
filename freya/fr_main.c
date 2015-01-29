@@ -68,6 +68,7 @@ typedef
       struct _Trace_Block* hash_next; // Next item, who has the same ips
 
       Int                  allocs;   // Number of allocs
+      Int                  reallocs; // Number of reallocs
       Long                 total;    // Total allocated memory
       Int                  current;  // Current memory allocation
       Int                  peak;     // Peak memory consumption
@@ -237,6 +238,7 @@ static void fr_sort_and_dump(Trace_Block* block, Int indent)
       VG_(printf)("[%d] ", indent);
       fr_print_bytes("Peak: ", block->peak);
       VG_(printf)("Allocs: %d ", block->allocs);
+      VG_(printf)("Reallocs: %d ", block->reallocs);
       fr_print_bytes("Total: ", block->total);
       if (block->current > 0)
          fr_print_bytes("Leak: ", block->current);
@@ -453,6 +455,7 @@ static Trace_Block* alloc_trace(ThreadId tid)
          hash_entry->block = block;
 
          block->allocs = 0;
+         block->reallocs = 0;
          block->total = 0;
          block->current = 0;
          block->peak = 0;
@@ -623,14 +626,15 @@ static void* renew_block ( ThreadId tid, void* p_old, SizeT new_req_szB )
    }
 
    if (tid != hc->tid)
-       cross_thread_free(tid, hc->block);
+      cross_thread_free(tid, hc->block);
 
    block = hc->block;
    while (block) {
+      block->reallocs ++;
       block->current -= hc->req_szB;
-      block->allocs ++;
-      block->total += new_req_szB;
+      block->total -= hc->req_szB;
       block->current += new_req_szB;
+      block->total += new_req_szB;
       if (block->peak < block->current)
          block->peak = block->current;
       block = block->parent;
@@ -1380,6 +1384,7 @@ static void fr_post_clo_init(void)
       block->hash_next = NULL;
 
       block->allocs = 0;
+      block->reallocs = 0;
       block->total = 0;
       block->current = 0;
       block->peak = 0;
