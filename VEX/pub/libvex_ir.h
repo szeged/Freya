@@ -2566,6 +2566,7 @@ typedef
 typedef
    enum {
       ILGop_INVALID=0x1D00,
+      ILGop_Ident64,   /* 64 bit, no conversion */
       ILGop_Ident32,   /* 32 bit, no conversion */
       ILGop_16Uto32,   /* 16 bit load, Z-widen to 32 */
       ILGop_16Sto32,   /* 16 bit load, S-widen to 32 */
@@ -2675,8 +2676,8 @@ typedef
                          eg. ------ IMark(0x4000792, 5, 0) ------,
          */
          struct {
-            Addr64 addr;   /* instruction address */
-            Int    len;    /* instruction length */
+            Addr   addr;   /* instruction address */
+            UInt   len;    /* instruction length */
             UChar  delta;  /* addr = program counter as encoded in guest state
                                      - delta */
          } IMark;
@@ -2874,7 +2875,7 @@ typedef
 
 /* Statement constructors. */
 extern IRStmt* IRStmt_NoOp    ( void );
-extern IRStmt* IRStmt_IMark   ( Addr64 addr, Int len, UChar delta );
+extern IRStmt* IRStmt_IMark   ( Addr addr, UInt len, UChar delta );
 extern IRStmt* IRStmt_AbiHint ( IRExpr* base, Int len, IRExpr* nia );
 extern IRStmt* IRStmt_Put     ( Int off, IRExpr* data );
 extern IRStmt* IRStmt_PutI    ( IRPutI* details );

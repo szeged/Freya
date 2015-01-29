@@ -367,7 +367,9 @@ typedef
       Ain_XDirect,     /* direct transfer to GA */
       Ain_XIndir,      /* indirect transfer to GA */
       Ain_XAssisted,   /* assisted transfer to GA */
-      Ain_CMov64,      /* conditional move */
+      Ain_CMov64,      /* conditional move, 64-bit reg-reg only */
+      Ain_CLoad,       /* cond. load to int reg, 32 bit ZX or 64 bit only */
+      Ain_CStore,      /* cond. store from int reg, 32 or 64 bit only */
       Ain_MovxLQ,      /* reg-reg move, zx-ing/sx-ing top half */
       Ain_LoadEX,      /* mov{s,z}{b,w,l}q from mem to reg */
       Ain_Store,       /* store 32/16/8 bit value in memory */
@@ -502,9 +504,25 @@ typedef
             be the bogus Acc_ALWAYS. */
          struct {
             AMD64CondCode cond;
-            AMD64RM*      src;
+            HReg          src;
             HReg          dst;
          } CMov64;
+         /* conditional load to int reg, 32 bit ZX or 64 bit only.
+            cond may not be Acc_ALWAYS. */
+         struct {
+            AMD64CondCode cond;
+            UChar         szB; /* 4 or 8 only */
+            AMD64AMode*   addr;
+            HReg          dst;
+         } CLoad;
+         /* cond. store from int reg, 32 or 64 bit only.
+            cond may not be Acc_ALWAYS. */
+         struct {
+            AMD64CondCode cond;
+            UChar         szB; /* 4 or 8 only */
+            HReg          src;
+            AMD64AMode*   addr;
+         } CStore;
          /* reg-reg move, sx-ing/zx-ing top half */
          struct {
             Bool syned;
@@ -709,7 +727,11 @@ extern AMD64Instr* AMD64Instr_XIndir     ( HReg dstGA, AMD64AMode* amRIP,
                                            AMD64CondCode cond );
 extern AMD64Instr* AMD64Instr_XAssisted  ( HReg dstGA, AMD64AMode* amRIP,
                                            AMD64CondCode cond, IRJumpKind jk );
-extern AMD64Instr* AMD64Instr_CMov64     ( AMD64CondCode, AMD64RM* src, HReg dst );
+extern AMD64Instr* AMD64Instr_CMov64     ( AMD64CondCode, HReg src, HReg dst );
+extern AMD64Instr* AMD64Instr_CLoad      ( AMD64CondCode cond, UChar szB,
+                                           AMD64AMode* addr, HReg dst );
+extern AMD64Instr* AMD64Instr_CStore     ( AMD64CondCode cond, UChar szB,
+                                           HReg src, AMD64AMode* addr );
 extern AMD64Instr* AMD64Instr_MovxLQ     ( Bool syned, HReg src, HReg dst );
 extern AMD64Instr* AMD64Instr_LoadEX     ( UChar szSmall, Bool syned,
                                            AMD64AMode* src, HReg dst );
@@ -769,7 +791,7 @@ extern void genReload_AMD64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Int offset, Bool );
 
 extern void         getAllocableRegs_AMD64 ( Int*, HReg** );
-extern HInstrArray* iselSB_AMD64           ( IRSB*, 
+extern HInstrArray* iselSB_AMD64           ( const IRSB*, 
                                              VexArch,
                                              const VexArchInfo*,
                                              const VexAbiInfo*,
@@ -777,14 +799,14 @@ extern HInstrArray* iselSB_AMD64           ( IRSB*,
                                              Int offs_Host_EvC_FailAddr,
                                              Bool chainingAllowed,
                                              Bool addProfInc,
-                                             Addr64 max_ga );
+                                             Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and host_EvC_COUNTER,
    and so assumes that they are both <= 128, and so can use the short
    offset encoding.  This is all checked with assertions, so in the
    worst case we will merely assert at startup. */
-extern Int evCheckSzB_AMD64 ( VexEndness endness_host );
+extern Int evCheckSzB_AMD64 (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_AMD64 ( VexEndness endness_host,

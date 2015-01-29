@@ -140,15 +140,21 @@ static void call_gdbserver ( ThreadId tid , CallReason reason);
    oldest result. */
 static HChar* sym (Addr addr, Bool is_code)
 {
-   static HChar buf[2][200];
+   static HChar *buf[2];
    static int w = 0;
    PtrdiffT offset;
    if (w == 2) w = 0;
-   buf[w][0] = '\0';
+
    if (is_code) {
-      VG_(describe_IP) (addr, buf[w], 200, NULL);
+      const HChar *name;
+      name = VG_(describe_IP) (addr, NULL);
+      if (buf[w]) VG_(free)(buf[w]);
+      buf[w] = VG_(strdup)("gdbserver sym", name);
    } else {
-      VG_(get_datasym_and_offset) (addr, buf[w], 200, &offset);
+      const HChar *name;
+      VG_(get_datasym_and_offset) (addr, &name, &offset);
+      if (buf[w]) VG_(free)(buf[w]);
+      buf[w] = VG_(strdup)("gdbserver sym", name);
    }
    return buf[w++];
 }
@@ -194,7 +200,7 @@ typedef
 
    Note for ARM: addr in GS_Address is the value without the thumb bit set.
 */
-static VgHashTable gs_addresses = NULL;
+static VgHashTable *gs_addresses = NULL;
 
 // Transform addr in the form stored in the list of addresses.
 // For the ARM architecture, we store it with the thumb bit set to 0.

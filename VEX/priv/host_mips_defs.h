@@ -727,7 +727,7 @@ extern void genReload_MIPS( /*OUT*/ HInstr ** i1, /*OUT*/ HInstr ** i2,
                             HReg rreg, Int offset, Bool);
 
 extern void        getAllocableRegs_MIPS (Int *, HReg **, Bool mode64);
-extern HInstrArray *iselSB_MIPS          ( IRSB*,
+extern HInstrArray *iselSB_MIPS          ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,
                                            const VexAbiInfo*,
@@ -735,14 +735,14 @@ extern HInstrArray *iselSB_MIPS          ( IRSB*,
                                            Int offs_Host_EvC_FailAddr,
                                            Bool chainingAllowed,
                                            Bool addProfInc,
-                                           Addr64 max_ga );
+                                           Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and host_EvC_COUNTER,
    and so assumes that they are both <= 128, and so can use the short
    offset encoding.  This is all checked with assertions, so in the
    worst case we will merely assert at startup. */
-extern Int evCheckSzB_MIPS ( VexEndness endness_host );
+extern Int evCheckSzB_MIPS (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_MIPS ( VexEndness endness_host,

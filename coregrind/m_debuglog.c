@@ -1,3 +1,4 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 
 /*--------------------------------------------------------------------*/
 /*--- Debug (not-for-user) logging; also vprintf.     m_debuglog.c ---*/
@@ -588,7 +589,7 @@ UInt myvprintf_str ( void(*send)(HChar,void*),
    }
 
    extra = width - len;
-   if (flags & VG_MSG_LJUSTIFY) {
+   if (! (flags & VG_MSG_LJUSTIFY)) {
       ret += extra;
       for (i = 0; i < extra; i++)
          send(' ', send_arg2);
@@ -596,7 +597,7 @@ UInt myvprintf_str ( void(*send)(HChar,void*),
    ret += len;
    for (i = 0; i < len; i++)
       send(MAYBE_TOUPPER(str[i]), send_arg2);
-   if (!(flags & VG_MSG_LJUSTIFY)) {
+   if (flags & VG_MSG_LJUSTIFY) {
       ret += extra;
       for (i = 0; i < extra; i++)
          send(' ', send_arg2);
@@ -657,7 +658,10 @@ UInt myvprintf_int64 ( void(*send)(HChar,void*),
                        Bool capitalised,
                        ULong p )
 {
-   HChar  buf[40];
+   /* To print an ULong base 2 needs 64 characters. If commas are requested,
+      add 21. Plus 1 for a possible sign plus 1 for \0. Makes 87 -- so let's
+      say 90. The size of BUF needs to be max(90, WIDTH + 1) */
+   HChar  buf[width + 1 > 90 ? width + 1 : 90];
    Int    ind = 0;
    Int    i, nc = 0;
    Bool   neg = False;
@@ -692,11 +696,6 @@ UInt myvprintf_int64 ( void(*send)(HChar,void*),
 
    if (width > 0 && !(flags & VG_MSG_LJUSTIFY)) {
       for(; ind < width; ind++) {
-         /* vg_assert(ind < 39); */
-         if (ind > 39) {
-            buf[39] = 0;
-            break;
-         }
          buf[ind] = (flags & VG_MSG_ZJUSTIFY) ? '0': ' ';
       }
    }
@@ -730,9 +729,9 @@ VG_(debugLog_vprintf) (
    UInt ret = 0;
    Int  i;
    Int  flags;
-   Int  width;
+   Int  width, precision;
    Int  n_ls = 0;
-   Bool is_long, caps;
+   Bool is_long, is_sizet, caps;
 
    /* We assume that vargs has already been initialised by the 
       caller, using va_start, and that the caller will similarly
@@ -758,6 +757,7 @@ VG_(debugLog_vprintf) (
       flags = 0;
       n_ls  = 0;
       width = 0; /* length of the field. */
+      precision = -1;  /* unspecified precision */
       while (1) {
          switch (format[i]) {
          case '(':
@@ -787,13 +787,39 @@ VG_(debugLog_vprintf) (
       }
      parse_fieldwidth:
       /* Compute the field length. */
-      while (format[i] >= '0' && format[i] <= '9') {
-         width *= 10;
-         width += format[i++] - '0';
+      if (format[i] == '*') {
+         width = va_arg(vargs, Int);
+         ++i;
+      } else {
+         while (format[i] >= '0' && format[i] <= '9') {
+            width *= 10;
+            width += format[i++] - '0';
+         }
       }
-      while (format[i] == 'l') {
-         i++;
-         n_ls++;
+      /* Parse precision, if any. Only meaningful for %f. For all other
+         format specifiers the precision will be silently ignored. */
+      if (format[i] == '.') {
+         ++i;
+         if (format[i] == '*') {
+            precision = va_arg(vargs, Int);
+            ++i;
+         } else {
+            precision = 0;
+            while (format[i] >= '0' && format[i] <= '9') {
+               precision *= 10;
+               precision += format[i++] - '0';
+            }
+         }
+      }
+
+      is_sizet = False;
+      if (format[i] == 'z') {
+         is_sizet = True;
+      } else {
+         while (format[i] == 'l') {
+            i++;
+            n_ls++;
+         }
       }
 
       //   %d means print a 32-bit integer.
@@ -809,7 +835,10 @@ VG_(debugLog_vprintf) (
                ret += 2;
                send('0',send_arg2);
             }
-            if (is_long)
+            if (is_sizet)
+               ret += myvprintf_int64(send, send_arg2, flags, 8, width, False,
+                                      (ULong)(va_arg (vargs, SizeT)));
+            else if (is_long)
                ret += myvprintf_int64(send, send_arg2, flags, 8, width, False,
                                       (ULong)(va_arg (vargs, ULong)));
             else
@@ -826,7 +855,10 @@ VG_(debugLog_vprintf) (
                                       (ULong)(va_arg (vargs, Int)));
             break;
          case 'u': /* %u */
-            if (is_long)
+            if (is_sizet)
+               ret += myvprintf_int64(send, send_arg2, flags, 10, width, False,
+                                      (ULong)(va_arg (vargs, SizeT)));
+            else if (is_long)
                ret += myvprintf_int64(send, send_arg2, flags, 10, width, False,
                                       (ULong)(va_arg (vargs, ULong)));
             else
@@ -870,7 +902,10 @@ VG_(debugLog_vprintf) (
                send('0',send_arg2);
                send('x',send_arg2);
             }
-            if (is_long)
+            if (is_sizet)
+               ret += myvprintf_int64(send, send_arg2, flags, 16, width, False,
+                                      (ULong)(va_arg (vargs, SizeT)));
+            else if (is_long)
                ret += myvprintf_int64(send, send_arg2, flags, 16, width, caps,
                                       (ULong)(va_arg (vargs, ULong)));
             else
@@ -888,22 +923,110 @@ VG_(debugLog_vprintf) (
                                  flags, width, str, format[i]=='S');
             break;
          }
+         case 'f': {
+            /* Print a floating point number in the format x.y without
+               any exponent. Capabilities are extremely limited, basically
+               a joke, but good enough for our needs. */
+            Double val = va_arg (vargs, Double);
+            Bool is_negative = False;
+            Int cnt;
+
+            if (val < 0.0) {
+               is_negative = True;
+               val = - val;
+            }
+            /* If the integral part of the floating point number cannot be
+               represented by an ULONG_MAX, print '*' characters */
+            if (val > (Double)(~0ULL)) {
+               if (width == 0) width = 6;    // say
+               for (cnt = 0; cnt < width; ++cnt)
+                  send('*', send_arg2);
+               ret += width;
+               break;
+            }
+            /* The integral part of the floating point number is representable
+               by an ULong. */
+            ULong ipval = val;
+            Double frac = val - ipval;
+
+            if (precision == -1) precision = 6;   // say
+
+            /* Silently limit the precision to 10 digits. */
+            if (precision > 10) precision = 10;
+
+            /* If fracional part is not printed (precision == 0), may have to
+               round up */
+            if (precision == 0 && frac >= 0.5)
+               ipval += 1;
+
+            /* Find out how many characters are needed to print the number */
+
+            /* The integral part... */
+            UInt ipwidth, num_digit = 1;   // at least one digit
+            ULong x, old_x = 0;
+            for (x = 10; ; old_x = x, x *= 10, ++num_digit) {
+               if (x <= old_x) break;    // overflow occurred
+               if (ipval < x) break;
+            }
+            ipwidth = num_digit;   // width of integral part.
+            if (is_negative) ++num_digit;
+            if (precision != 0)
+               num_digit += 1 + precision;
+
+            // Print the number
+
+            // Fill in blanks on the left
+            if (num_digit < width && (flags & VG_MSG_LJUSTIFY) == 0) {
+               for (cnt = 0; cnt < width - num_digit; ++cnt)
+                  send(' ', send_arg2);
+               ret += width - num_digit;
+            }
+            // Sign, maybe
+            if (is_negative) {
+               send('-', send_arg2);
+               ret += 1;
+            }
+            // Integral part
+            ret += myvprintf_int64(send, send_arg2, 0, 10, ipwidth, False,
+                                   ipval);
+            // Decimal point and fractional part
+            if (precision != 0) {
+               send('.', send_arg2);
+               ret += 1;
+
+               // Fractional part
+               ULong factor = 1;
+               for (cnt = 0; cnt < precision; ++cnt)
+                  factor *= 10;
+               ULong frval = frac * factor;
+               if ((frac * factor - frval) > 0.5)    // round up
+                  frval += 1;
+               frval %= factor;
+               ret += myvprintf_int64(send, send_arg2, VG_MSG_ZJUSTIFY, 10,
+                                      precision, False, frval);
+            }
+            // Fill in blanks on the right
+            if (num_digit < width && (flags & VG_MSG_LJUSTIFY) != 0) {
+               for (cnt = 0; cnt < width - num_digit; ++cnt)
+                  send(' ', send_arg2);
+               ret += width - num_digit;
+            }
+            break;
+         }
 
 //         case 'y': { /* %y - print symbol */
-//            HChar buf[100];
-//            HChar *cp = buf;
 //            Addr a = va_arg(vargs, Addr);
 //
-//            if (flags & VG_MSG_PAREN)
-//               *cp++ = '(';
-//            if (VG_(get_fnname_w_offset)(a, cp, sizeof(buf)-4)) {
-//               if (flags & VG_MSG_PAREN) {
-//                  cp += VG_(strlen)(cp);
-//                  *cp++ = ')';
-//                  *cp = '\0';
+//            HChar *name;
+// 	      if (VG_(get_fnname_w_offset)(a, &name)) {
+//               HChar buf[1 + VG_strlen(name) + 1 + 1];
+// 	         if (flags & VG_MSG_PAREN) {
+//                  VG_(sprintf)(str, "(%s)", name):
+// 	         } else {
+//                  VG_(sprintf)(str, "%s", name):
 //               }
-//               ret += myvprintf_str(send, send_arg2, flags, width, buf, 0);
-//            }
+// 	         ret += myvprintf_str(send, flags, width, buf, 0);
+// 	      }
 //            break;
 //         }
          default:

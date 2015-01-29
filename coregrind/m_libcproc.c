@@ -350,7 +350,7 @@ Int VG_(system) ( const HChar* cmd )
    if (pid == 0) {
       /* child */
       const HChar* argv[4] = { "/bin/sh", "-c", cmd, 0 };
-      VG_(execv)(argv[0], (HChar **)argv);
+      VG_(execv)(argv[0], CONST_CAST(HChar **,argv));
 
       /* If we're still alive here, execv failed. */
       VG_(exit)(1);
@@ -666,6 +666,20 @@ UInt VG_(read_millisecond_timer) ( void )
    return (now - base) / 1000;
 }
 
+Int VG_(gettimeofday)(struct vki_timeval *tv, struct vki_timezone *tz)
+{
+   SysRes res;
+   res = VG_(do_syscall2)(__NR_gettimeofday, (UWord)tv, (UWord)tz);
+
+   if (! sr_isError(res)) return 0;
+
+   /* Make sure, argument values are determinstic upon failure */
+   if (tv) *tv = (struct vki_timeval){ .tv_sec = 0, .tv_usec = 0 };
+   if (tz) *tz = (struct vki_timezone){ .tz_minuteswest = 0, .tz_dsttime = 0 };
+
+   return -1;
+}
+
 
 /* ---------------------------------------------------------------------
    atfork()
@@ -753,7 +767,6 @@ void VG_(invalidate_icache) ( void *ptr, SizeT nbytes )
    Addr cls;
    Addr addr;
 
-   VG_(machine_get_VexArchInfo)( NULL, &vai );
    cls = vai.ppc_icache_line_szB;
 
    /* Stay sane .. */

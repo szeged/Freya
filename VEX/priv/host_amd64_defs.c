@@ -736,13 +736,35 @@ AMD64Instr* AMD64Instr_XAssisted ( HReg dstGA, AMD64AMode* amRIP,
    return i;
 }
 
-AMD64Instr* AMD64Instr_CMov64 ( AMD64CondCode cond, AMD64RM* src, HReg dst ) {
+AMD64Instr* AMD64Instr_CMov64 ( AMD64CondCode cond, HReg src, HReg dst ) {
    AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
    i->tag             = Ain_CMov64;
    i->Ain.CMov64.cond = cond;
    i->Ain.CMov64.src  = src;
    i->Ain.CMov64.dst  = dst;
    vassert(cond != Acc_ALWAYS);
+   return i;
+}
+AMD64Instr* AMD64Instr_CLoad ( AMD64CondCode cond, UChar szB,
+                               AMD64AMode* addr, HReg dst ) {
+   AMD64Instr* i     = LibVEX_Alloc(sizeof(AMD64Instr));
+   i->tag            = Ain_CLoad;
+   i->Ain.CLoad.cond = cond;
+   i->Ain.CLoad.szB  = szB;
+   i->Ain.CLoad.addr = addr;
+   i->Ain.CLoad.dst  = dst;
+   vassert(cond != Acc_ALWAYS && (szB == 4 || szB == 8));
+   return i;
+}
+AMD64Instr* AMD64Instr_CStore ( AMD64CondCode cond, UChar szB,
+                                HReg src, AMD64AMode* addr ) {
+   AMD64Instr* i      = LibVEX_Alloc(sizeof(AMD64Instr));
+   i->tag             = Ain_CStore;
+   i->Ain.CStore.cond = cond;
+   i->Ain.CStore.szB  = szB;
+   i->Ain.CStore.src  = src;
+   i->Ain.CStore.addr = addr;
+   vassert(cond != Acc_ALWAYS && (szB == 4 || szB == 8));
    return i;
 }
 AMD64Instr* AMD64Instr_MovxLQ ( Bool syned, HReg src, HReg dst ) {
@@ -1117,10 +1139,31 @@ void ppAMD64Instr ( const AMD64Instr* i, Bool mode64 )
 
       case Ain_CMov64:
          vex_printf("cmov%s ", showAMD64CondCode(i->Ain.CMov64.cond));
-         ppAMD64RM(i->Ain.CMov64.src);
+         ppHRegAMD64(i->Ain.CMov64.src);
          vex_printf(",");
          ppHRegAMD64(i->Ain.CMov64.dst);
          return;
+      case Ain_CLoad:
+         vex_printf("if (%%rflags.%s) { ",
+                    showAMD64CondCode(i->Ain.CLoad.cond));
+         vex_printf("mov%c ", i->Ain.CLoad.szB == 4 ? 'l' : 'q');
+         ppAMD64AMode(i->Ain.CLoad.addr);
+         vex_printf(", ");
+         (i->Ain.CLoad.szB == 4 ? ppHRegAMD64_lo32 : ppHRegAMD64)
+            (i->Ain.CLoad.dst);
+         vex_printf(" }");
+         return;
+      case Ain_CStore:
+         vex_printf("if (%%rflags.%s) { ",
+                    showAMD64CondCode(i->Ain.CStore.cond));
+         vex_printf("mov%c ", i->Ain.CStore.szB == 4 ? 'l' : 'q');
+         (i->Ain.CStore.szB == 4 ? ppHRegAMD64_lo32 : ppHRegAMD64)
+            (i->Ain.CStore.src);
+         vex_printf(", ");
+         ppAMD64AMode(i->Ain.CStore.addr);
+         vex_printf(" }");
+         return;
+
       case Ain_MovxLQ:
          vex_printf("mov%clq ", i->Ain.MovxLQ.syned ? 's' : 'z');
          ppHRegAMD64_lo32(i->Ain.MovxLQ.src);
@@ -1460,8 +1503,16 @@ void getRegUsage_AMD64Instr ( HRegUsage* u, const AMD64Instr* i, Bool mode64 )
          addRegUsage_AMD64AMode(u, i->Ain.XAssisted.amRIP);
          return;
       case Ain_CMov64:
-         addRegUsage_AMD64RM(u, i->Ain.CMov64.src, HRmRead);
+         addHRegUse(u, HRmRead,   i->Ain.CMov64.src);
          addHRegUse(u, HRmModify, i->Ain.CMov64.dst);
+         return;
+      case Ain_CLoad:
+         addRegUsage_AMD64AMode(u, i->Ain.CLoad.addr);
+         addHRegUse(u, HRmModify, i->Ain.CLoad.dst);
+         return;
+      case Ain_CStore:
+         addRegUsage_AMD64AMode(u, i->Ain.CStore.addr);
+         addHRegUse(u, HRmRead, i->Ain.CStore.src);
          return;
       case Ain_MovxLQ:
          addHRegUse(u, HRmRead,  i->Ain.MovxLQ.src);
@@ -1692,8 +1743,16 @@ void mapRegs_AMD64Instr ( HRegRemap* m, AMD64Instr* i, Bool mode64 )
          mapRegs_AMD64AMode(m, i->Ain.XAssisted.amRIP);
          return;
       case Ain_CMov64:
-         mapRegs_AMD64RM(m, i->Ain.CMov64.src);
+         mapReg(m, &i->Ain.CMov64.src);
          mapReg(m, &i->Ain.CMov64.dst);
+         return;
+      case Ain_CLoad:
+         mapRegs_AMD64AMode(m, i->Ain.CLoad.addr);
+         mapReg(m, &i->Ain.CLoad.dst);
+         return;
+      case Ain_CStore:
+         mapRegs_AMD64AMode(m, i->Ain.CStore.addr);
+         mapReg(m, &i->Ain.CStore.src);
          return;
       case Ain_MovxLQ:
          mapReg(m, &i->Ain.MovxLQ.src);
@@ -2671,43 +2730,113 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
       }
 
    case Ain_Call: {
-      if (i->Ain.Call.cond != Acc_ALWAYS
-          && i->Ain.Call.rloc.pri != RLPri_None) {
-         /* The call might not happen (it isn't unconditional) and it
-            returns a result.  In this case we will need to generate a
-            control flow diamond to put 0x555..555 in the return
-            register(s) in the case where the call doesn't happen.  If
-            this ever becomes necessary, maybe copy code from the ARM
-            equivalent.  Until that day, just give up. */
-         goto bad;
-      }
-      /* As per detailed comment for Ain_Call in
-         getRegUsage_AMD64Instr above, %r11 is used as an address
-         temporary. */
-      /* jump over the following two insns if the condition does not
-         hold */
-      Bool shortImm = fitsIn32Bits(i->Ain.Call.target);
-      if (i->Ain.Call.cond != Acc_ALWAYS) {
-         *p++ = toUChar(0x70 + (0xF & (i->Ain.Call.cond ^ 1)));
-         *p++ = shortImm ? 10 : 13;
-         /* 10 or 13 bytes in the next two insns */
-      }
-      if (shortImm) {
-         /* 7 bytes: movl sign-extend(imm32), %r11 */
-         *p++ = 0x49;
-         *p++ = 0xC7;
-         *p++ = 0xC3;
-         p = emit32(p, (UInt)i->Ain.Call.target);
+      /* As per detailed comment for Ain_Call in getRegUsage_AMD64Instr
+         above, %r11 is used as an address temporary. */
+      /* If we don't need to do any fixup actions in the case that the
+         call doesn't happen, just do the simple thing and emit
+         straight-line code.  This is usually the case. */
+      if (i->Ain.Call.cond == Acc_ALWAYS/*call always happens*/
+          || i->Ain.Call.rloc.pri == RLPri_None/*no fixup action*/) {
+         /* jump over the following two insns if the condition does
+            not hold */
+         Bool shortImm = fitsIn32Bits(i->Ain.Call.target);
+         if (i->Ain.Call.cond != Acc_ALWAYS) {
+            *p++ = toUChar(0x70 + (0xF & (i->Ain.Call.cond ^ 1)));
+            *p++ = shortImm ? 10 : 13;
+            /* 10 or 13 bytes in the next two insns */
+         }
+         if (shortImm) {
+            /* 7 bytes: movl sign-extend(imm32), %r11 */
+            *p++ = 0x49;
+            *p++ = 0xC7;
+            *p++ = 0xC3;
+            p = emit32(p, (UInt)i->Ain.Call.target);
+         } else {
+            /* 10 bytes: movabsq $target, %r11 */
+            *p++ = 0x49;
+            *p++ = 0xBB;
+            p = emit64(p, i->Ain.Call.target);
+         }
+         /* 3 bytes: call *%r11 */
+         *p++ = 0x41;
+         *p++ = 0xFF;
+         *p++ = 0xD3;
       } else {
-         /* 10 bytes: movabsq $target, %r11 */
+         Int delta;
+         /* Complex case.  We have to generate an if-then-else diamond. */
+         // before:
+         //   j{!cond} else:
+         //   movabsq $target, %r11
+         //   call* %r11
+         // preElse:
+         //   jmp after:
+         // else:
+         //   movabsq $0x5555555555555555, %rax  // possibly
+         //   movq %rax, %rdx                    // possibly
+         // after:
+
+         // before:
+         UChar* pBefore = p;
+
+         //   j{!cond} else:
+         *p++ = toUChar(0x70 + (0xF & (i->Ain.Call.cond ^ 1)));
+         *p++ = 0; /* # of bytes to jump over; don't know how many yet. */
+
+         //   movabsq $target, %r11
          *p++ = 0x49;
          *p++ = 0xBB;
          p = emit64(p, i->Ain.Call.target);
+
+         //   call* %r11
+         *p++ = 0x41;
+         *p++ = 0xFF;
+         *p++ = 0xD3;
+
+         // preElse:
+         UChar* pPreElse = p;
+
+         //   jmp after:
+         *p++ = 0xEB;
+         *p++ = 0; /* # of bytes to jump over; don't know how many yet. */
+
+         // else:
+         UChar* pElse = p;
+
+         /* Do the 'else' actions */
+         switch (i->Ain.Call.rloc.pri) {
+            case RLPri_Int:
+               // movabsq $0x5555555555555555, %rax
+               *p++ = 0x48; *p++ = 0xB8; p = emit64(p, 0x5555555555555555ULL);
+               break;
+            case RLPri_2Int:
+               vassert(0); //ATC
+               // movabsq $0x5555555555555555, %rax
+               *p++ = 0x48; *p++ = 0xB8; p = emit64(p, 0x5555555555555555ULL);
+               // movq %rax, %rdx
+               *p++ = 0x48; *p++ = 0x89; *p++ = 0xC2;
+            case RLPri_None: case RLPri_INVALID: default:
+               vassert(0);
+         }
+
+         // after:
+         UChar* pAfter = p;
+
+         // Fix up the branch offsets.  The +2s in the offset
+         // calculations are there because x86 requires conditional
+         // branches to have their offset stated relative to the
+         // instruction immediately following the branch insn.  And in
+         // both cases the branch insns are 2 bytes long.
+
+         // First, the "j{!cond} else:" at pBefore.
+         delta = (Int)(Long)(pElse - (pBefore + 2));
+         vassert(delta >= 0 && delta < 100/*arbitrary*/);
+         *(pBefore+1) = (UChar)delta;
+
+         // And secondly, the "jmp after:" at pPreElse.
+         delta = (Int)(Long)(pAfter - (pPreElse + 2));
+         vassert(delta >= 0 && delta < 100/*arbitrary*/);
+         *(pPreElse+1) = (UChar)delta;
       }
-      /* 3 bytes: call *%r11 */
-      *p++ = 0x41;
-      *p++ = 0xFF;
-      *p++ = 0xD3;
       goto done;
    }
 
@@ -2765,7 +2894,7 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
       const void* disp_cp_chain_me
                = i->Ain.XDirect.toFastEP ? disp_cp_chain_me_to_fastEP 
                                          : disp_cp_chain_me_to_slowEP;
-      p = emit64(p, Ptr_to_ULong(disp_cp_chain_me));
+      p = emit64(p, (Addr)disp_cp_chain_me);
       /* call *%r11 */
       *p++ = 0x41;
       *p++ = 0xFF;
@@ -2808,18 +2937,18 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
       p = doAMode_M(p, i->Ain.XIndir.dstGA, i->Ain.XIndir.amRIP);
 
       /* get $disp_cp_xindir into %r11 */
-      if (fitsIn32Bits(Ptr_to_ULong(disp_cp_xindir))) {
+      if (fitsIn32Bits((Addr)disp_cp_xindir)) {
          /* use a shorter encoding */
          /* movl sign-extend(disp_cp_xindir), %r11 */
          *p++ = 0x49;
          *p++ = 0xC7;
          *p++ = 0xC3;
-         p = emit32(p, (UInt)Ptr_to_ULong(disp_cp_xindir));
+         p = emit32(p, (UInt)(Addr)disp_cp_xindir);
       } else {
          /* movabsq $disp_cp_xindir, %r11 */
          *p++ = 0x49;
          *p++ = 0xBB;
-         p = emit64(p, Ptr_to_ULong(disp_cp_xindir));
+         p = emit64(p, (Addr)disp_cp_xindir);
       }
 
       /* jmp *%r11 */
@@ -2884,7 +3013,7 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
       /* movabsq $disp_assisted, %r11 */
       *p++ = 0x49;
       *p++ = 0xBB;
-      p = emit64(p, Ptr_to_ULong(disp_cp_xassisted));
+      p = emit64(p, (Addr)disp_cp_xassisted);
       /* jmp *%r11 */
       *p++ = 0x41;
       *p++ = 0xFF;
@@ -2901,21 +3030,69 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
 
    case Ain_CMov64:
       vassert(i->Ain.CMov64.cond != Acc_ALWAYS);
-      if (i->Ain.CMov64.src->tag == Arm_Reg) {
-         *p++ = rexAMode_R(i->Ain.CMov64.dst, i->Ain.CMov64.src->Arm.Reg.reg);
-         *p++ = 0x0F;
-         *p++ = toUChar(0x40 + (0xF & i->Ain.CMov64.cond));
-         p = doAMode_R(p, i->Ain.CMov64.dst, i->Ain.CMov64.src->Arm.Reg.reg);
-         goto done;
-      }
-      if (i->Ain.CMov64.src->tag == Arm_Mem) {
-         *p++ = rexAMode_M(i->Ain.CMov64.dst, i->Ain.CMov64.src->Arm.Mem.am);
-         *p++ = 0x0F;
-         *p++ = toUChar(0x40 + (0xF & i->Ain.CMov64.cond));
-         p = doAMode_M(p, i->Ain.CMov64.dst, i->Ain.CMov64.src->Arm.Mem.am);
-         goto done;
-      }
-      break;
+      *p++ = rexAMode_R(i->Ain.CMov64.dst, i->Ain.CMov64.src);
+      *p++ = 0x0F;
+      *p++ = toUChar(0x40 + (0xF & i->Ain.CMov64.cond));
+      p = doAMode_R(p, i->Ain.CMov64.dst, i->Ain.CMov64.src);
+      goto done;
+
+   case Ain_CLoad: {
+      vassert(i->Ain.CLoad.cond != Acc_ALWAYS);
+
+      /* Only 32- or 64-bit variants are allowed. */
+      vassert(i->Ain.CLoad.szB == 4 || i->Ain.CLoad.szB == 8);
+
+      /* Use ptmp for backpatching conditional jumps. */
+      ptmp = NULL;
+
+      /* jmp fwds if !condition */
+      *p++ = toUChar(0x70 + (0xF & (i->Ain.CLoad.cond ^ 1)));
+      ptmp = p; /* fill in this bit later */
+      *p++ = 0; /* # of bytes to jump over; don't know how many yet. */
+
+      /* Now the load.  Either a normal 64 bit load or a normal 32 bit
+         load, which, by the default zero-extension rule, zeroes out
+         the upper half of the destination, as required. */
+      rex = rexAMode_M(i->Ain.CLoad.dst, i->Ain.CLoad.addr);
+      *p++ = i->Ain.CLoad.szB == 4 ? clearWBit(rex) : rex;
+      *p++ = 0x8B;
+      p = doAMode_M(p, i->Ain.CLoad.dst, i->Ain.CLoad.addr);
+
+      /* Fix up the conditional branch */
+      Int delta = p - ptmp;
+      vassert(delta > 0 && delta < 40);
+      *ptmp = toUChar(delta-1);
+      goto done;
+   }
+
+   case Ain_CStore: {
+      /* AFAICS this is identical to Ain_CStore except that the opcode
+         is 0x89 instead of 0x8B. */
+      vassert(i->Ain.CStore.cond != Acc_ALWAYS);
+
+      /* Only 32- or 64-bit variants are allowed. */
+      vassert(i->Ain.CStore.szB == 4 || i->Ain.CStore.szB == 8);
+
+      /* Use ptmp for backpatching conditional jumps. */
+      ptmp = NULL;
+
+      /* jmp fwds if !condition */
+      *p++ = toUChar(0x70 + (0xF & (i->Ain.CStore.cond ^ 1)));
+      ptmp = p; /* fill in this bit later */
+      *p++ = 0; /* # of bytes to jump over; don't know how many yet. */
+
+      /* Now the store. */
+      rex = rexAMode_M(i->Ain.CStore.src, i->Ain.CStore.addr);
+      *p++ = i->Ain.CStore.szB == 4 ? clearWBit(rex) : rex;
+      *p++ = 0x89;
+      p = doAMode_M(p, i->Ain.CStore.src, i->Ain.CStore.addr);
+
+      /* Fix up the conditional branch */
+      Int delta = p - ptmp;
+      vassert(delta > 0 && delta < 40);
+      *ptmp = toUChar(delta-1);
+      goto done;
+   }
 
    case Ain_MovxLQ:
       /* No, _don't_ ask me why the sense of the args has to be
@@ -3499,7 +3676,7 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
       p = doAMode_M(p, fake(4), i->Ain.EvCheck.amFailAddr);
       vassert(p - p0 == 8); /* also ensures that 0x03 offset above is ok */
       /* And crosscheck .. */
-      vassert(evCheckSzB_AMD64(endness_host) == 8);
+      vassert(evCheckSzB_AMD64() == 8);
       goto done;
    }
 
@@ -3542,7 +3719,7 @@ Int emit_AMD64Instr ( /*MB_MOD*/Bool* is_profInc,
 /* How big is an event check?  See case for Ain_EvCheck in
    emit_AMD64Instr just above.  That crosschecks what this returns, so
    we can tell if we're inconsistent. */
-Int evCheckSzB_AMD64 ( VexEndness endness_host )
+Int evCheckSzB_AMD64 (void)
 {
    return 8;
 }
@@ -3567,7 +3744,7 @@ VexInvalRange chainXDirect_AMD64 ( VexEndness endness_host,
    UChar* p = (UChar*)place_to_chain;
    vassert(p[0] == 0x49);
    vassert(p[1] == 0xBB);
-   vassert(*(ULong*)(&p[2]) == Ptr_to_ULong(disp_cp_chain_me_EXPECTED));
+   vassert(*(Addr*)(&p[2]) == (Addr)disp_cp_chain_me_EXPECTED);
    vassert(p[10] == 0x41);
    vassert(p[11] == 0xFF);
    vassert(p[12] == 0xD3);
@@ -3629,7 +3806,7 @@ VexInvalRange chainXDirect_AMD64 ( VexEndness endness_host,
       vassert(delta == 0LL || delta == -1LL);
    } else {
       /* Minimal modifications from the starting sequence. */   
-      *(ULong*)(&p[2]) = Ptr_to_ULong(place_to_jump_to);
+     *(Addr*)(&p[2]) = (Addr)place_to_jump_to;
       p[12] = 0xE3;
    }
    VexInvalRange vir = { (HWord)place_to_chain, 13 };
@@ -3664,7 +3841,7 @@ VexInvalRange unchainXDirect_AMD64 ( VexEndness endness_host,
    UChar* p     = (UChar*)place_to_unchain;
    Bool   valid = False;
    if (p[0] == 0x49 && p[1] == 0xBB
-       && *(ULong*)(&p[2]) == Ptr_to_ULong(place_to_jump_to_EXPECTED)
+       && *(Addr*)(&p[2]) == (Addr)place_to_jump_to_EXPECTED
        && p[10] == 0x41 && p[11] == 0xFF && p[12] == 0xE3) {
       /* it's the long form */
       valid = True;
@@ -3695,7 +3872,7 @@ VexInvalRange unchainXDirect_AMD64 ( VexEndness endness_host,
    */
    p[0] = 0x49;
    p[1] = 0xBB;
-   *(ULong*)(&p[2]) = Ptr_to_ULong(disp_cp_chain_me);
+   *(Addr*)(&p[2]) = (Addr)disp_cp_chain_me;
    p[10] = 0x41;
    p[11] = 0xFF;
    p[12] = 0xD3;
@@ -3726,7 +3903,7 @@ VexInvalRange patchProfInc_AMD64 ( VexEndness endness_host,
    vassert(p[10] == 0x49);
    vassert(p[11] == 0xFF);
    vassert(p[12] == 0x03);
-   ULong imm64 = (ULong)Ptr_to_ULong(location_of_counter);
+   ULong imm64 = (ULong)(Addr)location_of_counter;
    p[2] = imm64 & 0xFF; imm64 >>= 8;
    p[3] = imm64 & 0xFF; imm64 >>= 8;
    p[4] = imm64 & 0xFF; imm64 >>= 8;

@@ -37,6 +37,7 @@
 
 #include "pub_tool_threadstate.h"
 #include "pub_tool_gdbserver.h"
+#include "pub_tool_transtab.h"       // VG_(discard_translations_safely)
 
 #include "cg_branchpred.c"
 
@@ -880,7 +881,7 @@ void CLG_(collectBlockInfo)(IRSB* sbIn,
 	  if (Ist_IMark == st->tag) {
 	      inPreamble = False;
 
-	      instrAddr = (Addr)ULong_to_Ptr(st->Ist.IMark.addr);
+	      instrAddr = st->Ist.IMark.addr;
 	      instrLen  = st->Ist.IMark.len;
 
 	      (*instrs)++;
@@ -994,7 +995,7 @@ IRSB* CLG_(instrument)( VgCallbackClosure* closure,
    st = sbIn->stmts[i];
    CLG_ASSERT(Ist_IMark == st->tag);
 
-   origAddr = (Addr)st->Ist.IMark.addr + (Addr)st->Ist.IMark.delta;
+   origAddr = st->Ist.IMark.addr + st->Ist.IMark.delta;
    CLG_ASSERT(origAddr == st->Ist.IMark.addr 
                           + st->Ist.IMark.delta);  // XXX: check no overflow
 
@@ -1026,9 +1027,9 @@ IRSB* CLG_(instrument)( VgCallbackClosure* closure,
 	    break;
 
 	 case Ist_IMark: {
-            Addr64 cia   = st->Ist.IMark.addr + st->Ist.IMark.delta;
-            Int    isize = st->Ist.IMark.len;
-            CLG_ASSERT(clgs.instr_offset == (Addr)cia - origAddr);
+            Addr   cia   = st->Ist.IMark.addr + st->Ist.IMark.delta;
+            UInt   isize = st->Ist.IMark.len;
+            CLG_ASSERT(clgs.instr_offset == cia - origAddr);
 	    // If Vex fails to decode an instruction, the size will be zero.
 	    // Pretend otherwise.
 	    if (isize == 0) isize = VG_MIN_INSTR_SZB;
@@ -1368,20 +1369,20 @@ IRSB* CLG_(instrument)( VgCallbackClosure* closure,
 // any reason at all: to free up space, because the guest code was
 // unmapped or modified, or for any arbitrary reason.
 static
-void clg_discard_superblock_info ( Addr64 orig_addr64, VexGuestExtents vge )
+void clg_discard_superblock_info ( Addr orig_addr, VexGuestExtents vge )
 {
-    Addr orig_addr = (Addr)orig_addr64;
-
     tl_assert(vge.n_used > 0);
 
    if (0)
       VG_(printf)( "discard_superblock_info: %p, %p, %llu\n",
-                   (void*)(Addr)orig_addr,
-                   (void*)(Addr)vge.base[0], (ULong)vge.len[0]);
+                   (void*)orig_addr,
+                   (void*)vge.base[0], (ULong)vge.len[0]);
 
-   // Get BB info, remove from table, free BB info.  Simple!  Note that we
-   // use orig_addr, not the first instruction address in vge.
-   CLG_(delete_bb)(orig_addr);
+   // Get BB info, remove from table, free BB info.  Simple!
+   // When created, the BB is keyed by the first instruction address,
+   // (not orig_addr, but eventually redirected address). Thus, we
+   // use the first instruction address in vge.
+   CLG_(delete_bb)(vge.base[0]);
 }
 
 
@@ -1448,10 +1449,6 @@ void zero_state_cost(thread_info* t)
     CLG_(zero_cost)( CLG_(sets).full, CLG_(current_state).cost );
 }
 
-/* Ups, this can go very wrong...
-   FIXME: We should export this function or provide other means to get a handle */
-extern void VG_(discard_translations) ( Addr64 start, ULong range, const HChar* who );
-
 void CLG_(set_instrument_state)(const HChar* reason, Bool state)
 {
   if (CLG_(instrument_state) == state) {
@@ -1463,7 +1460,7 @@ void CLG_(set_instrument_state)(const HChar* reason, Bool state)
   CLG_DEBUG(2, "%s: Switching instrumentation %s ...\n",
 	   reason, state ? "ON" : "OFF");
 
-  VG_(discard_translations)( (Addr64)0x1000, (ULong) ~0xfffl, "callgrind");
+  VG_(discard_translations_safely)( (Addr)0x1000, ~(SizeT)0xfff, "callgrind");
 
   /* reset internal state: call stacks, simulator */
   CLG_(forall_threads)(unwind_thread);
@@ -1478,11 +1475,11 @@ void CLG_(set_instrument_state)(const HChar* reason, Bool state)
 /* helper for dump_state_togdb */
 static void dump_state_of_thread_togdb(thread_info* ti)
 {
-    static HChar buf[512];
     static FullCost sum = 0, tmp = 0;
-    Int t, p, i;
+    Int t, i;
     BBCC *from, *to;
     call_entry* ce;
+    HChar *mcost;
 
     t = CLG_(current_tid);
     CLG_(init_cost_lz)( CLG_(sets).full, &sum );
@@ -1490,8 +1487,9 @@ static void dump_state_of_thread_togdb(thread_info* ti)
     CLG_(add_diff_cost)( CLG_(sets).full, sum, ti->lastdump_cost,
 			 ti->states.entry[0]->cost);
     CLG_(copy_cost)( CLG_(sets).full, ti->lastdump_cost, tmp );
-    CLG_(sprint_mappingcost)(buf, CLG_(dumpmap), sum);
-    VG_(gdb_printf)("events-%d: %s\n", t, buf);
+    mcost = CLG_(mappingcost_as_string)(CLG_(dumpmap), sum);
+    VG_(gdb_printf)("events-%d: %s\n", t, mcost);
+    VG_(free)(mcost);
     VG_(gdb_printf)("frames-%d: %d\n", t, CLG_(current_call_stack).sp);
 
     ce = 0;
@@ -1511,9 +1509,9 @@ static void dump_state_of_thread_togdb(thread_info* ti)
 			  ce->enter_cost, CLG_(current_state).cost );
       CLG_(copy_cost)( CLG_(sets).full, ce->enter_cost, tmp );
       
-      p = VG_(sprintf)(buf, "events-%d-%d: ",t, i);
-      CLG_(sprint_mappingcost)(buf + p, CLG_(dumpmap), sum );
-      VG_(gdb_printf)("%s\n", buf);
+      mcost = CLG_(mappingcost_as_string)(CLG_(dumpmap), sum);
+      VG_(gdb_printf)("events-%d-%d: %s\n",t, i, mcost);
+      VG_(free)(mcost);
     }
     if (ce && ce->jcc) {
       to = ce->jcc->to;
@@ -1524,9 +1522,8 @@ static void dump_state_of_thread_togdb(thread_info* ti)
 /* Dump current state */
 static void dump_state_togdb(void)
 {
-    static HChar buf[512];
     thread_info** th;
-    int t, p;
+    int t;
     Int orig_tid = CLG_(current_tid);
 
     VG_(gdb_printf)("instrumentation: %s\n",
@@ -1541,20 +1538,20 @@ static void dump_state_togdb(void)
     VG_(gdb_printf)("distinct-contexts: %d\n", CLG_(stat).distinct_contexts);
 
     /* "events:" line. Given here because it will be dynamic in the future */
-    p = VG_(sprintf)(buf, "events: ");
-    CLG_(sprint_eventmapping)(buf+p, CLG_(dumpmap));
-    VG_(gdb_printf)("%s\n", buf);
+    HChar *evmap = CLG_(eventmapping_as_string)(CLG_(dumpmap));
+    VG_(gdb_printf)("events: %s\n", evmap);
+    VG_(free)(evmap);
     /* "part:" line (number of last part. Is 0 at start */
     VG_(gdb_printf)("part: %d\n", CLG_(get_dump_counter)());
 		
     /* threads */
     th = CLG_(get_threads)();
-    p = VG_(sprintf)(buf, "threads:");
+    VG_(gdb_printf)("threads:");
     for(t=1;t<VG_N_THREADS;t++) {
 	if (!th[t]) continue;
-	p += VG_(sprintf)(buf+p, " %d", t);
+	VG_(gdb_printf)(" %d", t);
     }
-    VG_(gdb_printf)("%s\n", buf);
+    VG_(gdb_printf)("\n");
     VG_(gdb_printf)("current-tid: %d\n", orig_tid);
     CLG_(forall_threads)(dump_state_of_thread_togdb);
 }
@@ -1656,8 +1653,9 @@ Bool CLG_(handle_client_request)(ThreadId tid, UWord *args, UWord *ret)
 
    case VG_USERREQ__DUMP_STATS_AT:
      {
-       HChar buf[512];
-       VG_(sprintf)(buf,"Client Request: %s", (HChar*)args[1]);
+       const HChar *arg = (HChar*)args[1];
+       HChar buf[30 + VG_(strlen)(arg)];    // large enough
+       VG_(sprintf)(buf,"Client Request: %s", arg);
        CLG_(dump_profile)(buf, True);
        *ret = 0;                 /* meaningless */
      }
@@ -1705,10 +1703,6 @@ Bool CLG_(handle_client_request)(ThreadId tid, UWord *args, UWord *ret)
 
 /* struct timeval syscalltime[VG_N_THREADS]; */
 #if CLG_MICROSYSTIME
-#include <sys/time.h>
-#include <sys/syscall.h>
-extern Int VG_(do_syscall) ( UInt, ... );
-
 ULong syscalltime[VG_N_THREADS];
 #else
 UInt syscalltime[VG_N_THREADS];
@@ -1721,7 +1715,7 @@ void CLG_(pre_syscalltime)(ThreadId tid, UInt syscallno,
   if (CLG_(clo).collect_systime) {
 #if CLG_MICROSYSTIME
     struct vki_timeval tv_now;
-    VG_(do_syscall)(__NR_gettimeofday, (UInt)&tv_now, (UInt)NULL);
+    VG_(gettimeofday)(&tv_now, NULL);
     syscalltime[tid] = tv_now.tv_sec * 1000000ULL + tv_now.tv_usec;
 #else
     syscalltime[tid] = VG_(read_millisecond_timer)();
@@ -1740,7 +1734,7 @@ void CLG_(post_syscalltime)(ThreadId tid, UInt syscallno,
     struct vki_timeval tv_now;
     ULong diff;
     
-    VG_(do_syscall)(__NR_gettimeofday, (UInt)&tv_now, (UInt)NULL);
+    VG_(gettimeofday)(&tv_now, NULL);
     diff = (tv_now.tv_sec * 1000000ULL + tv_now.tv_usec) - syscalltime[tid];
 #else
     UInt diff = VG_(read_millisecond_timer)() - syscalltime[tid];
@@ -1749,7 +1743,8 @@ void CLG_(post_syscalltime)(ThreadId tid, UInt syscallno,
     /* offset o is for "SysCount", o+1 for "SysTime" */
     o = fullOffset(EG_SYS);
     CLG_ASSERT(o>=0);
-    CLG_DEBUG(0,"   Time (Off %d) for Syscall %d: %ull\n", o, syscallno, diff);
+    CLG_DEBUG(0,"   Time (Off %d) for Syscall %u: %llu\n", o, syscallno,
+              (ULong)diff);
     
     CLG_(current_state).cost[o] ++;
     CLG_(current_state).cost[o+1] += diff;
@@ -1775,8 +1770,7 @@ static UInt ULong_width(ULong n)
 static
 void branchsim_printstat(int l1, int l2, int l3)
 {
-    static HChar buf1[128], buf2[128], buf3[128];
-    static HChar fmt[128];
+    static HChar fmt[128];    // large enough
     FullCost total;
     ULong Bc_total_b, Bc_total_mp, Bi_total_b, Bi_total_mp;
     ULong B_total_b, B_total_mp;
@@ -1803,11 +1797,10 @@ void branchsim_printstat(int l1, int l2, int l3)
     VG_(umsg)(fmt, "Mispredicts:  ",
               B_total_mp, Bc_total_mp, Bi_total_mp);
 
-    VG_(percentify)(B_total_mp,  B_total_b,  1, l1+1, buf1);
-    VG_(percentify)(Bc_total_mp, Bc_total_b, 1, l2+1, buf2);
-    VG_(percentify)(Bi_total_mp, Bi_total_b, 1, l3+1, buf3);
-
-    VG_(umsg)("Mispred rate:  %s (%s     + %s   )\n", buf1, buf2,buf3);
+    VG_(umsg)("Mispred rate:  %*.1f%% (%*.1f%%     + %*.1f%%   )\n",
+              l1, B_total_mp  * 100.0 / B_total_b,
+              l2, Bc_total_mp * 100.0 / Bc_total_b,
+              l3, Bi_total_mp * 100.0 / Bi_total_b);
 }
 
 static
@@ -1860,7 +1853,6 @@ void clg_print_stats(void)
 		CLG_(stat).bb_retranslations);
    VG_(message)(Vg_DebugMsg, "Distinct instrs:   %d\n",
 		CLG_(stat).distinct_instrs);
-   VG_(message)(Vg_DebugMsg, "");
 
    VG_(message)(Vg_DebugMsg, "LRU Contxt Misses: %d\n",
 		CLG_(stat).cxt_lru_misses);
@@ -1886,8 +1878,7 @@ void clg_print_stats(void)
 static
 void finish(void)
 {
-  HChar buf[32+COSTS_LEN];
-  HChar fmt[128];
+  HChar fmt[128];    // large enough
   Int l1, l2, l3;
   FullCost total;
 
@@ -1909,10 +1900,12 @@ void finish(void)
     VG_(message)(Vg_DebugMsg, "\n");
   }
 
-  CLG_(sprint_eventmapping)(buf, CLG_(dumpmap));
-  VG_(message)(Vg_UserMsg, "Events    : %s\n", buf);
-  CLG_(sprint_mappingcost)(buf, CLG_(dumpmap), CLG_(total_cost));
-  VG_(message)(Vg_UserMsg, "Collected : %s\n", buf);
+  HChar *evmap = CLG_(eventmapping_as_string)(CLG_(dumpmap));
+  VG_(message)(Vg_UserMsg, "Events    : %s\n", evmap);
+  VG_(free)(evmap);
+  HChar *mcost = CLG_(mappingcost_as_string)(CLG_(dumpmap), CLG_(total_cost));
+  VG_(message)(Vg_UserMsg, "Collected : %s\n", mcost);
+  VG_(free)(mcost);
   VG_(message)(Vg_UserMsg, "\n");
 
   /* determine value widths for statistics */

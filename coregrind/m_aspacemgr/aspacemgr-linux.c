@@ -270,7 +270,10 @@
 /* Max number of segments we can track.  On Android, virtual address
    space is limited, so keep a low limit -- 5000 x sizef(NSegment) is
    360KB. */
-#if defined(VGPV_arm_linux_android) || defined(VGPV_x86_linux_android)
+#if defined(VGPV_arm_linux_android) \
+    || defined(VGPV_x86_linux_android) \
+    || defined(VGPV_mips32_linux_android) \
+    || defined(VGPV_arm64_linux_android)
 # define VG_N_SEGMENTS 5000
 #else
 # define VG_N_SEGMENTS 30000
@@ -278,7 +281,10 @@
 
 /* Max number of segment file names we can track.  These are big (1002
    bytes) so on Android limit the space usage to ~1MB. */
-#if defined(VGPV_arm_linux_android) || defined(VGPV_x86_linux_android)
+#if defined(VGPV_arm_linux_android) \
+    || defined(VGPV_x86_linux_android) \
+    || defined(VGPV_mips32_linux_android) \
+    || defined(VGPV_arm64_linux_android)
 # define VG_N_SEGNAMES 1000
 #else
 # define VG_N_SEGNAMES 6000
@@ -402,27 +408,29 @@ static Int allocate_segname ( const HChar* name )
    if (0) VG_(debugLog)(0,"aspacem","allocate_segname %s\n", name);
 
    len = VG_(strlen)(name);
-   if (len >= VG_MAX_SEGNAMELEN-1) {
+   if (len + 1 > VG_MAX_SEGNAMELEN) {
       return -1;
    }
 
    /* first see if we already have the name. */
+   Int free_slot = -1;
    for (i = 0; i < segnames_used; i++) {
-      if (!segnames[i].inUse)
+      if (!segnames[i].inUse) {
+         free_slot = i;
          continue;
+      }
       if (0 == VG_(strcmp)(name, &segnames[i].fname[0])) {
          return i;
       }
    }
 
-   /* no we don't.  So look for a free slot. */
-   for (i = 0; i < segnames_used; i++)
-      if (!segnames[i].inUse)
-         break;
-
-   if (i == segnames_used) {
+   /* no we don't. */
+   if (free_slot >= 0) {
+      /* we have a free slot; use it. */
+      i = free_slot;
+   } else {
       /* no free slots .. advance the high-water mark. */
-      if (segnames_used+1 < VG_N_SEGNAMES) {
+      if (segnames_used < VG_N_SEGNAMES) {
          i = segnames_used;
          segnames_used++;
       } else {
@@ -434,7 +442,6 @@ static Int allocate_segname ( const HChar* name )
    segnames[i].inUse = True;
    for (j = 0; j < len; j++)
       segnames[i].fname[j] = name[j];
-   aspacem_assert(len < VG_MAX_SEGNAMELEN);
    segnames[i].fname[len] = 0;
    return i;
 }
@@ -501,7 +508,7 @@ static void show_len_concisely ( /*OUT*/HChar* buf, Addr start, Addr end )
 /* Show full details of an NSegment */
 
 static void __attribute__ ((unused))
-            show_nsegment_full ( Int logLevel, Int segNo, NSegment* seg )
+            show_nsegment_full ( Int logLevel, Int segNo, const NSegment* seg )
 {
    HChar len_buf[20];
    const HChar* name = "(none)";
@@ -516,7 +523,7 @@ static void __attribute__ ((unused))
    VG_(debugLog)(
       logLevel, "aspacem",
       "%3d: %s %010llx-%010llx %s %c%c%c%c%c %s "
-      "d=0x%03llx i=%-7lld o=%-7lld (%d) m=%d %s\n",
+      "d=0x%03llx i=%-7lld o=%-7lld (%d) %s\n",
       segNo, show_SegKind(seg->kind),
       (ULong)seg->start, (ULong)seg->end, len_buf,
       seg->hasR ? 'r' : '-', seg->hasW ? 'w' : '-', 
@@ -524,14 +531,14 @@ static void __attribute__ ((unused))
       seg->isCH ? 'H' : '-',
       show_ShrinkMode(seg->smode),
       seg->dev, seg->ino, seg->offset, seg->fnIdx,
-      (Int)seg->mark, name
+      name
    );
 }
 
 
 /* Show an NSegment in a user-friendly-ish way. */
 
-static void show_nsegment ( Int logLevel, Int segNo, NSegment* seg )
+static void show_nsegment ( Int logLevel, Int segNo, const NSegment* seg )
 {
    HChar len_buf[20];
    show_len_concisely(len_buf, seg->start, seg->end);
@@ -620,7 +627,7 @@ void VG_(am_show_nsegments) ( Int logLevel, const HChar* who )
    has one.  The returned name's storage cannot be assumed to be
    persistent, so the caller should immediately copy the name
    elsewhere. */
-HChar* VG_(am_get_filename)( NSegment const * seg )
+const HChar* VG_(am_get_filename)( NSegment const * seg )
 {
    Int i;
    aspacem_assert(seg);
@@ -650,7 +657,7 @@ Int VG_(am_get_segment_starts)( Addr* starts, Int nStarts )
    Int i, j, nSegs;
 
    /* don't pass dumbass arguments */
-   aspacem_assert(nStarts >= 0);
+   aspacem_assert(nStarts > 0);
 
    nSegs = 0;
    for (i = 0; i < nsegments_used; i++) {
@@ -689,15 +696,12 @@ Int VG_(am_get_segment_starts)( Addr* starts, Int nStarts )
 
 /* Check representational invariants for NSegments. */
 
-static Bool sane_NSegment ( NSegment* s )
+static Bool sane_NSegment ( const NSegment* s )
 {
    if (s == NULL) return False;
 
    /* No zero sized segments and no wraparounds. */
    if (s->start >= s->end) return False;
-
-   /* .mark is used for admin purposes only. */
-   if (s->mark) return False;
 
    /* require page alignment */
    if (!VG_IS_PAGE_ALIGNED(s->start)) return False;
@@ -742,7 +746,7 @@ static Bool sane_NSegment ( NSegment* s )
    modified, and True is returned.  Otherwise s1 is unchanged and
    False is returned. */
 
-static Bool maybe_merge_nsegments ( NSegment* s1, NSegment* s2 )
+static Bool maybe_merge_nsegments ( NSegment* s1, const NSegment* s2 )
 {
    if (s1->kind != s2->kind) 
       return False;
@@ -1110,7 +1114,7 @@ Bool VG_(am_do_sync_check) ( const HChar* fn,
 
 #     if 0
       {
-         HChar buf[100];
+         HChar buf[100];   // large enough
          VG_(am_show_nsegments)(0,"post syncheck failure");
          VG_(sprintf)(buf, "/bin/cat /proc/%d/maps", VG_(getpid)());
          VG_(system)(buf);
@@ -1485,7 +1489,7 @@ void split_nsegments_lo_and_hi ( Addr sLo, Addr sHi,
    This deals with all the tricky cases of splitting up segments as
    needed. */
 
-static void add_segment ( NSegment* seg )
+static void add_segment ( const NSegment* seg )
 {
    Int  i, iLo, iHi, delta;
    Bool segment_is_sane;
@@ -1535,7 +1539,6 @@ static void init_nsegment ( /*OUT*/NSegment* seg )
    seg->offset   = 0;
    seg->fnIdx    = -1;
    seg->hasR = seg->hasW = seg->hasX = seg->hasT = seg->isCH = False;
-   seg->mark = False;
 }
 
 /* Make an NSegment which holds a reservation. */
@@ -1755,8 +1758,8 @@ Addr VG_(am_startup) ( Addr sp_at_startup )
 
 /* Query aspacem to ask where a mapping should go. */
 
-Addr VG_(am_get_advisory) ( MapRequest*  req, 
-                            Bool         forClient, 
+Addr VG_(am_get_advisory) ( const MapRequest*  req, 
+                            Bool  forClient, 
                             /*OUT*/Bool* ok )
 {
    /* This function implements allocation policy.

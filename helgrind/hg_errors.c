@@ -40,6 +40,7 @@
 #include "pub_tool_debuginfo.h"
 #include "pub_tool_threadstate.h"
 #include "pub_tool_options.h"     // VG_(clo_xml)
+#include "pub_tool_aspacemgr.h"
 #include "pub_tool_addrinfo.h"
 
 #include "hg_basics.h"
@@ -371,7 +372,7 @@ typedef
 
 
 /* Updates the copy with address info if necessary. */
-UInt HG_(update_extra) ( Error* err )
+UInt HG_(update_extra) ( const Error* err )
 {
    XError* xe = (XError*)VG_(get_error_extra)(err);
    tl_assert(xe);
@@ -464,7 +465,7 @@ void HG_(record_error_Race) ( Thread* thr,
       linked routine, into the table (or whatever) when it is called
       for the first time. */
    {
-     VgSectKind sect = VG_(DebugInfo_sect_kind)( NULL, 0, data_addr );
+     VgSectKind sect = VG_(DebugInfo_sect_kind)( NULL, data_addr );
      if (0) VG_(printf)("XXXXXXXXX RACE on %#lx %s\n",
                         data_addr, VG_(pp_SectKind)(sect));
      /* SectPLT is required on ???-linux */
@@ -637,7 +638,7 @@ void HG_(record_error_Misc) ( Thread* thr, const HChar* errstr )
    HG_(record_error_Misc_w_aux)(thr, errstr, NULL, NULL);
 }
 
-Bool HG_(eq_Error) ( VgRes not_used, Error* e1, Error* e2 )
+Bool HG_(eq_Error) ( VgRes not_used, const Error* e1, const Error* e2 )
 {
    XError *xe1, *xe2;
 
@@ -843,7 +844,7 @@ static void show_LockP_summary_textmode ( Lock** locks, const HChar* pre )
    announce any previously un-announced threads in the upcoming error
    message.
 */
-void HG_(before_pp_Error) ( Error* err )
+void HG_(before_pp_Error) ( const Error* err )
 {
    XError* xe;
    tl_assert(err);
@@ -893,7 +894,7 @@ void HG_(before_pp_Error) ( Error* err )
    }
 }
 
-void HG_(pp_Error) ( Error* err )
+void HG_(pp_Error) ( const Error* err )
 {
    const Bool xml = VG_(clo_xml); /* a shorthand, that's all */
 
@@ -1252,7 +1253,7 @@ void HG_(pp_Error) ( Error* err )
    } /* switch (VG_(get_error_kind)(err)) */
 }
 
-const HChar* HG_(get_error_name) ( Error* err )
+const HChar* HG_(get_error_name) ( const Error* err )
 {
    switch (VG_(get_error_kind)(err)) {
       case XE_Race:           return "Race";
@@ -1293,7 +1294,7 @@ Bool HG_(read_extra_suppression_info) ( Int fd, HChar** bufpp, SizeT* nBufp,
    return True;
 }
 
-Bool HG_(error_matches_suppression) ( Error* err, Supp* su )
+Bool HG_(error_matches_suppression) ( const Error* err, const Supp* su )
 {
    switch (VG_(get_supp_kind)(su)) {
    case XS_Race:           return VG_(get_error_kind)(err) == XE_Race;
@@ -1308,7 +1309,7 @@ Bool HG_(error_matches_suppression) ( Error* err, Supp* su )
    }
 }
 
-SizeT HG_(get_extra_suppression_info) ( Error* err,
+SizeT HG_(get_extra_suppression_info) ( const Error* err,
                                        /*OUT*/HChar* buf, Int nBuf )
 {
    tl_assert(nBuf >= 1);
@@ -1317,7 +1318,7 @@ SizeT HG_(get_extra_suppression_info) ( Error* err,
    return 0;
 }
 
-SizeT HG_(print_extra_suppression_use) ( Supp* su,
+SizeT HG_(print_extra_suppression_use) ( const Supp* su,
                                         /*OUT*/HChar* buf, Int nBuf )
 {
    tl_assert(nBuf >= 1);
@@ -1326,7 +1327,7 @@ SizeT HG_(print_extra_suppression_use) ( Supp* su,
    return 0;
 }
 
-void HG_(update_extra_suppression_use) ( Error* err, Supp* su )
+void HG_(update_extra_suppression_use) ( const Error* err, const Supp* su )
 {
    /* Do nothing */
    return;

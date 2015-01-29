@@ -6027,6 +6027,7 @@ static void do_shadow_LoadG ( MCEnv* mce, IRLoadG* lg )
    IROp   vwiden   = Iop_INVALID;
    IRType loadedTy = Ity_INVALID;
    switch (lg->cvt) {
+      case ILGop_Ident64: loadedTy = Ity_I64; vwiden = Iop_INVALID; break;
       case ILGop_Ident32: loadedTy = Ity_I32; vwiden = Iop_INVALID; break;
       case ILGop_16Uto32: loadedTy = Ity_I16; vwiden = Iop_16Uto32; break;
       case ILGop_16Sto32: loadedTy = Ity_I16; vwiden = Iop_16Sto32; break;
@@ -6067,6 +6068,7 @@ static Bool isBogusAtom ( IRAtom* at )
       case Ico_U16:  n = (ULong)con->Ico.U16; break;
       case Ico_U32:  n = (ULong)con->Ico.U32; break;
       case Ico_U64:  n = (ULong)con->Ico.U64; break;
+      case Ico_F32:  return False;
       case Ico_F64:  return False;
       case Ico_F32i: return False;
       case Ico_F64i: return False;
@@ -6220,7 +6222,6 @@ IRSB* MC_(instrument) ( VgCallbackClosure* closure,
    tl_assert(sizeof(Addr)   == sizeof(void*));
    tl_assert(sizeof(ULong)  == 8);
    tl_assert(sizeof(Long)   == 8);
-   tl_assert(sizeof(Addr64) == 8);
    tl_assert(sizeof(UInt)   == 4);
    tl_assert(sizeof(Int)    == 4);
 
@@ -7261,6 +7262,7 @@ static void do_origins_LoadG ( MCEnv* mce, IRLoadG* lg )
 {
    IRType loadedTy = Ity_INVALID;
    switch (lg->cvt) {
+      case ILGop_Ident64: loadedTy = Ity_I64; break;
       case ILGop_Ident32: loadedTy = Ity_I32; break;
       case ILGop_16Uto32: loadedTy = Ity_I16; break;
       case ILGop_16Sto32: loadedTy = Ity_I16; break;

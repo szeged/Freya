@@ -93,7 +93,7 @@ typedef
       Addr          pool;           // pool identifier
       SizeT         rzB;            // pool red-zone size
       Bool          is_zeroed;      // allocations from this pool are zeroed
-      VgHashTable   chunks;         // chunks associated with this pool
+      VgHashTable  *chunks;         // chunks associated with this pool
    }
    MC_Mempool;
 
@@ -101,7 +101,7 @@ typedef
 void* MC_(new_block)  ( ThreadId tid,
                         Addr p, SizeT size, SizeT align,
                         Bool is_zeroed, MC_AllocKind kind,
-                        VgHashTable table);
+                        VgHashTable *table);
 void MC_(handle_free) ( ThreadId tid,
                         Addr p, UInt rzB, MC_AllocKind kind );
 
@@ -127,10 +127,10 @@ extern PoolAlloc* MC_(chunk_poolalloc);
    VgHashTable, because VgHashTable allows duplicate keys without complaint.
    This can occur if a user marks a malloc() block as also a custom block with
    MALLOCLIKE_BLOCK. */
-extern VgHashTable MC_(malloc_list);
+extern VgHashTable *MC_(malloc_list);
 
 /* For tracking memory pools. */
-extern VgHashTable MC_(mempool_list);
+extern VgHashTable *MC_(mempool_list);
 
 /* Shadow memory functions */
 Bool MC_(check_mem_is_noaccess)( Addr a, SizeT len, Addr* bad_addr );
@@ -393,25 +393,25 @@ extern Bool MC_(any_value_errors);
 
 /* Standard functions for error and suppressions as required by the
    core/tool iface */
-Bool MC_(eq_Error)           ( VgRes res, Error* e1, Error* e2 );
-void MC_(before_pp_Error)    ( Error* err );
-void MC_(pp_Error)           ( Error* err );
-UInt MC_(update_Error_extra) ( Error* err );
+Bool MC_(eq_Error)           ( VgRes res, const Error* e1, const Error* e2 );
+void MC_(before_pp_Error)    ( const Error* err );
+void MC_(pp_Error)           ( const Error* err );
+UInt MC_(update_Error_extra) ( const Error* err );
 
 Bool MC_(is_recognised_suppression) ( const HChar* name, Supp* su );
 
 Bool MC_(read_extra_suppression_info) ( Int fd, HChar** buf,
                                         SizeT* nBuf, Int* lineno, Supp *su );
 
-Bool MC_(error_matches_suppression) ( Error* err, Supp* su );
+Bool MC_(error_matches_suppression) ( const Error* err, const Supp* su );
 
-SizeT MC_(get_extra_suppression_info) ( Error* err,
+SizeT MC_(get_extra_suppression_info) ( const Error* err,
                                         /*OUT*/HChar* buf, Int nBuf );
-SizeT MC_(print_extra_suppression_use) ( Supp* su,
+SizeT MC_(print_extra_suppression_use) ( const Supp* su,
                                          /*OUT*/HChar* buf, Int nBuf );
-void MC_(update_extra_suppression_use) ( Error* err, Supp* su );
+void MC_(update_extra_suppression_use) ( const Error* err, const Supp* su );
 
-const HChar* MC_(get_error_name) ( Error* err );
+const HChar* MC_(get_error_name) ( const Error* err );
 
 /* Recording of errors */
 void MC_(record_address_error) ( ThreadId tid, Addr a, Int szB,

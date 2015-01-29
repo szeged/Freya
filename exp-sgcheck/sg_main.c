@@ -868,11 +868,11 @@ static void pp_Invar ( Invar* i )
 /* Compare two Invars for equality. */
 static Bool eq_Invar ( Invar* i1, Invar* i2 )
 {
-   tl_assert(i1->tag != Inv_Unset);
-   tl_assert(i2->tag != Inv_Unset);
    if (i1->tag != i2->tag)
       return False;
    switch (i1->tag) {
+      case Inv_Unset:
+         return True;
       case Inv_Unknown:
          return True;
       case Inv_Stack0:
@@ -1264,6 +1264,8 @@ static void preen_global_Invar ( Invar* inv, Addr a, SizeT len )
       case Inv_StackN:
       case Inv_Unknown:
          break;
+      case Inv_Unset: /* this should never happen */
+         /* fallthrough */
       default:
          tl_assert(0);
    }
@@ -1809,10 +1811,10 @@ void helperc__mem_access ( /* Known only at run time: */
 
    /* Did we see something different from before?  If no, then there's
       no error. */
+   tl_assert(inv->tag != Inv_Unset);
+
    if (LIKELY(eq_Invar(&new_inv, inv)))
       return;
-
-   tl_assert(inv->tag != Inv_Unset);
 
    VG_(memset)(bufE, 0, sizeof(bufE));
    show_Invar( bufE, sizeof(bufE)-1, inv, frame->depth );
@@ -1924,10 +1926,10 @@ void shadowStack_new_frame ( ThreadId tid,
 
    if (0)
    { Word d = callee->depth;
-     HChar fnname[80];
+     const HChar *fnname;
      Bool ok;
      Addr ip = ip_post_call_insn;
-     ok = VG_(get_fnname_w_offset)( ip, fnname, sizeof(fnname) );
+     ok = VG_(get_fnname_w_offset)( ip, &fnname );
      while (d > 0) {
         VG_(printf)(" ");
         d--;
@@ -2061,7 +2063,7 @@ static void shadowStack_unwind ( ThreadId tid, Addr sp_now )
 
 struct _SGEnv {
    /* the current insn's IP */
-   Addr64 curr_IP;
+   Addr curr_IP;
    /* whether the above is actually known */
    Bool curr_IP_known;
    /* if we find a mem ref, is it the first for this insn?  Used for
@@ -2222,7 +2224,7 @@ void sg_instrument_IRStmt ( /*MOD*/struct _SGEnv * env,
 
       case Ist_IMark:
          env->curr_IP_known = True;
-         env->curr_IP       = (Addr)st->Ist.IMark.addr;
+         env->curr_IP       = st->Ist.IMark.addr;
          env->firstRef      = True;
          break;
 

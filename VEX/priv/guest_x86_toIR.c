@@ -6310,7 +6310,7 @@ static const HChar* nameBtOp ( BtOp op )
 
 
 static
-UInt dis_bt_G_E ( VexAbiInfo* vbi,
+UInt dis_bt_G_E ( const VexAbiInfo* vbi,
                   UChar sorb, Bool locked, Int sz, Int delta, BtOp op )
 {
    HChar  dis_buf[50];
@@ -8061,12 +8061,12 @@ static IRTemp math_BSWAP ( IRTemp t1, IRType ty )
 static
 DisResult disInstr_X86_WRK (
              /*OUT*/Bool* expect_CAS,
-             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr ),
              Bool         resteerCisOk,
              void*        callback_opaque,
              Long         delta64,
-             VexArchInfo* archinfo,
-             VexAbiInfo*  vbi,
+             const VexArchInfo* archinfo,
+             const VexAbiInfo*  vbi,
              Bool         sigill_diag
           )
 {
@@ -11777,11 +11777,7 @@ DisResult disInstr_X86_WRK (
 
    /* Skip parts of the decoder which don't apply given the stated
       guest subarchitecture. */
-   /* if (0 == (archinfo->hwcaps & VEX_HWCAPS_X86_SSE3)) */
-   /* In fact this is highly bogus; we accept SSE3 insns even on a
-      SSE2-only guest since they turn into IR which can be re-emitted
-      successfully on an SSE2 host. */
-   if (0 == (archinfo->hwcaps & VEX_HWCAPS_X86_SSE2))
+   if (0 == (archinfo->hwcaps & VEX_HWCAPS_X86_SSE3))
       goto after_sse_decoders; /* no SSE3 capabilities */
 
    insn = &guest_code[delta];
@@ -13082,10 +13078,10 @@ DisResult disInstr_X86_WRK (
          assign(t1, binop(Iop_Sub32, getIReg(4,R_ESP), mkU32(4)));
          putIReg(4, R_ESP, mkexpr(t1));
          storeLE( mkexpr(t1), mkU32(guest_EIP_bbstart+delta));
-         if (resteerOkFn( callback_opaque, (Addr64)(Addr32)d32 )) {
+         if (resteerOkFn( callback_opaque, (Addr32)d32 )) {
             /* follow into the call target. */
             dres.whatNext   = Dis_ResteerU;
-            dres.continueAt = (Addr64)(Addr32)d32;
+            dres.continueAt = (Addr32)d32;
          } else {
             jmp_lit(&dres, Ijk_Call, d32);
             vassert(dres.whatNext == Dis_StopHere);
@@ -13397,9 +13393,9 @@ DisResult disInstr_X86_WRK (
    case 0xEB: /* Jb (jump, byte offset) */
       d32 = (((Addr32)guest_EIP_bbstart)+delta+1) + getSDisp8(delta); 
       delta++;
-      if (resteerOkFn( callback_opaque, (Addr64)(Addr32)d32) ) {
+      if (resteerOkFn( callback_opaque, (Addr32)d32) ) {
          dres.whatNext   = Dis_ResteerU;
-         dres.continueAt = (Addr64)(Addr32)d32;
+         dres.continueAt = (Addr32)d32;
       } else {
          jmp_lit(&dres, Ijk_Boring, d32);
          vassert(dres.whatNext == Dis_StopHere);
@@ -13411,9 +13407,9 @@ DisResult disInstr_X86_WRK (
       vassert(sz == 4); /* JRS added 2004 July 11 */
       d32 = (((Addr32)guest_EIP_bbstart)+delta+sz) + getSDisp(sz,delta); 
       delta += sz;
-      if (resteerOkFn( callback_opaque, (Addr64)(Addr32)d32) ) {
+      if (resteerOkFn( callback_opaque, (Addr32)d32) ) {
          dres.whatNext   = Dis_ResteerU;
-         dres.continueAt = (Addr64)(Addr32)d32;
+         dres.continueAt = (Addr32)d32;
       } else {
          jmp_lit(&dres, Ijk_Boring, d32);
          vassert(dres.whatNext == Dis_StopHere);
@@ -13447,7 +13443,7 @@ DisResult disInstr_X86_WRK (
           && vex_control.guest_chase_cond
           && (Addr32)d32 != (Addr32)guest_EIP_bbstart
           && jmpDelta < 0
-          && resteerOkFn( callback_opaque, (Addr64)(Addr32)d32) ) {
+          && resteerOkFn( callback_opaque, (Addr32)d32) ) {
          /* Speculation: assume this backward branch is taken.  So we
             need to emit a side-exit to the insn following this one,
             on the negation of the condition, and continue at the
@@ -13460,7 +13456,7 @@ DisResult disInstr_X86_WRK (
                   IRConst_U32(guest_EIP_bbstart+delta),
                   OFFB_EIP ) );
          dres.whatNext   = Dis_ResteerC;
-         dres.continueAt = (Addr64)(Addr32)d32;
+         dres.continueAt = (Addr32)d32;
          comment = "(assumed taken)";
       }
       else
@@ -13469,7 +13465,7 @@ DisResult disInstr_X86_WRK (
           && (Addr32)d32 != (Addr32)guest_EIP_bbstart
           && jmpDelta >= 0
           && resteerOkFn( callback_opaque, 
-                          (Addr64)(Addr32)(guest_EIP_bbstart+delta)) ) {
+                          (Addr32)(guest_EIP_bbstart+delta)) ) {
          /* Speculation: assume this forward branch is not taken.  So
             we need to emit a side-exit to d32 (the dest) and continue
             disassembling at the insn immediately following this
@@ -13480,7 +13476,7 @@ DisResult disInstr_X86_WRK (
                   IRConst_U32(d32),
                   OFFB_EIP ) );
          dres.whatNext   = Dis_ResteerC;
-         dres.continueAt = (Addr64)(Addr32)(guest_EIP_bbstart+delta);
+         dres.continueAt = guest_EIP_bbstart + delta;
          comment = "(assumed not taken)";
       }
       else {
@@ -15011,7 +15007,7 @@ DisResult disInstr_X86_WRK (
              && vex_control.guest_chase_cond
              && (Addr32)d32 != (Addr32)guest_EIP_bbstart
              && jmpDelta < 0
-             && resteerOkFn( callback_opaque, (Addr64)(Addr32)d32) ) {
+             && resteerOkFn( callback_opaque, (Addr32)d32) ) {
             /* Speculation: assume this backward branch is taken.  So
                we need to emit a side-exit to the insn following this
                one, on the negation of the condition, and continue at
@@ -15025,7 +15021,7 @@ DisResult disInstr_X86_WRK (
                      IRConst_U32(guest_EIP_bbstart+delta),
                      OFFB_EIP ) );
             dres.whatNext   = Dis_ResteerC;
-            dres.continueAt = (Addr64)(Addr32)d32;
+            dres.continueAt = (Addr32)d32;
             comment = "(assumed taken)";
          }
          else
@@ -15034,7 +15030,7 @@ DisResult disInstr_X86_WRK (
              && (Addr32)d32 != (Addr32)guest_EIP_bbstart
              && jmpDelta >= 0
              && resteerOkFn( callback_opaque, 
-                             (Addr64)(Addr32)(guest_EIP_bbstart+delta)) ) {
+                             (Addr32)(guest_EIP_bbstart+delta)) ) {
             /* Speculation: assume this forward branch is not taken.
                So we need to emit a side-exit to d32 (the dest) and
                continue disassembling at the insn immediately
@@ -15045,7 +15041,7 @@ DisResult disInstr_X86_WRK (
                      IRConst_U32(d32),
                      OFFB_EIP ) );
             dres.whatNext   = Dis_ResteerC;
-            dres.continueAt = (Addr64)(Addr32)(guest_EIP_bbstart+delta);
+            dres.continueAt = guest_EIP_bbstart + delta;
             comment = "(assumed not taken)";
          }
          else {
@@ -15412,15 +15408,15 @@ DisResult disInstr_X86_WRK (
    is located in host memory at &guest_code[delta]. */
 
 DisResult disInstr_X86 ( IRSB*        irsb_IN,
-                         Bool         (*resteerOkFn) ( void*, Addr64 ),
+                         Bool         (*resteerOkFn) ( void*, Addr ),
                          Bool         resteerCisOk,
                          void*        callback_opaque,
                          const UChar* guest_code_IN,
                          Long         delta,
-                         Addr64       guest_IP,
+                         Addr         guest_IP,
                          VexArch      guest_arch,
-                         VexArchInfo* archinfo,
-                         VexAbiInfo*  abiinfo,
+                         const VexArchInfo* archinfo,
+                         const VexAbiInfo*  abiinfo,
                          VexEndness   host_endness_IN,
                          Bool         sigill_diag_IN )
 {

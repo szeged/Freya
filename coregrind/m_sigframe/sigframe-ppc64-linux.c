@@ -114,7 +114,7 @@ struct rt_sigframe {
    void*                 puc;
    vki_siginfo_t         info;
    struct vg_sig_private priv;
-   UChar                 abigap[288];
+   UChar                 abigap[288];   // unused
 };
 
 #define SET_SIGNAL_LR(zztst, zzval)                          \
@@ -287,7 +287,7 @@ void VG_(sigframe_create)( ThreadId tid,
             (Addr)&frame->tramp, sizeof(frame->tramp));
 
    /* invalidate any translation of this area */
-   VG_(discard_translations)( (Addr64)&frame->tramp[0], 
+   VG_(discard_translations)( (Addr)&frame->tramp[0], 
                               sizeof(frame->tramp), "stack_mcontext" );   
 
    /* set the signal handler to return to the trampoline */

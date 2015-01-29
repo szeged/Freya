@@ -13529,6 +13529,28 @@ static Bool decode_CP10_CP11_instruction (
                         condT);
             DIP("fdivd%s d%u, d%u, d%u\n", nCC(conq), dD, dN, dM);
             goto decode_success_vfp;
+         case BITS4(1,0,1,0): /* VNFMS: -(d - n * m) (fused) */
+            /* XXXROUNDINGFIXME look up ARM reference for fused
+               multiply-add rounding */
+            putDReg(dD, triop(Iop_AddF64, rm,
+                              unop(Iop_NegF64, getDReg(dD)),
+                              triop(Iop_MulF64, rm,
+                                                getDReg(dN),
+                                                getDReg(dM))),
+                        condT);
+            DIP("vfnmsd%s d%u, d%u, d%u\n", nCC(conq), dD, dN, dM);
+            goto decode_success_vfp;
+         case BITS4(1,0,1,1): /* VNFMA: -(d + n * m) (fused) */
+            /* XXXROUNDINGFIXME look up ARM reference for fused
+               multiply-add rounding */
+            putDReg(dD, triop(Iop_AddF64, rm,
+                              unop(Iop_NegF64, getDReg(dD)),
+                              triop(Iop_MulF64, rm,
+                                                unop(Iop_NegF64, getDReg(dN)),
+                                                getDReg(dM))),
+                        condT);
+            DIP("vfnmad%s d%u, d%u, d%u\n", nCC(conq), dD, dN, dM);
+            goto decode_success_vfp;
          case BITS4(1,1,0,0): /* VFMA: d + n * m (fused) */
             /* XXXROUNDINGFIXME look up ARM reference for fused
                multiply-add rounding */
@@ -14014,6 +14036,28 @@ static Bool decode_CP10_CP11_instruction (
                         condT);
             DIP("fdivs%s s%u, s%u, s%u\n", nCC(conq), fD, fN, fM);
             goto decode_success_vfp;
+         case BITS4(1,0,1,0): /* VNFMS: -(d - n * m) (fused) */
+            /* XXXROUNDINGFIXME look up ARM reference for fused
+               multiply-add rounding */
+            putFReg(fD, triop(Iop_AddF32, rm,
+                              unop(Iop_NegF32, getFReg(fD)),
+                              triop(Iop_MulF32, rm,
+                                                getFReg(fN),
+                                                getFReg(fM))),
+                        condT);
+            DIP("vfnmss%s s%u, s%u, s%u\n", nCC(conq), fD, fN, fM);
+            goto decode_success_vfp;
+         case BITS4(1,0,1,1): /* VNFMA: -(d + n * m) (fused) */
+            /* XXXROUNDINGFIXME look up ARM reference for fused
+               multiply-add rounding */
+            putFReg(fD, triop(Iop_AddF32, rm,
+                              unop(Iop_NegF32, getFReg(fD)),
+                              triop(Iop_MulF32, rm,
+                                                unop(Iop_NegF32, getFReg(fN)),
+                                                getFReg(fM))),
+                        condT);
+            DIP("vfnmas%s s%u, s%u, s%u\n", nCC(conq), fD, fN, fM);
+            goto decode_success_vfp;
          case BITS4(1,1,0,0): /* VFMA: d + n * m (fused) */
             /* XXXROUNDINGFIXME look up ARM reference for fused
                multiply-add rounding */
@@ -14391,7 +14435,7 @@ static Bool decode_CP10_CP11_instruction (
    here, since they are all in NV space.
 */
 static Bool decode_NV_instruction ( /*MOD*/DisResult* dres,
-                                    VexArchInfo* archinfo,
+                                    const VexArchInfo* archinfo,
                                     UInt insn )
 {
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
@@ -14543,12 +14587,12 @@ static Bool decode_NV_instruction ( /*MOD*/DisResult* dres,
 
 static
 DisResult disInstr_ARM_WRK (
-             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr ),
              Bool         resteerCisOk,
              void*        callback_opaque,
              const UChar* guest_instr,
-             VexArchInfo* archinfo,
-             VexAbiInfo*  abiinfo,
+             const VexArchInfo* archinfo,
+             const VexAbiInfo*  abiinfo,
              Bool         sigill_diag
           )
 {
@@ -15507,10 +15551,10 @@ DisResult disInstr_ARM_WRK (
       if (condT == IRTemp_INVALID) {
          /* unconditional transfer to 'dst'.  See if we can simply
             continue tracing at the destination. */
-         if (resteerOkFn( callback_opaque, (Addr64)dst )) {
+         if (resteerOkFn( callback_opaque, dst )) {
             /* yes */
             dres.whatNext   = Dis_ResteerU;
-            dres.continueAt = (Addr64)dst;
+            dres.continueAt = dst;
          } else {
             /* no; terminate the SB at this point. */
             llPutIReg(15, mkU32(dst));
@@ -15530,7 +15574,7 @@ DisResult disInstr_ARM_WRK (
              && resteerCisOk
              && vex_control.guest_chase_cond
              && dst < guest_R15_curr_instr_notENC
-             && resteerOkFn( callback_opaque, (Addr64)(Addr32)dst) ) {
+             && resteerOkFn( callback_opaque, dst) ) {
             /* Speculation: assume this backward branch is taken.  So
                we need to emit a side-exit to the insn following this
                one, on the negation of the condition, and continue at
@@ -15541,7 +15585,7 @@ DisResult disInstr_ARM_WRK (
                                IRConst_U32(guest_R15_curr_instr_notENC+4),
                                OFFB_R15T ));
             dres.whatNext   = Dis_ResteerC;
-            dres.continueAt = (Addr64)(Addr32)dst;
+            dres.continueAt = (Addr32)dst;
             comment = "(assumed taken)";
          }
          else
@@ -15550,8 +15594,7 @@ DisResult disInstr_ARM_WRK (
              && vex_control.guest_chase_cond
              && dst >= guest_R15_curr_instr_notENC
              && resteerOkFn( callback_opaque, 
-                             (Addr64)(Addr32)
-                                     (guest_R15_curr_instr_notENC+4)) ) {
+                             guest_R15_curr_instr_notENC+4) ) {
             /* Speculation: assume this forward branch is not taken.
                So we need to emit a side-exit to dst (the dest) and
                continue disassembling at the insn immediately
@@ -15561,8 +15604,7 @@ DisResult disInstr_ARM_WRK (
                                IRConst_U32(dst),
                                OFFB_R15T ));
             dres.whatNext   = Dis_ResteerC;
-            dres.continueAt = (Addr64)(Addr32)
-                                      (guest_R15_curr_instr_notENC+4);
+            dres.continueAt = guest_R15_curr_instr_notENC+4;
             comment = "(assumed not taken)";
          }
          else {
@@ -17375,12 +17417,12 @@ static const UChar it_length_table[256]; /* fwds */
 
 static   
 DisResult disInstr_THUMB_WRK (
-             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr ),
              Bool         resteerCisOk,
              void*        callback_opaque,
              const UChar* guest_instr,
-             VexArchInfo* archinfo,
-             VexAbiInfo*  abiinfo,
+             const VexArchInfo* archinfo,
+             const VexAbiInfo*  abiinfo,
              Bool         sigill_diag
           )
 {
@@ -21971,15 +22013,15 @@ static const UChar it_length_table[256]
    is located in host memory at &guest_code[delta]. */
 
 DisResult disInstr_ARM ( IRSB*        irsb_IN,
-                         Bool         (*resteerOkFn) ( void*, Addr64 ),
+                         Bool         (*resteerOkFn) ( void*, Addr ),
                          Bool         resteerCisOk,
                          void*        callback_opaque,
                          const UChar* guest_code_IN,
                          Long         delta_ENCODED,
-                         Addr64       guest_IP_ENCODED,
+                         Addr         guest_IP_ENCODED,
                          VexArch      guest_arch,
-                         VexArchInfo* archinfo,
-                         VexAbiInfo*  abiinfo,
+                         const VexArchInfo* archinfo,
+                         const VexAbiInfo*  abiinfo,
                          VexEndness   host_endness_IN,
                          Bool         sigill_diag_IN )
 {

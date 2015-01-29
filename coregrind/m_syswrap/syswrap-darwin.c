@@ -57,6 +57,7 @@
 #include "pub_core_syscall.h"
 #include "pub_core_syswrap.h"
 #include "pub_core_tooliface.h"
+#include "pub_core_wordfm.h"
 
 #include "priv_types_n_macros.h"
 #include "priv_syswrap-generic.h"   /* for decls of generic wrappers */
@@ -330,6 +331,63 @@ void VG_(cleanup_thread) ( ThreadArchState* arch )
 
 
 /* ---------------------------------------------------------------------
+   Message reporting, with duplicate removal
+   ------------------------------------------------------------------ */
+
+static WordFM* decaying_string_table = NULL; /* HChar* -> UWord */
+
+static Word decaying_string_table_cmp ( UWord s1, UWord s2 ) {
+   return (Word)VG_(strcmp)( (HChar*)s1, (HChar*)s2 );
+}
+
+static void log_decaying ( const HChar* format, ... ) PRINTF_CHECK(1, 2);
+static void log_decaying ( const HChar* format, ... )
+{
+   // get the message into a stack-allocated string.
+   HChar buf[256];
+   VG_(memset)(buf, 0, sizeof(buf));
+   va_list vargs;
+   va_start(vargs,format);
+   (void) VG_(vsnprintf)(buf, sizeof(buf), format, vargs);
+   va_end(vargs);
+   buf[sizeof(buf)-1] = 0;
+
+   // Now see if it already exists in the table of strings that we have.
+   if (!decaying_string_table) {
+      decaying_string_table
+         = VG_(newFM)( VG_(malloc), "syswrap-darwin.pd.1",
+                       VG_(free), decaying_string_table_cmp );
+   }
+
+   const HChar* key = NULL;
+   UWord        val = 0;
+   if (!VG_(lookupFM)(decaying_string_table,
+                      (UWord*)&key, &val, (UWord)&buf[0])) {
+      // We haven't seen this string before, so strdup it and add
+      // it to the table.
+      vg_assert(key == NULL && val == 0);
+      key = VG_(strdup)("syswrap-darwin.pd.2", buf);
+      VG_(addToFM)(decaying_string_table, (UWord)key, (UWord)0);
+   }
+
+   vg_assert(key != NULL && key != &buf[0]);
+
+   // So, finally, |key| is in the tree, and |val| is what it is
+   // currently associated with.  Increment that counter.
+   val++;
+   Bool b = VG_(addToFM)(decaying_string_table, (UWord)key, (UWord)val);
+   vg_assert(b);
+   
+   if (-1 != VG_(log2)( (UInt)val )) {
+      if (val == 1)
+         VG_(dmsg)("%s\n", key);
+      else
+         VG_(dmsg)("%s (repeated %lu times)\n", key, val);
+   }
+}
+
+
+/* ---------------------------------------------------------------------
    Mach port tracking (based on syswrap-generic's fd tracker)
    ------------------------------------------------------------------ */
 
@@ -589,22 +647,23 @@ void VG_(show_open_ports)(void)
    OpenPort *i;
    
    VG_(message)(Vg_UserMsg, 
-                "MACH PORTS: %d open at exit.", allocated_port_count);
+                "MACH PORTS: %d open at exit.\n", allocated_port_count);
 
    for (i = allocated_ports; i; i = i->next) {
       if (i->name) {
-         VG_(message)(Vg_UserMsg, "Open Mach port 0x%x: %s", i->port, i->name);
+         VG_(message)(Vg_UserMsg, "Open Mach port 0x%x: %s\n", i->port,
+                      i->name);
       } else {
-         VG_(message)(Vg_UserMsg, "Open Mach port 0x%x", i->port);
+         VG_(message)(Vg_UserMsg, "Open Mach port 0x%x\n", i->port);
       }
 
       if (i->where) {
          VG_(pp_ExeContext)(i->where);
-         VG_(message)(Vg_UserMsg, "");
+         VG_(message)(Vg_UserMsg, "\n");
       }
    }
 
-   VG_(message)(Vg_UserMsg, "");
+   VG_(message)(Vg_UserMsg, "\n");
 }
 
 
@@ -612,9 +671,132 @@ void VG_(show_open_ports)(void)
    sync_mappings
    ------------------------------------------------------------------ */
 
-Bool ML_(sync_mappings)(const HChar *when, const HChar *where, Int num)
+typedef
+   enum { CheckAlways=1, CheckEvery20, CheckNever }
+   CheckHowOften;
+
+static const HChar* show_CheckHowOften ( CheckHowOften cho ) {
+   switch (cho) {
+      case CheckAlways:   return "Always ";
+      case CheckEvery20:  return "Every20";
+      case CheckNever:    return "Never  ";
+      default: vg_assert(0);
+   }
+}
+
+/* Statistics for one particular resync-call set of arguments,
+   as specified by key1, key2 and key3. */
+typedef
+   struct {
+      CheckHowOften cho;
+      const HChar*  key1;
+      const HChar*  key2;
+      UWord         key3;
+      ULong         n_checks;
+      ULong         n_mappings_added;
+      ULong         n_mappings_removed;
+   }
+   SyncStats;
+
+static Bool cmp_eqkeys_SyncStats ( SyncStats* ss1, SyncStats* ss2 ) {
+   return ss1->key3 == ss2->key3
+          && 0 == VG_(strcmp)(ss1->key1, ss2->key1)
+          && 0 == VG_(strcmp)(ss1->key2, ss2->key2);
+}
+
+/* The filter data. */
+#define N_SYNCSTATS 1000
+static Int       syncstats_used = 0;
+static SyncStats syncstats[N_SYNCSTATS];
+
+/* Statistics overall, for the filter. */
+static ULong n_syncsRequested = 0; // Total number requested
+static ULong n_syncsPerformed = 0; // Number carried out (the rest skipped)
+
+
+static
+void update_syncstats ( CheckHowOften cho,
+                        const HChar* key1, const HChar* key2,
+                        UWord key3,
+                        UInt n_mappings_added, UInt n_mappings_removed )
 {
-   // Usually the number of segments added/removed in a single calls is very
+   SyncStats dummy = { CheckAlways, key1, key2, key3, 0, 0, 0 };
+   Int i;
+   for (i = 0; i < syncstats_used; i++) {
+      if (cmp_eqkeys_SyncStats(&syncstats[i], &dummy))
+         break;
+   }
+   vg_assert(i >= 0 && i <= syncstats_used);
+   if (i == syncstats_used) {
+      // alloc new
+      vg_assert(syncstats_used < N_SYNCSTATS);
+      syncstats_used++;
+      syncstats[i] = dummy;
+      syncstats[i].cho = cho;
+   }
+   vg_assert(cmp_eqkeys_SyncStats(&syncstats[i], &dummy));
+   syncstats[i].n_checks++;
+   syncstats[i].n_mappings_added   += (ULong)n_mappings_added;
+   syncstats[i].n_mappings_removed += (ULong)n_mappings_removed;
+   // reorder
+   static UInt reorder_ctr = 0;
+   if (i > 0 && 0 == (1 & reorder_ctr++)) {
+      SyncStats tmp = syncstats[i-1];
+      syncstats[i-1] = syncstats[i];
+      syncstats[i] = tmp;
+   }
+}
+
+
+static void maybe_show_syncstats ( void )
+{
+   Int i;
+
+   // display
+   if (0 == (n_syncsRequested & 0xFF)) {
+      VG_(printf)("Resync filter: %'llu requested, %'llu performed (%llu%%)\n",
+                  n_syncsRequested, n_syncsPerformed,
+                  (100 * n_syncsPerformed) / 
+                     (n_syncsRequested == 0 ? 1 : n_syncsRequested));
+      for (i = 0; i < syncstats_used; i++) {
+         if (i >= 40) break; // just show the top 40
+         VG_(printf)("  [%3d] (%s) upd %6llu  diff %4llu+,%3llu-"
+                     "  %s %s 0x%08llx\n",
+                     i, show_CheckHowOften(syncstats[i].cho),
+                     syncstats[i].n_checks, 
+                     syncstats[i].n_mappings_added,
+                     syncstats[i].n_mappings_removed,
+                     syncstats[i].key1, syncstats[i].key2,
+                     (ULong)syncstats[i].key3);
+      }
+      if (i < syncstats_used) {
+        VG_(printf)("  and %d more entries not shown.\n", syncstats_used - i);
+      }
+      VG_(printf)("\n");
+   }
+}
+
+
+Bool ML_(sync_mappings)(const HChar* when, const HChar* where, UWord num)
+{
+   // If VG(clo_resync_filter) == 0, the filter is disabled, and
+   //   we must always honour the resync request.
+   //
+   // If VG(clo_resync_filter) == 1, the filter is enabled,
+   //   so we try to avoid doing the sync if possible, but keep
+   //   quiet.
+   //
+   // If VG(clo_resync_filter) == 2, the filter is enabled,
+   //   so we try to avoid doing the sync if possible, and also
+   //   periodically show stats, so that the filter can be updated.
+   //   (by hand).
+
+   if (VG_(clo_resync_filter) >= 2)
+      maybe_show_syncstats();
+
+   n_syncsRequested++;
+
+   // Usually the number of segments added/removed in a single call is very
    // small e.g. 1.  But it sometimes gets up to at least 100 or so (eg. for
    // Quicktime).  So we use a repeat-with-bigger-buffers-until-success model,
    // because we can't do dynamic allocation within VG_(get_changed_segments),
@@ -625,10 +807,199 @@ Bool ML_(sync_mappings)(const HChar *when, const HChar *where, Int num)
    Int         i;
    Bool        ok;
 
-   if (VG_(clo_trace_syscalls)) {
+   // -------------- BEGIN resync-filter-kludge --------------
+   //
+   // Some kludges to try and avoid the worst case cost hit of doing
+   // zillions of resyncs (huge).  The idea is that many of the most
+   // common resyncs never appear to cause a delta, so we just ignore
+   // them (CheckNever).  Then, a bunch of them also happen a lot, but
+   // only very occasionally cause a delta.  We resync after 20 of those
+   // (CheckEvery20).  Finally, the rest form a long tail, so we always
+   // resync after those (CheckAlways).
+   //
+   // Assume this is kernel-version and word-size specific, so develop
+   // filters accordingly.  This might be overly conservative --
+   // I don't know.
+
+#  define STREQ(_s1, _s2) (0 == VG_(strcmp)((_s1),(_s2)))
+   Bool when_in    = STREQ(when,  "in");
+   Bool when_after = STREQ(when,  "after");
+   Bool where_mmr  = STREQ(where, "mach_msg_receive");
+   Bool where_mmrU = STREQ(where, "mach_msg_receive-UNHANDLED");
+   Bool where_iuct = STREQ(where, "iokit_user_client_trap");
+   Bool where_MwcN = STREQ(where, "ML_(wqthread_continue_NORETURN)");
+   Bool where_woQR = STREQ(where, "workq_ops(QUEUE_REQTHREADS)");
+   Bool where_woTR = STREQ(where, "workq_ops(THREAD_RETURN)");
+   Bool where_ke64 = STREQ(where, "kevent64");
+#  undef STREQ
+
+   vg_assert(
+      1 >= ( (where_mmr ? 1 : 0) + (where_mmrU ? 1 : 0) 
+             + (where_iuct ? 1 : 0) + (where_MwcN ? 1 : 0)
+             + (where_woQR ? 1 : 0) + (where_woTR ? 1 : 0)
+             + (where_ke64 ? 1 : 0)
+   ));
+   // merely to stop gcc complaining of non-use in the case where
+   // there's no filter:
+   vg_assert(when_in    == True || when_in    == False);
+   vg_assert(when_after == True || when_after == False);
+
+   CheckHowOften check = CheckAlways;
+
+#  if DARWIN_VERS == DARWIN_10_9 && VG_WORDSIZE == 8
+   /* ---------- BEGIN filter for 64-bit 10.9.x ---------- */
+   if (when_after && where_mmr) {
+      // "after mach_msg_receive <number>"
+      switch (num) {
+         case 0x00000000: // upd 12414 diff 36+,0-
+            check = CheckEvery20;
+            break;
+         default:
+            break;
+      }
+   }
+   else
+   if (when_after && where_mmrU) {
+      // "after mach_msg_receive-UNHANDLED <number>"
+      switch (num) {
+         case 0x00000000: // upd 16687 diff 73+,0-
+         case 0x00000001: // upd 5106 diff 89+,0-
+         case 0x00000002: // upd 1609 diff 1+,0-
+         case 0x00000003: // upd 1987 diff 6+,0-
+         // case 0x00000b95: // upd 2894 diff 57+,1- <==dangerous
+         case 0x000072d9: // upd 2616 diff 11+,0- 
+         case 0x000072cb: // upd 2616 diff 9+,0-
+         case 0x000074d5: // upd 172 diff 0+,0-
+            check = CheckEvery20;
+            break;
+         default:
+            break;
+      }
+   }
+   else
+   if (when_in && where_MwcN && num == 0x00000000) {
+      // in ML_(wqthread_continue_NORETURN) 0x00000000
+      // upd 4346 diff 0+,0- 
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_woQR && num == 0x00000000) {
+      // after workq_ops(QUEUE_REQTHREADS) 0x00000000
+      // upd 14434 diff 102+,0-
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_woTR && num == 0x00000000) {
+      // after workq_ops(THREAD_RETURN) 0x00000000
+      // upd 14434 diff 102+,0-
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_ke64 && num == 0x00000000) {
+      // after kevent64 0x00000000
+      // upd 1736 diff 78+,0- 
+      check = CheckEvery20;
+   }
+   /* ----------- END filter for 64-bit 10.9.x ----------- */
+#  endif /* DARWIN_VERS == DARWIN_10_9 && VG_WORDSIZE == 8 */
+
+#  if DARWIN_VERS == DARWIN_10_10 && VG_WORDSIZE == 8
+   /* ---------- BEGIN filter for 64-bit 10.10.x ---------- */
+   if (when_after && where_mmr) {
+      // "after mach_msg_receive <number>"
+      switch (num) {
+         case 0x00000000: // upd 2380 diff 23+,0-
+            check = CheckEvery20;
+            break;
+         default:
+            break;
+      }
+   }
+   else
+   if (when_after && where_mmrU) {
+      // "after mach_msg_receive-UNHANDLED <number>"
+      switch (num) {
+         case 0x00000000: // upd 2370 diff 93+,1-  <==dangerous
+         case 0x0000004f: // upd  212 diff 2+,0-
+         case 0x00000b95: // upd  9826 diff 163+,1-  diff scale, dangerous
+         case 0x00000ba5: // upd  304 diff 0+,0-
+         case 0x0000157f: // upd  201 diff 2+,0-
+         case 0x0000157d: // upd  197 diff 1+,0-        
+         case 0x0000333d: // upd  112 diff 0+,0-
+         case 0x0000333f: // upd  223 diff 10+,0-
+         case 0x000072cd: // upd  8286 diff 98+,0-   diff scale
+         case 0x000072ae: // upd  193 diff 10+,0-
+         case 0x000072ec: // upd  319 diff 7+,0-
+         case 0x77303074: // upd  113 diff 3+,0-
+         case 0x10000000: // upd  314 diff 6+,0-
+            check = CheckEvery20;
+            break;
+         default:
+            break;
+      }
+   }
+   else
+   if (when_in && where_MwcN && num == 0x00000000) {
+      // in ML_(wqthread_continue_NORETURN) 0x00000000
+      // upd 1110 diff 37+,0-
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_woQR && num == 0x00000000) {
+      // after workq_ops(QUEUE_REQTHREADS) 0x00000000
+      // upd 1099 diff 37+,0-
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_woTR && num == 0x00000000) {
+      // after workq_ops(THREAD_RETURN) 0x00000000
+      // 1239 diff 53+,0-
+      check = CheckEvery20;
+   }
+   else
+   if (when_after && where_ke64 && num == 0x00000000) {
+      // after kevent64 0x00000000
+      // upd 1463 diff 15+,0-
+      check = CheckEvery20;
+   }
+   /* ----------- END filter for 64-bit 10.10.x ----------- */
+#  endif /* DARWIN_VERS == DARWIN_10_10 && VG_WORDSIZE == 8 */
+
+   /* Regardless of what the filter says, force a sync every 1 time in
+      1000, to stop things getting too far out of sync. */
+   {
+     static UInt ctr1k = 0;
+     ctr1k++;
+     if ((ctr1k % 1000) == 0)
+        check = CheckAlways;
+   }
+
+   /* If the filter is disabled, we must always check. */
+   if (VG_(clo_resync_filter) == 0)
+      check = CheckAlways;
+
+   switch (check) {
+      case CheckAlways:
+         break;
+      case CheckEvery20: {
+         // only resync once every 20th time
+         static UInt ctr10 = 0;
+         ctr10++;
+         if ((ctr10 % 20) != 0) return False;
+         break;
+      }
+      case CheckNever:
+         return False;
+      default:
+         vg_assert(0);
+   }
+   //
+   // --------------- END resync-filter-kludge ---------------
+
+   if (0 || VG_(clo_trace_syscalls)) {
        VG_(debugLog)(0, "syswrap-darwin",
-                     "sync_mappings(\"%s\", \"%s\", %d)\n", 
-                     when, where, num);
+                     "sync_mappings (%s) (\"%s\", \"%s\", 0x%llx)\n", 
+                     show_CheckHowOften(check), when, where, (ULong)num);
    }
 
    // 16 is enough for most cases, but small enough that overflow happens
@@ -637,20 +1008,25 @@ Bool ML_(sync_mappings)(const HChar *when, const HChar *where, Int num)
    ok = False;
    while (!ok) {
       VG_(free)(css);   // css is NULL on first iteration;  that's ok.
-      css = VG_(calloc)("sys_wrap.sync_mappings", css_size, sizeof(ChangedSeg));
+      css = VG_(calloc)("sys_wrap.sync_mappings",
+                        css_size, sizeof(ChangedSeg));
       ok = VG_(get_changed_segments)(when, where, css, css_size, &css_used);
       css_size *= 2;
    } 
+
+   UInt css_added = 0, css_removed = 0;
 
    // Now add/remove them.
    for (i = 0; i < css_used; i++) {
       ChangedSeg* cs = &css[i];
       if (cs->is_added) {
+         css_added++;
          ML_(notify_core_and_tool_of_mmap)(
                cs->start, cs->end - cs->start + 1,
                cs->prot, VKI_MAP_PRIVATE, 0, cs->offset);
          // should this call VG_(di_notify_mmap) also?
       } else {
+         css_removed++;
          ML_(notify_core_and_tool_of_munmap)(
                cs->start, cs->end - cs->start + 1);
       }
@@ -668,6 +1044,14 @@ Bool ML_(sync_mappings)(const HChar *when, const HChar *where, Int num)
    }
 
    VG_(free)(css);
+
+   if (0)
+      VG_(debugLog)(0, "syswrap-darwin", "SYNC: %d  %s  %s\n",
+                    css_used, when, where);
+
+   // Update the stats, so we can derive the filter above.
+   n_syncsPerformed++;
+   update_syncstats(check, when, where, num, css_added, css_removed);
 
    return css_used > 0;
 }
@@ -1238,7 +1622,7 @@ PRE(fcntl)
 
    default:
       PRINT("fcntl ( %ld, %ld [??] )", ARG1, ARG2);
-      VG_(printf)("UNKNOWN fcntl %ld!", ARG2);
+      log_decaying("UNKNOWN fcntl %ld!", ARG2);
       break;
    }
 }
@@ -1658,7 +2042,8 @@ POST(workq_ops)
 
 PRE(__mac_syscall)
 {
-   PRINT("__mac_syscall( %#lx, %ld, %#lx )", ARG1, ARG2, ARG3);
+   PRINT("__mac_syscall( %#lx(%s), %ld, %#lx )",
+         ARG1, (HChar*)ARG1, ARG2, ARG3);
    PRE_REG_READ3(int,"__mac_syscall", char *,"policy", 
                  int,"call", void *,"arg");
 
@@ -1745,12 +2130,7 @@ PRE(__pthread_sigmask)
    // GrP fixme
    // JRS: arguments are identical to sigprocmask 
    // (how, sigset_t*, sigset_t*).  Perhaps behave identically?
-   static Bool warned;
-   if (!warned) {
-      VG_(printf)("UNKNOWN __pthread_sigmask is unsupported. "
-                  "This warning will not be repeated.\n");
-      warned = True;
-   }
+   log_decaying("UNKNOWN __pthread_sigmask is unsupported.");
    SET_STATUS_Success( 0 );
 }
 
@@ -2509,6 +2889,9 @@ static void scan_attrlist(ThreadId tid, struct vki_attrlist *attrList,
 #if DARWIN_VERS >= DARWIN_10_6
       { ATTR_CMN_FULLPATH,        -1 }, 
 #endif
+#if DARWIN_VERS >= DARWIN_10_8
+      { ATTR_CMN_ADDEDTIME,       -1 }, 
+#endif
       { 0,                        0 }
    };
    static const attrspec volattr[] = {
@@ -2936,7 +3319,7 @@ PRE(posix_spawn)
    // Decide whether or not we want to follow along
    { // Make 'child_argv' be a pointer to the child's arg vector
      // (skipping the exe name)
-     HChar** child_argv = (HChar**)ARG4;
+     const HChar** child_argv = (const HChar**)ARG4;
      if (child_argv && child_argv[0] == NULL)
         child_argv = NULL;
      trace_this_child = VG_(should_we_trace_this_child)( (HChar*)ARG2, child_argv );
@@ -3488,12 +3871,21 @@ PRE(getdirentries64)
    PRINT("getdirentries64(%ld, %#lx, %lu, %#lx)", ARG1, ARG2, ARG3, ARG4);
    PRE_REG_READ4(vki_ssize_t, "getdirentries", 
                  int,fd, char *,buf, vki_size_t,nbytes, vki_off_t *,basep);
-   PRE_MEM_WRITE("getdirentries(position)", ARG4, sizeof(vki_off_t));
-   PRE_MEM_WRITE("getdirentries(buf)", ARG2, ARG3);
+   /* JRS 18-Nov-2014: it appears that sometimes |basep| doesn't point
+      to valid memory and the kernel doesn't modify it.  I can't
+      determine the conditions under which that happens.  But it
+      causes Memcheck to complain, confusingly.  So disable this check
+      for the time being.
+
+      PRE_MEM_WRITE("getdirentries64(position)", ARG4, sizeof(vki_off_t));
+   */
+   PRE_MEM_WRITE("getdirentries64(buf)", ARG2, ARG3);
 }
 POST(getdirentries64) 
 {
-   POST_MEM_WRITE(ARG4, sizeof(vki_off_t));
+   /* Disabled; see coments in the PRE wrapper.
+      POST_MEM_WRITE(ARG4, sizeof(vki_off_t));
+   */
    // GrP fixme be specific about d_name? (fixme copied from 32 bit version)
    POST_MEM_WRITE(ARG2, RES);
 }
@@ -3606,7 +3998,7 @@ PRE(auditon)
       break;
 
    default:
-      VG_(message)(Vg_UserMsg, "UNKNOWN auditon cmd %ld", ARG1);
+      VG_(message)(Vg_UserMsg, "UNKNOWN auditon cmd %ld\n", ARG1);
       break;
    }
 }
@@ -3706,100 +4098,122 @@ POST(mmap)
 }
 
 
-PRE(__sysctl)
+/* This function holds common elements of PRE(__sysctl) and
+   PRE(sysctlbyname). */
+static void common_PRE_sysctl (
+               /*IMPLICIT ARGS*/
+               ThreadId tid, /*OUT*/SyscallStatus* status, /*OUT*/UWord* flags,
+               /*!IMPLICIT ARGS*/
+               Bool is_kern_dot_userstack,
+               UWord oldp, UWord oldlenp,
+               UWord newp, UWord newlen )
 {
-   PRINT( "__sysctl ( %#lx, %ld, %#lx, %#lx, %#lx, %ld )", 
-          ARG1, ARG2, ARG3, ARG4, ARG5, ARG6 );
-
-   PRE_REG_READ6(int, "__sysctl", int*, name, unsigned int, namelen, 
-                 void*, oldp, vki_size_t *, oldlenp, 
-                 void*, newp, vki_size_t *, newlenp);
-
-   PRE_MEM_READ("sysctl(name)", ARG1, ARG2);  // reads name[0..namelen-1]
-   if (ARG4) {
-      // writes *ARG4
-      PRE_MEM_WRITE("sysctl(oldlenp)", ARG4, sizeof(size_t));
-      if (ARG3) {
-         // also reads *ARG4, and writes as much as ARG3[0..ARG4-1]
-         PRE_MEM_READ("sysctl(oldlenp)", ARG4, sizeof(size_t));
-         PRE_MEM_WRITE("sysctl(oldp)", ARG3, *(size_t *)ARG4);
+   if (oldlenp) {
+      // writes *oldlenp
+      PRE_MEM_WRITE("sysctl(oldlenp)", oldlenp, sizeof(size_t));
+      if (oldp) {
+         // also reads *oldlenp, and writes up to oldp[0..(*oldlenp)-1]
+         PRE_MEM_READ("sysctl(oldlenp)", oldlenp, sizeof(size_t));
+         PRE_MEM_WRITE("sysctl(oldp)", oldp, *(size_t*)oldlenp);
       }
    }
-   if (ARG5) {
-      PRE_MEM_READ("sysctl(newp)", ARG5, ARG6);
-   }
-
-   if (VG_(clo_trace_syscalls)) {
-      unsigned int i;
-      int *name = (int *)ARG1;
-      VG_(printf)(" mib: [ ");
-      for (i = 0; i < ARG2; i++) {
-         VG_(printf)("%d ", name[i]);
-      }
-      VG_(printf)("]");
+   if (newp) {
+      PRE_MEM_READ("sysctl(newp)", newp, newlen);
    }
 
    // GrP fixme intercept KERN_PROCARGS and KERN_PROC_PID for our pid
    // (executable path and arguments and environment
-
-   {
-      // Intercept sysctl(kern.usrstack). The kernel's reply would be
-      // Valgrind's stack, not the client's stack.
-      // GrP fixme kern_usrstack64
-      if (ARG1  &&  ARG2 == 2  &&  
-          ((int *)ARG1)[0] == VKI_CTL_KERN  &&  
-#if VG_WORDSIZE == 4
-          ((int *)ARG1)[1] == VKI_KERN_USRSTACK32
-#else
-          ((int *)ARG1)[1] == VKI_KERN_USRSTACK64
-#endif
-          )
-      {
-         if (ARG5/*newp*/  ||  ARG6/*newlen*/) {
-            SET_STATUS_Failure(VKI_EPERM); // USRSTACK is read-only
-         } else {
-            Addr *oldp = (Addr *)ARG3;
-            size_t *oldlenp = (size_t *)ARG4;
-            if (oldlenp) {
-               // According to some searches on the net, it looks like USRSTACK
-               // gives the address of the byte following the highest byte of the stack
-               // As VG_(clstk_end) is the address of the highest addressable byte, we
-               // add +1.
-               Addr stack_end = VG_(clstk_end)+1;
-               size_t oldlen = *oldlenp;
-               // always return actual size
-               *oldlenp = sizeof(Addr);
-               if (oldp  &&  oldlen >= sizeof(Addr)) {
-                  // oldp is big enough
-                  // copy value and return 0
-                  *oldp = stack_end;
-                  SET_STATUS_Success(0);
-               } else {
-                  // oldp isn't big enough
-                  // copy as much as possible and return ENOMEM
-                  if (oldp) VG_(memcpy)(oldp, &stack_end, oldlen);
-                  SET_STATUS_Failure(VKI_ENOMEM);
-               }
+        
+   if (is_kern_dot_userstack) {
+      // Intercept sysctl(kern.usrstack). The kernel's reply
+      // would be Valgrind's stack, not the client's stack.
+      // GrP fixme kern_usrstack64 */
+      if (newp || newlen) {
+         SET_STATUS_Failure(VKI_EPERM); // USRSTACK is read-only */
+      } else {
+         Addr* t_oldp = (Addr*)oldp;
+         size_t* t_oldlenp = (size_t*)oldlenp;
+         if (t_oldlenp) {
+            // According to some searches on the net, it looks like
+            // USRSTACK gives the address of the byte following the
+            // highest byte of the stack.  As VG_(clstk_end) is the
+            // address of the highest addressable byte, we add 1.
+            Addr stack_end = VG_(clstk_end)+1;
+            size_t oldlen = *t_oldlenp;
+            // always return actual size
+            *t_oldlenp = sizeof(Addr);
+            if (t_oldp && oldlen >= sizeof(Addr)) {
+               // oldp is big enough.  copy value and return 0
+               *t_oldp = stack_end;
+               SET_STATUS_Success(0);
+            } else {
+               // oldp isn't big enough.  copy as much as possible
+               // and return ENOMEM
+               if (t_oldp) VG_(memcpy)(t_oldp, &stack_end, oldlen);
+               SET_STATUS_Failure(VKI_ENOMEM);
             }
          }
       }
    }
 
-   if (!SUCCESS  &&  !FAILURE) {
+   if (!SUCCESS && !FAILURE) {
       // Don't set SfPostOnFail if we've already handled it locally.
       *flags |= SfPostOnFail;
    }
 }
 
+
+PRE(__sysctl)
+{
+   UWord name    = ARG1;
+   UWord namelen = ARG2;
+   UWord oldp    = ARG3;
+   UWord oldlenp = ARG4;
+   UWord newp    = ARG5;
+   UWord newlen  = ARG6;
+
+   PRINT( "__sysctl ( %#lx, %ld, %#lx, %#lx, %#lx, %ld )", 
+          name, namelen, oldp, oldlenp, newp, newlen );
+
+   PRE_REG_READ6(int, "__sysctl", int*, name, unsigned int, namelen, 
+                 void*, oldp, vki_size_t *, oldlenp, 
+                 void*, newp, vki_size_t *, newlenp);
+
+   PRE_MEM_READ("sysctl(name)", name, namelen);  // reads name[0..namelen-1]
+
+   if (VG_(clo_trace_syscalls)) {
+      UInt i;
+      Int* t_name = (Int*)name;
+      VG_(printf)(" mib: [ ");
+      for (i = 0; i < namelen; i++) {
+         VG_(printf)("%d ", t_name[i]);
+      }
+      VG_(printf)("]");
+   }
+
+   Int vKI_KERN_USRSTACKXX
+      = VG_WORDSIZE == 4 ? VKI_KERN_USRSTACK32 : VKI_KERN_USRSTACK64; 
+   Bool is_kern_dot_userstack
+      = name && namelen == 2
+        && ((Int*)name)[0] == VKI_CTL_KERN
+        && ((Int*)name)[1] == vKI_KERN_USRSTACKXX;
+
+   common_PRE_sysctl( /*IMPLICIT ARGS*/tid,status,flags,/*!IMPLICIT_ARGS*/
+                      is_kern_dot_userstack, oldp, oldlenp, newp, newlen );
+}
+
 POST(__sysctl)
 {
-   if (SUCCESS  ||  ERR == VKI_ENOMEM) {
+   UWord oldp    = ARG3;
+   UWord oldlenp = ARG4;
+
+   if (SUCCESS || ERR == VKI_ENOMEM) {
       // sysctl can write truncated data and return VKI_ENOMEM
-      if (ARG4) {
-         POST_MEM_WRITE(ARG4, sizeof(size_t));
+      if (oldlenp) {
+         POST_MEM_WRITE(oldlenp, sizeof(size_t));
       }
-      if (ARG3  &&  ARG4) {
-         POST_MEM_WRITE(ARG3, *(size_t *)ARG4);
+      if (oldp && oldlenp) {
+         POST_MEM_WRITE(oldp, *(size_t*)oldlenp);
       }
    }
 }
@@ -3915,9 +4329,41 @@ POST(proc_info)
 {
 #if VG_WORDSIZE == 4
    vg_assert(SUCCESS);
+
+   // Intercept internal call to proc_setcontrol() where flavor = 2, arg = 0
+   if (ARG1 == 5 && ARG3 == 2 && LOHI64(ARG4,ARG5) == 0 )
+   {
+       const HChar* new_name = (const HChar*) ARG6;
+       if (new_name) {    // Paranoia
+          ThreadState* tst = VG_(get_ThreadState)(tid);
+          SizeT new_len = VG_(strlen)(new_name);
+           
+          /* Don't bother reusing the memory. This is a rare event. */
+          tst->thread_name =
+             VG_(realloc)("syscall(proc_info)", tst->thread_name, new_len + 1);
+          VG_(strcpy)(tst->thread_name, new_name);
+       }
+   }
+    
    POST_MEM_WRITE(ARG6, ARG7);
 #else
    vg_assert(SUCCESS);
+
+   // Intercept internal call to proc_setcontrol() where flavor = 2, arg = 0
+   if (ARG1 == 5 && ARG3 == 2 && ARG4 == 0 )
+   {
+      const HChar* new_name = (const HChar*) ARG5;
+      if (new_name) {    // Paranoia
+         ThreadState* tst = VG_(get_ThreadState)(tid);
+         SizeT new_len = VG_(strlen)(new_name);
+            
+         /* Don't bother reusing the memory. This is a rare event. */
+         tst->thread_name =
+            VG_(realloc)("syscall(proc_info)", tst->thread_name, new_len + 1);
+         VG_(strcpy)(tst->thread_name, new_name);
+       }
+   }
+
    POST_MEM_WRITE(ARG5, ARG6);
 #endif
 }
@@ -6850,6 +7296,33 @@ PRE(thread_suspend)
        // Do keep the scheduler lock while suspending any other thread. 
        // Otherwise we might halt the other thread while it holds the lock, 
        // which would deadlock the process.
+       *flags &= ~SfMayBlock;
+   }
+}
+
+
+POST(thread_resume)
+{
+}
+
+PRE(thread_resume)
+{
+   mach_msg_header_t *mh = (mach_msg_header_t *)ARG1;
+   Bool self_resume = (mh->msgh_request_port == MACH_THREAD);
+
+   PRINT("thread_resume(%s)", name_for_port(mh->msgh_request_port));
+
+   AFTER = POST_FN(thread_resume);
+
+   if (self_resume) {
+       // This doesn't make much sense.  If we are resuming ourself, we can't
+       // already be running.  So I don't see how we can ever get here.
+       vg_assert(0);
+   } else {
+       // Resuming some other thread.  It might not yet come back to life
+       // (if the suspend count is still above zero) so make sure we keep
+       // holding the lock.
+       *flags &= ~SfMayBlock;
    }
 }
 
@@ -7069,14 +7542,14 @@ PRE(bootstrap_look_up)
 
 POST(mach_msg_receive)
 {
-   // mach_msg_header_t *mh = (mach_msg_header_t *)ARG1;
+   mach_msg_header_t *mh = (mach_msg_header_t *)ARG1;
 
    // GrP fixme don't know of anything interesting here currently
    // import_complex_message handles everything
    // PRINT("UNHANDLED reply %d", mh->msgh_id);
 
    // Assume the call may have mapped or unmapped memory
-   ML_(sync_mappings)("after", "mach_msg_receive", 0);
+   ML_(sync_mappings)("after", "mach_msg_receive", mh->msgh_id);
 }
 
 PRE(mach_msg_receive)
@@ -7141,9 +7614,9 @@ PRE(mach_msg_host)
 
    default:
       // unknown message to host self
-      VG_(printf)("UNKNOWN host message [id %d, to %s, reply 0x%x]\n", 
-                  mh->msgh_id, name_for_port(mh->msgh_request_port), 
-                  mh->msgh_reply_port);
+      log_decaying("UNKNOWN host message [id %d, to %s, reply 0x%x]", 
+                   mh->msgh_id, name_for_port(mh->msgh_request_port), 
+                   mh->msgh_reply_port);
       return;
    }
 } 
@@ -7319,9 +7792,9 @@ PRE(mach_msg_task)
 
    default:
       // unknown message to task self
-      VG_(printf)("UNKNOWN task message [id %d, to %s, reply 0x%x]\n",
-                  mh->msgh_id, name_for_port(mh->msgh_remote_port),
-                  mh->msgh_reply_port);
+      log_decaying("UNKNOWN task message [id %d, to %s, reply 0x%x]",
+                   mh->msgh_id, name_for_port(mh->msgh_remote_port),
+                   mh->msgh_reply_port);
       return;
    }
 } 
@@ -7342,6 +7815,9 @@ PRE(mach_msg_thread)
       return;
    case 3605: 
       CALL_PRE(thread_suspend);
+      return;
+   case 3606:
+      CALL_PRE(thread_resume);
       return;
    case 3612: 
       CALL_PRE(thread_info);
@@ -7425,7 +7901,14 @@ PRE(mach_msg)
 
       // GrP fixme handle sender-specified message trailer
       // (but is this only for too-secure processes?)
+      // JRS 11 Nov 2014: this assertion is OK for <= 10.9 but fails on 10.10
+#     if DARWIN_VERS == DARWIN_10_10
+      if (mh->msgh_bits & MACH_SEND_TRAILER) {
+         log_decaying("UNKNOWN mach_msg unhandled MACH_SEND_TRAILER option");
+      }
+#     else
       vg_assert(! (mh->msgh_bits & MACH_SEND_TRAILER));
+#     endif
 
       MACH_REMOTE = mh->msgh_remote_port;
       MACH_MSGH_ID = mh->msgh_id;
@@ -7636,7 +8119,8 @@ POST(mach_msg)
 
 POST(mach_msg_unhandled)
 {
-   ML_(sync_mappings)("after", "mach_msg_receive (unhandled)", 0);
+   mach_msg_header_t *mh = (mach_msg_header_t *)ARG1;
+   ML_(sync_mappings)("after", "mach_msg_receive-UNHANDLED", mh->msgh_id);
 }
 
 POST(mach_msg_unhandled_check)
@@ -8154,7 +8638,7 @@ PRE(thread_fast_set_cthread_self)
    {
       ThreadState *tst = VG_(get_ThreadState)(tid);
       tst->os_state.pthread = ARG1;
-      tst->arch.vex.guest_GS_0x60 = ARG1;
+      tst->arch.vex.guest_GS_CONST = ARG1;
       // SET_STATUS_Success(0x60);
       // see comments on x86 case just above
       SET_STATUS_from_SysRes(
@@ -8593,6 +9077,115 @@ PRE(kernelrpc_mach_port_unguard_trap)
 
 
 /* ---------------------------------------------------------------------
+   Added for OSX 10.10 (Yosemite)
+   ------------------------------------------------------------------ */
+
+#if DARWIN_VERS >= DARWIN_10_10
+
+PRE(necp_match_policy)
+{
+   // int necp_match_policy(uint8_t *parameters, size_t parameters_size,
+   //                       struct necp_aggregate_result *returned_result)
+   PRINT("necp_match_policy(FIXME)(%lx,%ld, %lx)", ARG1, ARG2, ARG3);
+   PRE_REG_READ3(int, "necp_match_policy", uint8_t*, parameters,
+                 size_t, parameters_size, struct necp_aggregate_result*,
+                 returned_result);
+   PRE_MEM_READ("necp_match_policy(returned_result)", ARG1, ARG2);
+}
+POST(necp_match_policy)
+{
+   POST_MEM_WRITE(ARG3, sizeof(struct vki_necp_aggregate_result));
+}
+
+PRE(sysctlbyname)
+{
+   UWord name    = ARG1;
+   UWord namelen = ARG2;
+   UWord oldp    = ARG3;
+   UWord oldlenp = ARG4;
+   UWord newp    = ARG5;
+   UWord newlen  = ARG6;
+
+   PRINT( "sysctlbyname ( %#lx,%ld, %#lx,%#lx, %#lx,%ld )", 
+          name, namelen, oldp, oldlenp, newp, newlen );
+
+   PRE_REG_READ6(int, "sysctlbyname", char*, name, size_t, namelen,
+                 void*, oldp, vki_size_t *, oldlenp, 
+                 void*, newp, vki_size_t *, newlenp);
+
+   // reads name[0..namelen-1]
+   PRE_MEM_READ("sysctlbyname(name)", name, namelen);
+
+   if (VG_(clo_trace_syscalls)) {
+      UInt i;
+      const HChar* t_name = (const HChar*)name;
+      VG_(printf)(" name: ");
+      for (i = 0; i < namelen; i++) {
+         VG_(printf)("%c", t_name[i]);
+      }
+      VG_(printf)(" ");
+   }
+  
+   Bool is_kern_dot_userstack
+      = False;
+
+   common_PRE_sysctl( /*IMPLICIT ARGS*/tid,status,flags,/*!IMPLICIT_ARGS*/
+                      is_kern_dot_userstack, oldp, oldlenp, newp, newlen );
+}
+POST(sysctlbyname)
+{
+   UWord oldp    = ARG3;
+   UWord oldlenp = ARG4;
+
+   if (SUCCESS || ERR == VKI_ENOMEM) {
+      // sysctl can write truncated data and return VKI_ENOMEM
+      if (oldlenp) {
+         POST_MEM_WRITE(oldlenp, sizeof(size_t));
+      }
+      if (oldp && oldlenp) {
+         POST_MEM_WRITE(oldp, *(size_t*)oldlenp);
+      }
+   }
+}
+
+PRE(getattrlistbulk)
+{
+   // int getattrlistbulk(int dirfd, struct attrlist *alist,
+   //                     void *attributeBuffer, size_t bufferSize,
+   //                     uint64_t options);
+   // Presumably the last arg is value-pair in the 32 bit case.
+   PRINT("getattrlistbulk(FIXME)(%ld, %lx, %lx,%lu, %lu)",
+         ARG1, ARG2, ARG3, ARG4, ARG5);
+   PRE_REG_READ5(int, "getattrlistbulk", int, dirfd, void*, list,
+                 void*, attributeBuffer, size_t, bufferSize,
+                 uint32_t, options_lo32);
+   PRE_MEM_READ("getattrlistbulk(alist)", ARG2, sizeof(struct vki_attrlist));
+   PRE_MEM_WRITE("getattrlistbulk(attributeBuffer)", ARG3, ARG4);
+}
+POST(getattrlistbulk)
+{
+   // FIXME: this isn't right.  It seems as if what is returned is a
+   // set of variable-length records -- see complication in
+   // POST(getattrlist).  For now, just paint the entire result buffer
+   // as defined.  Sigh.
+   vg_assert(SUCCESS);
+   if (ARG3 && /* "at least one output element was written" */RES > 0)
+      POST_MEM_WRITE(ARG3, ARG4);
+}
+
+PRE(bsdthread_ctl)
+{
+   // int bsdthread_ctl(user_addr_t cmd, user_addr_t arg1, 
+   //                   user_addr_t arg2, user_addr_t arg3)
+   PRINT("bsdthread_ctl(FIXME)(%lx,%lx,%lx,%lx)", ARG1, ARG2, ARG3, ARG4);
+   PRE_REG_READ4(int, "bsdthreadctl",
+                 void*, cmd, void*, arg1, void*, arg2, void*, arg3);
+}
+
+#endif /* DARWIN_VERS >= DARWIN_10_10 */
+
+
+/* ---------------------------------------------------------------------
    syscall tables
    ------------------------------------------------------------------ */
 
@@ -8908,7 +9501,8 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    MACX_(__NR_sem_wait,    sem_wait), 
    MACX_(__NR_sem_trywait, sem_trywait), 
    MACX_(__NR_sem_post,    sem_post), 
-// _____(__NR_sem_getvalue), 
+   // 274 seems to have been repurposed for 10.10.  Was sem_getvalue,
+   //     has become sysctlbyname.  See below.
    MACXY(__NR_sem_init,    sem_init), 
    MACX_(__NR_sem_destroy, sem_destroy), 
    MACX_(__NR_open_extended,  open_extended),    // 277
@@ -9100,7 +9694,12 @@ const SyscallTableEntry ML_(syscall_table)[] = {
     MACX_(__NR_connectx, connectx),
     MACX_(__NR_disconnectx, disconnectx),
 #endif
-
+#if DARWIN_VERS >= DARWIN_10_10
+   MACXY(__NR_sysctlbyname,        sysctlbyname),       // 274
+   MACXY(__NR_necp_match_policy,   necp_match_policy),  // 460
+   MACXY(__NR_getattrlistbulk,     getattrlistbulk),    // 461
+   MACX_(__NR_bsdthread_ctl,       bsdthread_ctl),      // 478
+#endif
 // _____(__NR_MAXSYSCALL)
    MACX_(__NR_DARWIN_FAKE_SIGRETURN, FAKE_SIGRETURN)
 };

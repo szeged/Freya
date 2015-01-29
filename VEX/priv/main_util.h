@@ -46,6 +46,10 @@
 #define LIKELY(x)       __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)     __builtin_expect(!!(x), 0)
 
+#if !defined(offsetof)
+#   define offsetof(type,memb) ((SizeT)(HWord)&((type*)0)->memb)
+#endif
+
 /* Stuff for panicking and assertion. */
 
 #define VG__STRING(__str)  #__str
@@ -62,6 +66,9 @@ extern void vex_assert_fail ( const HChar* expr, const HChar* file,
 __attribute__ ((__noreturn__))
 extern void vpanic ( const HChar* str );
 
+__attribute__ ((__noreturn__)) __attribute__ ((format (printf, 1, 2)))
+extern void vfatal ( const HChar* format, ... );
+
 
 /* Printing */
 
@@ -75,8 +82,8 @@ extern UInt vex_sprintf ( HChar* buf, const HChar *format, ... );
 /* String ops */
 
 extern Bool vex_streq ( const HChar* s1, const HChar* s2 );
-extern Int  vex_strlen ( const HChar* str );
-extern void vex_bzero ( void* s, UInt n );
+extern SizeT vex_strlen ( const HChar* str );
+extern void vex_bzero ( void* s, SizeT n );
 
 
 /* Storage management: clear the area, and allocate from it. */

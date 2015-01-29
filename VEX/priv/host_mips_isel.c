@@ -640,16 +640,16 @@ static void doHelperCall(/*OUT*/UInt*   stackAdjustAfterCall,
         vassert(0);
    }
 
-   ULong target = mode64 ? Ptr_to_ULong(cee->addr) :
-                           toUInt(Ptr_to_ULong(cee->addr));
+   Addr64 target = mode64 ? (Addr)cee->addr :
+                            toUInt((Addr)cee->addr);
 
    /* Finally, generate the call itself.  This needs the *retloc value
       set in the switch above, which is why it's at the end. */
    if (cc == MIPScc_AL)
-      addInstr(env, MIPSInstr_CallAlways(cc, (Addr64)target, argiregs,
+      addInstr(env, MIPSInstr_CallAlways(cc, target, argiregs,
                                          *retloc));
    else
-      addInstr(env, MIPSInstr_Call(cc, (Addr64)target, argiregs, src, *retloc));
+      addInstr(env, MIPSInstr_Call(cc, target, argiregs, src, *retloc));
 }
 
 /*---------------------------------------------------------*/
@@ -1355,7 +1355,7 @@ static HReg iselWordExpr_R_wrk(ISelEnv * env, IRExpr * e)
             argiregs |= (1 << 4);
             argiregs |= (1 << 5);
             addInstr(env, MIPSInstr_CallAlways( MIPScc_AL,
-                                                (HWord)Ptr_to_ULong(fn),
+                                                (Addr)fn,
                                                 argiregs, rloc));
             addInstr(env, mk_iMOVds_RR(res, hregMIPS_GPR2(env->mode64)));
             return res;
@@ -1763,7 +1763,7 @@ static HReg iselWordExpr_R_wrk(ISelEnv * env, IRExpr * e)
          addInstr(env, mk_iMOVds_RR(hregMIPS_GPR4(env->mode64), regL));
          argiregs |= (1 << 4);
          addInstr(env, MIPSInstr_CallAlways( MIPScc_AL,
-                                             (HWord)Ptr_to_ULong(fn),
+                                             (Addr)fn,
                                              argiregs, rloc));
          addInstr(env, mk_iMOVds_RR(res, hregMIPS_GPR2(env->mode64)));
          return res;
@@ -3954,6 +3954,7 @@ static void iselStmt(ISelEnv * env, IRStmt * stmt)
             addInstr(env, MIPSInstr_Cas(4, old, addr, expd, data, mode64));
          }
       }
+      return;
 
    /* --------- INSTR MARK --------- */
    /* Doesn't generate any executable code ... */
@@ -4151,7 +4152,7 @@ static void iselNext ( ISelEnv* env,
 /*---------------------------------------------------------*/
 
 /* Translate an entire BB to mips code. */
-HInstrArray *iselSB_MIPS ( IRSB* bb,
+HInstrArray *iselSB_MIPS ( const IRSB* bb,
                            VexArch arch_host,
                            const VexArchInfo* archinfo_host,
                            const VexAbiInfo* vbi,
@@ -4159,7 +4160,7 @@ HInstrArray *iselSB_MIPS ( IRSB* bb,
                            Int offs_Host_EvC_FailAddr,
                            Bool chainingAllowed,
                            Bool addProfInc,
-                           Addr64 max_ga )
+                           Addr max_ga )
 {
    Int      i, j;
    HReg     hreg, hregHI;

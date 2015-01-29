@@ -953,9 +953,9 @@ void scan_all_valid_memory_catcher ( Int sigNo, Addr addr )
 //   be A, while lower level cliques will be B and C. 
 /*
            A
-         /   \                          
+         /   \
         B     C
-       / \   / \ 
+       / \   / \
       D   E F   G
 */
 // Proper handling of top and lowest level clique allows block_list of a loss
@@ -1467,7 +1467,7 @@ static void print_results(ThreadId tid, LeakCheckParams* lcp)
       for (i = 0; i < N_LEAK_CHECK_HEURISTICS; i++)
          if (old_blocks_heuristically_reachable[i] > 0 
              || MC_(blocks_heuristically_reachable)[i] > 0)
-            VG_(umsg)("                        %19s: "
+            VG_(umsg)("                        %-19s: "
                       "%'lu%s bytes in %'lu%s blocks\n",
                       pp_heuristic(i),
                       MC_(bytes_heuristically_reachable)[i], 
@@ -1634,7 +1634,7 @@ static void scan_memory_root_set(Addr searched, SizeT szB)
       // memory by explicitly mapping /dev/zero.
       if (seg->kind == SkFileC 
           && (VKI_S_ISCHR(seg->mode) || VKI_S_ISBLK(seg->mode))) {
-         HChar* dev_name = VG_(am_get_filename)( seg );
+         const HChar* dev_name = VG_(am_get_filename)( seg );
          if (dev_name && 0 == VG_(strcmp)(dev_name, "/dev/zero")) {
             // Don't skip /dev/zero.
          } else {

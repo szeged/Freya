@@ -107,7 +107,7 @@ struct nonrt_sigframe {
    struct vki_sigcontext sigcontext;
    struct vki_mcontext mcontext;
    struct vg_sig_private priv;
-   unsigned char abigap[224];
+   unsigned char abigap[224];    // unused
 };
 
 /* Structure put on stack for signal handlers with SA_SIGINFO set. */
@@ -116,7 +116,7 @@ struct rt_sigframe {
    vki_siginfo_t siginfo;
    struct vki_ucontext ucontext;
    struct vg_sig_private priv;
-   unsigned char abigap[224];
+   unsigned char abigap[224];    // unused
 };
 
 #define SET_SIGNAL_LR(zztst, zzval)                          \
@@ -183,7 +183,7 @@ void stack_mcontext ( struct vki_mcontext *mc,
    VG_TRACK( post_mem_write,  Vg_CoreSignal, tst->tid, 
              (Addr)&mc->mc_pad, sizeof(mc->mc_pad) );
    /* invalidate any translation of this area */
-   VG_(discard_translations)( (Addr64)(Addr)&mc->mc_pad, 
+   VG_(discard_translations)( (Addr)&mc->mc_pad, 
                               sizeof(mc->mc_pad), "stack_mcontext" );   
 
    /* set the signal handler to return to the trampoline */

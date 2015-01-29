@@ -48,8 +48,7 @@
    code. But that info is not passed to emit_S390Instr. Only mode64 is
    being passed. So, ideally, we want this passed as an argument, too.
    Until then, we use a global variable. This variable is set as a side
-   effect of iselSB_S390. This is safe because instructions are selected
-   before they are emitted. */
+   effect of LibVEX_Translate. */
 UInt s390_host_hwcaps;
 
 
@@ -400,7 +399,7 @@ s390_amode_map_regs(HRegRemap *m, s390_amode *am)
 
 
 void
-ppS390AMode(s390_amode *am)
+ppS390AMode(const s390_amode *am)
 {
    vex_printf("%s", s390_amode_as_string(am));
 }
@@ -1525,8 +1524,6 @@ s390_emit_A(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_AY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ay", r1, dh2, dl2, x2, b2);
 
@@ -1537,8 +1534,6 @@ s390_emit_AY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_AG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ag", r1, dh2, dl2, x2, b2);
 
@@ -1583,8 +1578,6 @@ s390_emit_AH(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_AHY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ahy", r1, dh2, dl2, x2, b2);
 
@@ -1669,8 +1662,6 @@ s390_emit_N(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_NY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ny", r1, dh2, dl2, x2, b2);
 
@@ -1681,8 +1672,6 @@ s390_emit_NY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_NG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ng", r1, dh2, dl2, x2, b2);
 
@@ -1797,8 +1786,6 @@ s390_emit_C(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_CY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "cy", r1, dh2, dl2, x2, b2);
 
@@ -1809,8 +1796,6 @@ s390_emit_CY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_CG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "cg", r1, dh2, dl2, x2, b2);
 
@@ -1855,8 +1840,6 @@ s390_emit_CS(UChar *p, UChar r1, UChar r3, UChar b2, UShort d2)
 static UChar *
 s390_emit_CSY(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "csy", r1, r3, dh2, dl2, 0, b2);
 
@@ -1867,8 +1850,6 @@ s390_emit_CSY(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_CSG(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "csg", r1, r3, dh2, dl2, 0, b2);
 
@@ -1889,8 +1870,6 @@ s390_emit_CDS(UChar *p, UChar r1, UChar r3, UChar b2, UShort d2)
 static UChar *
 s390_emit_CDSY(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "cdsy", r1, r3, dh2, dl2, 0, b2);
 
@@ -1901,8 +1880,6 @@ s390_emit_CDSY(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_CDSG(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "cdsg", r1, r3, dh2, dl2, 0, b2);
 
@@ -1943,8 +1920,6 @@ s390_emit_CL(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_CLY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "cly", r1, dh2, dl2, x2, b2);
 
@@ -1955,8 +1930,6 @@ s390_emit_CLY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_CLG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "clg", r1, dh2, dl2, x2, b2);
 
@@ -2031,8 +2004,6 @@ s390_emit_DLGR(UChar *p, UChar r1, UChar r2)
 static UChar *
 s390_emit_DL(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "dl", r1, dh2, dl2, x2, b2);
 
@@ -2043,8 +2014,6 @@ s390_emit_DL(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_DLG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "dlg", r1, dh2, dl2, x2, b2);
 
@@ -2065,8 +2034,6 @@ s390_emit_DSGR(UChar *p, UChar r1, UChar r2)
 static UChar *
 s390_emit_DSG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "dsg", r1, dh2, dl2, x2, b2);
 
@@ -2107,8 +2074,6 @@ s390_emit_X(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_XY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "xy", r1, dh2, dl2, x2, b2);
 
@@ -2119,8 +2084,6 @@ s390_emit_XY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_XG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "xg", r1, dh2, dl2, x2, b2);
 
@@ -2187,8 +2150,6 @@ s390_emit_IC(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_ICY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "icy", r1, dh2, dl2, x2, b2);
 
@@ -2313,8 +2274,6 @@ s390_emit_L(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_LY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ly", r1, dh2, dl2, x2, b2);
 
@@ -2325,8 +2284,6 @@ s390_emit_LY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lg", r1, dh2, dl2, x2, b2);
 
@@ -2337,8 +2294,6 @@ s390_emit_LG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LGF(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lgf", r1, dh2, dl2, x2, b2);
 
@@ -2429,8 +2384,6 @@ s390_emit_LGBR(UChar *p, UChar r1, UChar r2)
 static UChar *
 s390_emit_LB(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lb", r1, dh2, dl2, x2, b2);
 
@@ -2441,8 +2394,6 @@ s390_emit_LB(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LGB(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lgb", r1, dh2, dl2, x2, b2);
 
@@ -2507,8 +2458,6 @@ s390_emit_LH(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_LHY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lhy", r1, dh2, dl2, x2, b2);
 
@@ -2519,8 +2468,6 @@ s390_emit_LHY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LGH(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "lgh", r1, dh2, dl2, x2, b2);
 
@@ -2561,8 +2508,6 @@ s390_emit_LLGFR(UChar *p, UChar r1, UChar r2)
 static UChar *
 s390_emit_LLGF(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "llgf", r1, dh2, dl2, x2, b2);
 
@@ -2609,8 +2554,6 @@ s390_emit_LLC(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LLGC(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "llgc", r1, dh2, dl2, x2, b2);
 
@@ -2657,8 +2600,6 @@ s390_emit_LLH(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LLGH(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "llgh", r1, dh2, dl2, x2, b2);
 
@@ -2785,8 +2726,6 @@ s390_emit_MLGR(UChar *p, UChar r1, UChar r2)
 static UChar *
 s390_emit_ML(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "ml", r1, dh2, dl2, x2, b2);
 
@@ -2797,8 +2736,6 @@ s390_emit_ML(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_MLG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "mlg", r1, dh2, dl2, x2, b2);
 
@@ -2839,8 +2776,6 @@ s390_emit_MS(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_MSY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "msy", r1, dh2, dl2, x2, b2);
 
@@ -2851,8 +2786,6 @@ s390_emit_MSY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_MSG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "msg", r1, dh2, dl2, x2, b2);
 
@@ -2907,6 +2840,8 @@ s390_emit_MVI(UChar *p, UChar i2, UChar b1, UShort d1)
 static UChar *
 s390_emit_MVHHI(UChar *p, UChar b1, UShort d1, UShort i2)
 {
+   vassert(s390_host_has_gie);
+
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, UDXB, INT), "mvhhi", d1, 0, b1, i2);
 
@@ -2917,6 +2852,8 @@ s390_emit_MVHHI(UChar *p, UChar b1, UShort d1, UShort i2)
 static UChar *
 s390_emit_MVHI(UChar *p, UChar b1, UShort d1, UShort i2)
 {
+   vassert(s390_host_has_gie);
+
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, UDXB, INT), "mvhi", d1, 0, b1, i2);
 
@@ -2927,6 +2864,8 @@ s390_emit_MVHI(UChar *p, UChar b1, UShort d1, UShort i2)
 static UChar *
 s390_emit_MVGHI(UChar *p, UChar b1, UShort d1, UShort i2)
 {
+   vassert(s390_host_has_gie);
+
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, UDXB, INT), "mvghi", d1, 0, b1, i2);
 
@@ -2967,8 +2906,6 @@ s390_emit_O(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_OY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "oy", r1, dh2, dl2, x2, b2);
 
@@ -2979,8 +2916,6 @@ s390_emit_OY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_OG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "og", r1, dh2, dl2, x2, b2);
 
@@ -3035,8 +2970,6 @@ s390_emit_SLL(UChar *p, UChar r1, UChar b2, UShort d2)
 static UChar *
 s390_emit_SLLG(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "sllg", r1, r3, dh2, dl2, 0, b2);
 
@@ -3057,8 +2990,6 @@ s390_emit_SRA(UChar *p, UChar r1, UChar b2, UShort d2)
 static UChar *
 s390_emit_SRAG(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "srag", r1, r3, dh2, dl2, 0, b2);
 
@@ -3079,8 +3010,6 @@ s390_emit_SRL(UChar *p, UChar r1, UChar b2, UShort d2)
 static UChar *
 s390_emit_SRLG(UChar *p, UChar r1, UChar r3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, GPR, SDXB), "srlg", r1, r3, dh2, dl2, 0, b2);
 
@@ -3101,8 +3030,6 @@ s390_emit_ST(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_STY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "sty", r1, dh2, dl2, x2, b2);
 
@@ -3113,8 +3040,6 @@ s390_emit_STY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_STG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "stg", r1, dh2, dl2, x2, b2);
 
@@ -3135,8 +3060,6 @@ s390_emit_STC(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_STCY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "stcy", r1, dh2, dl2, x2, b2);
 
@@ -3157,8 +3080,6 @@ s390_emit_STH(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_STHY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "sthy", r1, dh2, dl2, x2, b2);
 
@@ -3199,8 +3120,6 @@ s390_emit_S(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_SY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "sy", r1, dh2, dl2, x2, b2);
 
@@ -3211,8 +3130,6 @@ s390_emit_SY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_SG(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "sg", r1, dh2, dl2, x2, b2);
 
@@ -3233,8 +3150,6 @@ s390_emit_SH(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_SHY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, GPR, SDXB), "shy", r1, dh2, dl2, x2, b2);
 
@@ -3297,8 +3212,6 @@ s390_emit_LD(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_LEY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, FPR, SDXB), "ley", r1, dh2, dl2, x2, b2);
 
@@ -3309,8 +3222,6 @@ s390_emit_LEY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LDY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, FPR, SDXB), "ldy", r1, dh2, dl2, x2, b2);
 
@@ -3405,8 +3316,6 @@ s390_emit_STD(UChar *p, UChar r1, UChar x2, UChar b2, UShort d2)
 static UChar *
 s390_emit_STEY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, FPR, SDXB), "stey", r1, dh2, dl2, x2, b2);
 
@@ -3417,8 +3326,6 @@ s390_emit_STEY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_STDY(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC3(MNM, FPR, SDXB), "stdy", r1, dh2, dl2, x2, b2);
 
@@ -4787,8 +4694,6 @@ s390_emit_LOCGR(UChar *p, UChar m3, UChar r1, UChar r2)
 static UChar *
 s390_emit_LOC(UChar *p, UChar r1, UChar m3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, UINT, SDXB), "loc", r1, m3, dh2, dl2, 0, b2);
 
@@ -4799,8 +4704,6 @@ s390_emit_LOC(UChar *p, UChar r1, UChar m3, UChar b2, UShort dl2, UChar dh2)
 static UChar *
 s390_emit_LOCG(UChar *p, UChar r1, UChar m3, UChar b2, UShort dl2, UChar dh2)
 {
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
    if (UNLIKELY(vex_traceflags & VEX_TRACE_ASM))
       s390_disasm(ENC4(MNM, GPR, UINT, SDXB), "locg", r1, m3, dh2, dl2, 0, b2);
 
@@ -5002,22 +4905,6 @@ s390_emit_XILFw(UChar *p, UChar r1, UInt i2)
 }
 
 
-/* r1[32:63] = sign_extend(mem[op2addr][0:7]) */
-static UChar *
-s390_emit_LBw(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
-{
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
-   if (s390_host_has_ldisp) {
-      return s390_emit_LB(p, r1, x2, b2, dl2, dh2);
-   }
-
-   p = s390_emit_IC(p, r1, x2, b2, dl2);    /* r1[56:63] = mem[op2addr][0:7] */
-   p = s390_emit_SLL(p, r1, R0, 24);        /* r1 = r1 << 24  */
-   return s390_emit_SRA(p, r1, R0, 24);     /* r1 = r1 >>a 24 */
-}
-
-
 /*  r1[32:63] = sign_extend(r2[56:63]) */
 static UChar *
 s390_emit_LBRw(UChar *p, UChar r1, UChar r2)
@@ -5029,22 +4916,6 @@ s390_emit_LBRw(UChar *p, UChar r1, UChar r2)
    p = s390_emit_LR(p, r1, r2);               /* r1 = r2 */
    p = s390_emit_SLL(p, r1, R0, 24);          /* r1 = r1 << 24  */
    return s390_emit_SRA(p, r1, R0, 24);       /* r1 = r1 >>a 24 */
-}
-
-
-/* r1[0:63] = sign_extend(mem[op2addr][0:7]) */
-static UChar *
-s390_emit_LGBw(UChar *p, UChar r1, UChar x2, UChar b2, UShort dl2, UChar dh2)
-{
-   vassert(s390_host_has_ldisp || dh2 == 0);
-
-   if (s390_host_has_ldisp) {
-      return s390_emit_LGB(p, r1, x2, b2, dl2, dh2);
-   }
-
-   p = s390_emit_IC(p, r1, x2, b2, dl2);             /* r1[56:63] = mem[op2addr][0:7] */
-   p = s390_emit_SLLG(p, r1, r1, R0, DISP20(56));    /* r1 = r1 << 56  */
-   return s390_emit_SRAG(p, r1, r1, R0, DISP20(56)); /* r1 = r1 >>a 56 */
 }
 
 
@@ -5307,17 +5178,8 @@ s390_emit_LGDRw(UChar *p, UChar r1, UChar r2)
    /* Store the FPR at memory[sp - 8]. This is safe because SP grows towards
       smaller addresses and is 8-byte aligned. Then load the GPR from that
       memory location/ */
-   if (s390_host_has_ldisp) {
-      p = s390_emit_STDY(p, r2, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
-      return s390_emit_LG(p, r1, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
-   }
-
-   /* No long displacement. Need to adjust SP explicitly as to avoid negative
-      displacements. */
-   p = s390_emit_AGHI(p, S390_REGNO_STACK_POINTER, -8);
-   p = s390_emit_STD(p, r2, R0, S390_REGNO_STACK_POINTER, 0);
-   p = s390_emit_LG(p, r1, R0, S390_REGNO_STACK_POINTER, DISP20(0));
-   return s390_emit_AGHI(p, S390_REGNO_STACK_POINTER, 8);
+   p = s390_emit_STDY(p, r2, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
+   return s390_emit_LG(p, r1, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
 }
 
 
@@ -5331,17 +5193,8 @@ s390_emit_LDGRw(UChar *p, UChar r1, UChar r2)
    /* Store the GPR at memory[sp - 8]. This is safe because SP grows towards
       smaller addresses and is 8-byte aligned. Then load the FPR from that
       memory location/ */
-   if (s390_host_has_ldisp) {
-      p = s390_emit_STG(p, r2, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
-      return s390_emit_LDY(p, r1, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
-   }
-
-   /* No long displacement. Need to adjust SP explicitly as to avoid negative
-      displacements. */
-   p = s390_emit_AGHI(p, S390_REGNO_STACK_POINTER, -8);
-   p = s390_emit_STG(p, r2, R0, S390_REGNO_STACK_POINTER, DISP20(0));
-   p = s390_emit_LD(p, r1, R0, S390_REGNO_STACK_POINTER, 0);
-   return s390_emit_AGHI(p, S390_REGNO_STACK_POINTER, 8);
+   p = s390_emit_STG(p, r2, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
+   return s390_emit_LDY(p, r1, R0, S390_REGNO_STACK_POINTER, DISP20(-8));
 }
 
 
@@ -5592,6 +5445,7 @@ s390_insn_cas(UChar size, HReg op1, s390_amode *op2, HReg op3, HReg old_mem)
 
    vassert(size == 4 || size == 8);
    vassert(hregNumber(op2->x) == 0);
+   vassert(op2->tag == S390_AMODE_B12 || op2->tag == S390_AMODE_B20);
 
    insn->tag  = S390_INSN_CAS;
    insn->size = size;
@@ -5615,6 +5469,7 @@ s390_insn_cdas(UChar size, HReg op1_high, HReg op1_low, s390_amode *op2,
    vassert(size == 4 || size == 8);
    vassert(hregNumber(op2->x) == 0);
    vassert(hregNumber(scratch) == 1);  /* r0,r1 used as scratch reg pair */
+   vassert(op2->tag == S390_AMODE_B12 || op2->tag == S390_AMODE_B20);
 
    insn->tag  = S390_INSN_CDAS;
    insn->size = size;
@@ -6298,6 +6153,8 @@ s390_insn_madd(UChar size, s390_amode *dst, UChar delta, ULong value)
    /* This insn will be mapped to an ASI or AGSI so we can only allow base
       register plus 12-bit / 20-bit displacement. */
    vassert(dst->tag == S390_AMODE_B12 || dst->tag == S390_AMODE_B20);
+   /* ASI and AGSI require the GIE facility */
+   vassert(s390_host_has_gie);
 
    insn->tag  = S390_INSN_MADD;
    insn->size = size;
@@ -6345,6 +6202,8 @@ s390_insn_xdirect(s390_cc_t cond, Addr64 dst, s390_amode *guest_IA,
 {
    s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
 
+   vassert(guest_IA->tag == S390_AMODE_B12);
+
    insn->tag  = S390_INSN_XDIRECT;
    insn->size = 0;   /* does not matter */
 
@@ -6362,6 +6221,8 @@ s390_insn_xindir(s390_cc_t cond, HReg dst, s390_amode *guest_IA)
 {
    s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
 
+   vassert(guest_IA->tag == S390_AMODE_B12);
+
    insn->tag  = S390_INSN_XINDIR;
    insn->size = 0;   /* does not matter */
 
@@ -6378,6 +6239,8 @@ s390_insn_xassisted(s390_cc_t cond, HReg dst, s390_amode *guest_IA,
                     IRJumpKind kind)
 {
    s390_insn *insn = LibVEX_Alloc(sizeof(s390_insn));
+
+   vassert(guest_IA->tag == S390_AMODE_B12);
 
    insn->tag  = S390_INSN_XASSISTED;
    insn->size = 0;   /* does not matter */
@@ -6593,7 +6456,7 @@ s390_sprintf(HChar *buf, const HChar *fmt, ...)
 const HChar *
 s390_insn_as_string(const s390_insn *insn)
 {
-   static HChar buf[300];
+   static HChar buf[300];  // large enough
    const HChar *op;
    HChar *p;
 
@@ -7880,13 +7743,13 @@ s390_widen_emit(UChar *buf, const s390_insn *insn, UInt from_size,
       case 1:
          if (insn->size == 4 || insn->size == 2) {
             if (sign_extend)
-               return s390_emit_LBw(buf, r1, x, b, DISP20(d));
+               return s390_emit_LB(buf, r1, x, b, DISP20(d));
             else
                return s390_emit_LLCw(buf, r1, x, b, DISP20(d));
          }
          if (insn->size == 8) {
             if (sign_extend)
-               return s390_emit_LGBw(buf, r1, x, b, DISP20(d));
+               return s390_emit_LGB(buf, r1, x, b, DISP20(d));
             else
                return s390_emit_LLGC(buf, r1, x, b, DISP20(d));
          }
@@ -8185,9 +8048,11 @@ s390_insn_cas_emit(UChar *buf, const s390_insn *insn)
    b  = hregNumber(am->b);
    d  = am->d;
 
+   vassert(am->tag == S390_AMODE_B12 || am->tag == S390_AMODE_B20);
+
    switch (insn->size) {
    case 4:
-      /* r1 must no be overwritten. So copy it to R0 and let CS clobber it */
+      /* r1 must not be overwritten. So copy it to R0 and let CS clobber it */
       buf = s390_emit_LR(buf, R0, r1);
       if (am->tag == S390_AMODE_B12)
          buf = s390_emit_CS(buf, R0, r3, b, d);
@@ -8197,7 +8062,7 @@ s390_insn_cas_emit(UChar *buf, const s390_insn *insn)
       return s390_emit_LR(buf, old, R0);
 
    case 8:
-      /* r1 must no be overwritten. So copy it to R0 and let CS clobber it */
+      /* r1 must not be overwritten. So copy it to R0 and let CS clobber it */
       buf = s390_emit_LGR(buf, R0, r1);
       buf = s390_emit_CSG(buf, R0, r3, b, DISP20(d));
       /* Now copy R0 which has the old memory value to OLD */
@@ -8233,6 +8098,7 @@ s390_insn_cdas_emit(UChar *buf, const s390_insn *insn)
    d  = am->d;
 
    vassert(scratch == 1);
+   vassert(am->tag == S390_AMODE_B12 || am->tag == S390_AMODE_B20);
 
    switch (insn->size) {
    case 4:
@@ -9651,7 +9517,7 @@ s390_insn_xdirect_emit(UChar *buf, const s390_insn *insn,
    buf = s390_emit_BASR(buf, 1, R0);
 
    /* --- FIRST PATCHABLE BYTE follows (must not modify %r1) --- */
-   ULong addr = Ptr_to_ULong(disp_cp_chain_me);
+   Addr64 addr = (Addr)disp_cp_chain_me;
    buf = s390_tchain_load64(buf, S390_REGNO_TCHAIN_SCRATCH, addr);
 
    /* goto *tchain_scratch */
@@ -9723,7 +9589,7 @@ s390_insn_xindir_emit(UChar *buf, const s390_insn *insn,
 
    /* load tchain_scratch, #disp_indir */
    buf = s390_tchain_load64(buf, S390_REGNO_TCHAIN_SCRATCH,
-                            Ptr_to_ULong(disp_cp_xindir));
+                            (Addr)disp_cp_xindir);
    /* goto *tchain_direct */
    buf = s390_emit_BCR(buf, S390_CC_ALWAYS, S390_REGNO_TCHAIN_SCRATCH);
 
@@ -9804,7 +9670,7 @@ s390_insn_xassisted_emit(UChar *buf, const s390_insn *insn,
 
    /* load tchain_scratch, #disp_assisted */
    buf = s390_tchain_load64(buf, S390_REGNO_TCHAIN_SCRATCH,
-                            Ptr_to_ULong(disp_cp_xassisted));
+                            (Addr)disp_cp_xassisted);
 
    /* goto *tchain_direct */
    buf = s390_emit_BCR(buf, S390_CC_ALWAYS, S390_REGNO_TCHAIN_SCRATCH);
@@ -9868,7 +9734,7 @@ s390_insn_evcheck_emit(UChar *buf, const s390_insn *insn,
    
    /* Make sure the size of the generated code is identical to the size
       returned by evCheckSzB_S390 */
-   vassert(evCheckSzB_S390(endness_host) == code_end - code_begin);
+   vassert(evCheckSzB_S390() == code_end - code_begin);
 
    return buf;
 }
@@ -10090,7 +9956,7 @@ emit_S390Instr(Bool *is_profinc, UChar *buf, Int nbuf, const s390_insn *insn,
 /* Return the number of bytes emitted for an S390_INSN_EVCHECK.
    See s390_insn_evcheck_emit */
 Int
-evCheckSzB_S390(VexEndness endness_host)
+evCheckSzB_S390(void)
 {
    return s390_host_has_gie ? 18 : 24;
 }
@@ -10107,7 +9973,7 @@ patchProfInc_S390(VexEndness endness_host,
    s390_tchain_verify_load64(code_to_patch, S390_REGNO_TCHAIN_SCRATCH, 0);
 
    UChar *p = s390_tchain_patch_load64(code_to_patch,
-                                       Ptr_to_ULong(location_of_counter));
+                                       (Addr)location_of_counter);
 
    UInt len = p - (UChar *)code_to_patch;
    VexInvalRange vir = { (HWord)code_to_patch, len };
@@ -10132,7 +9998,7 @@ chainXDirect_S390(VexEndness endness_host,
    */
    const UChar *next;
    next = s390_tchain_verify_load64(place_to_chain, S390_REGNO_TCHAIN_SCRATCH,
-                                    Ptr_to_ULong(disp_cp_chain_me_EXPECTED));
+                                    (Addr)disp_cp_chain_me_EXPECTED);
    vassert(s390_insn_is_BR(next, S390_REGNO_TCHAIN_SCRATCH));
 
    /* And what we want to change it to is either:
@@ -10193,7 +10059,7 @@ chainXDirect_S390(VexEndness endness_host,
           load  tchain_scratch, #place_to_jump_to
           goto *tchain_scratch
       */
-      ULong addr = Ptr_to_ULong(place_to_jump_to);
+      Addr64 addr = (Addr)place_to_jump_to;
       p = s390_tchain_load64(p, S390_REGNO_TCHAIN_SCRATCH, addr);
       /* There is not need to emit a BCR here, as it is already there. */
    }
@@ -10245,7 +10111,7 @@ unchainXDirect_S390(VexEndness endness_host,
       const UChar *next;
 
       next = s390_tchain_verify_load64(p, S390_REGNO_TCHAIN_SCRATCH,
-                                       Ptr_to_ULong(place_to_jump_to_EXPECTED));
+                                       (Addr)place_to_jump_to_EXPECTED);
       /* Check for BR *tchain_scratch */
       vassert(s390_insn_is_BR(next, S390_REGNO_TCHAIN_SCRATCH));
    }
@@ -10264,7 +10130,7 @@ unchainXDirect_S390(VexEndness endness_host,
       address (see s390_insn_xdirect_emit).  */
    p = s390_emit_BASR(p - S390_BASR_LEN, 1, R0);
 
-   ULong addr = Ptr_to_ULong(disp_cp_chain_me);
+   Addr64 addr = (Addr)disp_cp_chain_me;
    p = s390_tchain_load64(p, S390_REGNO_TCHAIN_SCRATCH, addr);
 
    /* Emit the BCR in case the short form was used. In case of the long

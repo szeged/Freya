@@ -51,15 +51,15 @@
    bb_to_IR.h. */
 extern
 DisResult disInstr_X86 ( IRSB*        irbb,
-                         Bool         (*resteerOkFn) ( void*, Addr64 ),
+                         Bool         (*resteerOkFn) ( void*, Addr ),
                          Bool         resteerCisOk,
                          void*        callback_opaque,
                          const UChar* guest_code,
                          Long         delta,
-                         Addr64       guest_IP,
+                         Addr         guest_IP,
                          VexArch      guest_arch,
-                         VexArchInfo* archinfo,
-                         VexAbiInfo*  abiinfo,
+                         const VexArchInfo* archinfo,
+                         const VexAbiInfo*  abiinfo,
                          VexEndness   host_endness,
                          Bool         sigill_diag );
 
@@ -139,9 +139,9 @@ extern ULong x86g_calculate_mmx_psadbw   ( ULong, ULong );
 
 /* --- DIRTY HELPERS --- */
 
-extern ULong x86g_dirtyhelper_loadF80le  ( UInt );
+extern ULong x86g_dirtyhelper_loadF80le  ( Addr );
 
-extern void  x86g_dirtyhelper_storeF80le ( UInt, ULong );
+extern void  x86g_dirtyhelper_storeF80le ( Addr, ULong );
 
 extern void  x86g_dirtyhelper_CPUID_sse0 ( VexGuestX86State* );
 extern void  x86g_dirtyhelper_CPUID_mmxext ( VexGuestX86State* );

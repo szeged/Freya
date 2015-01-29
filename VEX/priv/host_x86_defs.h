@@ -731,7 +731,7 @@ extern void genReload_X86 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
 extern X86Instr*    directReload_X86     ( X86Instr* i, 
                                            HReg vreg, Short spill_off );
 extern void         getAllocableRegs_X86 ( Int*, HReg** );
-extern HInstrArray* iselSB_X86           ( IRSB*, 
+extern HInstrArray* iselSB_X86           ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,
                                            const VexAbiInfo*,
@@ -739,14 +739,14 @@ extern HInstrArray* iselSB_X86           ( IRSB*,
                                            Int offs_Host_EvC_FailAddr,
                                            Bool chainingAllowed,
                                            Bool addProfInc,
-                                           Addr64 max_ga );
+                                           Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and host_EvC_COUNTER,
    and so assumes that they are both <= 128, and so can use the short
    offset encoding.  This is all checked with assertions, so in the
    worst case we will merely assert at startup. */
-extern Int evCheckSzB_X86 ( VexEndness endness_host );
+extern Int evCheckSzB_X86 (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_X86 ( VexEndness endness_host,

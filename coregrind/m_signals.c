@@ -575,7 +575,7 @@ typedef struct SigQueue {
 /* ------ Macros for pulling stuff out of siginfos ------ */
 
 /* These macros allow use of uniform names when working with
-   both the Linux and AIX vki definitions. */
+   both the Linux and Darwin vki definitions. */
 #if defined(VGO_linux)
 #  define VKI_SIGINFO_si_addr  _sifields._sigfault._addr
 #  define VKI_SIGINFO_si_pid   _sifields._kill._pid
@@ -1219,7 +1219,7 @@ void do_sigprocmask_bitops ( Int vki_how,
 static
 HChar* format_sigset ( const vki_sigset_t* set )
 {
-   static HChar buf[128];
+   static HChar buf[_VKI_NSIG_WORDS * 16 + 1];
    int w;
 
    VG_(strcpy)(buf, "");
@@ -1400,7 +1400,7 @@ void push_signal_frame ( ThreadId tid, const vki_siginfo_t *siginfo,
 
 const HChar *VG_(signame)(Int sigNo)
 {
-   static HChar buf[20];
+   static HChar buf[20];  // large enough
 
    switch(sigNo) {
       case VKI_SIGHUP:    return "SIGHUP";
@@ -1647,7 +1647,7 @@ static void default_action(const vki_siginfo_t *info, ThreadId tid)
 	    }
 #if 0
             {
-              HChar buf[110];
+              HChar buf[50];  // large enough
               VG_(am_show_nsegments)(0,"post segfault");
               VG_(sprintf)(buf, "/bin/cat /proc/%d/maps", VG_(getpid)());
               VG_(system)(buf);

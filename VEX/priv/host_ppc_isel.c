@@ -1059,9 +1059,9 @@ void doHelperCall ( /*OUT*/UInt*   stackAdjustAfterCall,
    /* Finally, generate the call itself.  This needs the *retloc value
       set in the switch above, which is why it's at the end. */
 
-   ULong target = mode64 ? Ptr_to_ULong(cee->addr)
-                         : toUInt(Ptr_to_ULong(cee->addr));
-   addInstr(env, PPCInstr_Call( cc, (Addr64)target, argiregs, *retloc ));
+   Addr64 target = mode64 ? (Addr)cee->addr
+                          : toUInt((Addr)(cee->addr));
+   addInstr(env, PPCInstr_Call( cc, target, argiregs, *retloc ));
 }
 
 
@@ -2260,7 +2260,7 @@ static HReg iselWordExpr_R_wrk ( ISelEnv* env, IRExpr* e,
 
          cc = mk_PPCCondCode( Pct_ALWAYS, Pcf_NONE );
          if (IEndianess == Iend_LE) {
-             addInstr(env, PPCInstr_Call( cc, Ptr_to_ULong(h_calc_BCDtoDPB),
+             addInstr(env, PPCInstr_Call( cc, (Addr)h_calc_BCDtoDPB,
                                           argiregs,
                                           mk_RetLoc_simple(RLPri_Int)) );
          } else {
@@ -2297,7 +2297,7 @@ static HReg iselWordExpr_R_wrk ( ISelEnv* env, IRExpr* e,
          cc = mk_PPCCondCode( Pct_ALWAYS, Pcf_NONE );
 
         if (IEndianess == Iend_LE) {
-            addInstr(env, PPCInstr_Call( cc, Ptr_to_ULong(h_calc_DPBtoBCD),
+            addInstr(env, PPCInstr_Call( cc, (Addr)h_calc_DPBtoBCD,
                                          argiregs, 
                                          mk_RetLoc_simple(RLPri_Int) ) );
 	} else {
@@ -3673,13 +3673,14 @@ static void iselInt64Expr_wrk ( HReg* rHi, HReg* rLo,
          cc = mk_PPCCondCode( Pct_ALWAYS, Pcf_NONE );
 
          if (IEndianess == Iend_LE) {
-             addInstr( env, PPCInstr_Call( cc, Ptr_to_ULong(h_calc_BCDtoDPB),
+             addInstr( env, PPCInstr_Call( cc, (Addr)h_calc_BCDtoDPB,
                                            argiregs,
                                            mk_RetLoc_simple(RLPri_2Int) ) );
          } else {
-             ULong       target;
-             target = toUInt( Ptr_to_ULong(h_calc_BCDtoDPB ) );
-             addInstr( env, PPCInstr_Call( cc, (Addr64)target,
+             Addr64 target;
+             target = mode64 ? (Addr)h_calc_BCDtoDPB :
+               toUInt( (Addr)h_calc_BCDtoDPB );
+             addInstr( env, PPCInstr_Call( cc, target,
                                            argiregs,
                                            mk_RetLoc_simple(RLPri_2Int) ) );
          }
@@ -3720,13 +3721,14 @@ static void iselInt64Expr_wrk ( HReg* rHi, HReg* rLo,
          cc = mk_PPCCondCode( Pct_ALWAYS, Pcf_NONE );
 
          if (IEndianess == Iend_LE) {
-             addInstr(env, PPCInstr_Call( cc, Ptr_to_ULong(h_calc_DPBtoBCD),
+             addInstr(env, PPCInstr_Call( cc, (Addr)h_calc_DPBtoBCD,
                                           argiregs,
                                           mk_RetLoc_simple(RLPri_2Int) ) );
          } else {
-             ULong       target;
-             target = toUInt( Ptr_to_ULong( h_calc_DPBtoBCD ) );
-             addInstr(env, PPCInstr_Call( cc, (Addr64)target, argiregs,
+             Addr64 target;
+             target = mode64 ? (Addr)h_calc_DPBtoBCD :
+               toUInt( (Addr)h_calc_DPBtoBCD );
+             addInstr(env, PPCInstr_Call( cc, target, argiregs,
                                           mk_RetLoc_simple(RLPri_2Int) ) );
          }
 
@@ -4871,9 +4873,9 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, IRExpr* e, IREndness IEndianess )
    }
 
    if (e->tag == Iex_Load && e->Iex.Load.end == IEndianess) {
-      /* Need to be able to do V128 unaligned loads. The unaligned load can
-       * be accomplised using the following code sequece from the ISA.  It
-       * uses the lvx instruction that does two aligned loads and then
+      /* Need to be able to do V128 unaligned loads. The BE unaligned load
+       * can be accomplised using the following code sequece from the ISA.
+       * It uses the lvx instruction that does two aligned loads and then
        * permute the data to store the required data as if it had been an
        * unaligned load.
        *
@@ -4898,9 +4900,14 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, IRExpr* e, IREndness IEndianess )
       addInstr(env, PPCInstr_AvLdSt( True/*load*/, 16, Vhi,
                                      PPCAMode_IR(0, rB)) );
 
-      // lvsl Vp, 0, Rb
-      addInstr(env, PPCInstr_AvSh( True/*left shift*/, Vp,
-                                   PPCAMode_IR(0, rB)) );
+      if (IEndianess == Iend_LE)
+         // lvsr Vp, 0, Rb
+         addInstr(env, PPCInstr_AvSh( False/*right shift*/, Vp,
+                                      PPCAMode_IR(0, rB)) );
+      else
+         // lvsl Vp, 0, Rb
+         addInstr(env, PPCInstr_AvSh( True/*left shift*/, Vp,
+                                      PPCAMode_IR(0, rB)) );
 
       // addi Rb_plus_15, Rb, 15
       addInstr(env, PPCInstr_Alu( Palu_ADD, rB_plus_15,
@@ -4910,8 +4917,13 @@ static HReg iselVecExpr_wrk ( ISelEnv* env, IRExpr* e, IREndness IEndianess )
       addInstr(env, PPCInstr_AvLdSt( True/*load*/, 16, Vlo,
                                      PPCAMode_IR(0, rB_plus_15)) );
 
-      // vperm Vt, Vhi, Vlo, Vp
-      addInstr(env, PPCInstr_AvPerm( v_dst, Vhi, Vlo, Vp ));
+      if (IEndianess == Iend_LE)
+         // vperm Vt, Vhi, Vlo, Vp
+         addInstr(env, PPCInstr_AvPerm( v_dst, Vlo, Vhi, Vp ));
+      else
+         // vperm Vt, Vhi, Vlo, Vp
+         addInstr(env, PPCInstr_AvPerm( v_dst, Vhi, Vlo, Vp ));
+
       return v_dst;
    }
 
@@ -6083,7 +6095,7 @@ static void iselNext ( ISelEnv* env,
 /*---------------------------------------------------------*/
 
 /* Translate an entire SB to ppc code. */
-HInstrArray* iselSB_PPC ( IRSB* bb, 
+HInstrArray* iselSB_PPC ( const IRSB* bb,
                           VexArch      arch_host,
                           const VexArchInfo* archinfo_host,
                           const VexAbiInfo*  vbi,
@@ -6091,7 +6103,7 @@ HInstrArray* iselSB_PPC ( IRSB* bb,
                           Int offs_Host_EvC_FailAddr,
                           Bool chainingAllowed,
                           Bool addProfInc,
-                          Addr64 max_ga)
+                          Addr max_ga)
 
 {
    Int       i, j;
@@ -6105,7 +6117,6 @@ HInstrArray* iselSB_PPC ( IRSB* bb,
 
    vassert(arch_host == VexArchPPC32 || arch_host == VexArchPPC64);
    mode64 = arch_host == VexArchPPC64;
-   if (!mode64) vassert(max_ga <= 0xFFFFFFFFULL);
 
    /* do some sanity checks */
    mask32 = VEX_HWCAPS_PPC32_F | VEX_HWCAPS_PPC32_V

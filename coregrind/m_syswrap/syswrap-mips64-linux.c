@@ -387,7 +387,7 @@ PRE(sys_cacheflush)
    PRINT("cacheflush (%lx, %lx, %lx)", ARG1, ARG2, ARG3);
    PRE_REG_READ3(long, "cacheflush", unsigned long, addr,
                  int, nbytes, int, cache);
-   VG_ (discard_translations) ((Addr64) ARG1, ((ULong) ARG2),
+   VG_ (discard_translations) ((Addr)ARG1, (ULong) ARG2,
                                "PRE(sys_cacheflush)");
    SET_STATUS_Success(0);
 }
@@ -909,7 +909,9 @@ static SyscallTableEntry syscall_main_table[] = {
    LINXY (__NR_prlimit64, sys_prlimit64),
    LINXY (__NR_clock_adjtime, sys_clock_adjtime),
    LINXY (__NR_process_vm_readv, sys_process_vm_readv),
-   LINX_ (__NR_process_vm_writev, sys_process_vm_writev)
+   LINX_ (__NR_process_vm_writev, sys_process_vm_writev),
+   LINXY(__NR_getrandom, sys_getrandom),
+   LINXY(__NR_memfd_create, sys_memfd_create)
 };
 
 SyscallTableEntry * ML_(get_linux_syscall_entry) ( UInt sysno )

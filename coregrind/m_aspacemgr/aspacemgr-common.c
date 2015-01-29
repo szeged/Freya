@@ -262,7 +262,7 @@ void ML_(am_close) ( Int fd )
    (void)VG_(do_syscall1)(__NR_close, fd);
 }
 
-Int ML_(am_readlink)(HChar* path, HChar* buf, UInt bufsiz)
+Int ML_(am_readlink)(const HChar* path, HChar* buf, UInt bufsiz)
 {
    SysRes res;
 #  if defined(VGP_arm64_linux)
@@ -321,7 +321,7 @@ Bool ML_(am_resolve_filename) ( Int fd, /*OUT*/HChar* buf, Int nbuf )
 {
 #if defined(VGO_linux)
    Int i;
-   HChar tmp[64];
+   HChar tmp[64];    // large enough
    for (i = 0; i < nbuf; i++) buf[i] = 0;
    ML_(am_sprintf)(tmp, "/proc/self/fd/%d", fd);
    if (ML_(am_readlink)(tmp, buf, nbuf) > 0 && buf[0] == '/')
@@ -376,7 +376,7 @@ VgStack* VG_(am_alloc_VgStack)( /*OUT*/Addr* initial_sp )
    if (sr_isError(sres))
       return NULL;
 
-   stack = (VgStack*)(AddrH)sr_Res(sres);
+   stack = (VgStack*)(Addr)sr_Res(sres);
 
    aspacem_assert(VG_IS_PAGE_ALIGNED(szB));
    aspacem_assert(VG_IS_PAGE_ALIGNED(stack));
@@ -430,12 +430,12 @@ VgStack* VG_(am_alloc_VgStack)( /*OUT*/Addr* initial_sp )
 /* Figure out how many bytes of the stack's active area have not
    been used.  Used for estimating if we are close to overflowing it. */
 
-SizeT VG_(am_get_VgStack_unused_szB)( VgStack* stack, SizeT limit )
+SizeT VG_(am_get_VgStack_unused_szB)( const VgStack* stack, SizeT limit )
 {
    SizeT i;
-   UInt* p;
+   const UInt* p;
 
-   p = (UInt*)&stack->bytes[VG_STACK_GUARD_SZB];
+   p = (const UInt*)&stack->bytes[VG_STACK_GUARD_SZB];
    for (i = 0; i < VG_STACK_ACTIVE_SZB/sizeof(UInt); i++) {
       if (p[i] != 0xDEADBEEF)
          break;

@@ -388,7 +388,7 @@ static void print_details ( void )
    VG_(umsg)("   Type        Loads       Stores       AluOps\n");
    VG_(umsg)("   -------------------------------------------\n");
    for (typeIx = 0; typeIx < N_TYPES; typeIx++) {
-      VG_(umsg)("   %4s %'12llu %'12llu %'12llu\n",
+      VG_(umsg)("   %-4s %'12llu %'12llu %'12llu\n",
                 nameOfTypeIndex( typeIx ),
                 detailCounts[OpLoad ][typeIx],
                 detailCounts[OpStore][typeIx],
@@ -660,7 +660,6 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
    IRDirty*   di;
    Int        i;
    IRSB*      sbOut;
-   HChar      fnname[100];
    IRTypeEnv* tyenv = sbIn->tyenv;
    Addr       iaddr = 0, dst;
    UInt       ilen = 0;
@@ -750,8 +749,9 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
                 */
                tl_assert(clo_fnname);
                tl_assert(clo_fnname[0]);
+               const HChar *fnname;
                if (VG_(get_fnname_if_entry)(st->Ist.IMark.addr, 
-                                            fnname, sizeof(fnname))
+                                            &fnname)
                    && 0 == VG_(strcmp)(fnname, clo_fnname)) {
                   di = unsafeIRDirty_0_N( 
                           0, "add_one_func_call", 
@@ -997,10 +997,6 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
 
 static void lk_fini(Int exitcode)
 {
-   HChar percentify_buf[5]; /* Two digits, '%' and 0. */
-   const int percentify_size = sizeof(percentify_buf) - 1;
-   const int percentify_decs = 0;
-   
    tl_assert(clo_fnname);
    tl_assert(clo_fnname[0]);
 
@@ -1014,10 +1010,8 @@ static void lk_fini(Int exitcode)
       VG_(umsg)("\n");
       VG_(umsg)("Jccs:\n");
       VG_(umsg)("  total:         %'llu\n", total_Jccs);
-      VG_(percentify)(taken_Jccs, (total_Jccs ? total_Jccs : 1),
-         percentify_decs, percentify_size, percentify_buf);
-      VG_(umsg)("  taken:         %'llu (%s)\n",
-         taken_Jccs, percentify_buf);
+      VG_(umsg)("  taken:         %'llu (%.0f%%)\n",
+                taken_Jccs, taken_Jccs * 100.0 / total_Jccs ?: 1);
       
       VG_(umsg)("\n");
       VG_(umsg)("Executed:\n");
