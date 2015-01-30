@@ -59,10 +59,10 @@
 /*--- Misc (printing, errors)                              ---*/
 /*------------------------------------------------------------*/
 
-/* Show a non-fatal debug info reading error.  Use vg_panic if
-   terminal.  'serious' errors are shown regardless of the
+/* Show a non-fatal debug info reading error.  Use VG_(core_panic) for
+   fatal errors.  'serious' errors are shown regardless of the
    verbosity setting. */
-void ML_(symerr) ( struct _DebugInfo* di, Bool serious, const HChar* msg )
+void ML_(symerr) ( const DebugInfo* di, Bool serious, const HChar* msg )
 {
    /* XML mode hides everything :-( */
    if (VG_(clo_xml))
@@ -92,9 +92,9 @@ void ML_(symerr) ( struct _DebugInfo* di, Bool serious, const HChar* msg )
 
 
 /* Print a symbol. */
-void ML_(ppSym) ( Int idx, DiSym* sym )
+void ML_(ppSym) ( Int idx, const DiSym* sym )
 {
-   HChar** sec_names = sym->sec_names;
+   const HChar** sec_names = sym->sec_names;
    vg_assert(sym->pri_name);
    if (sec_names)
       vg_assert(sec_names);
@@ -115,9 +115,9 @@ void ML_(ppSym) ( Int idx, DiSym* sym )
 }
 
 /* Print a call-frame-info summary. */
-void ML_(ppDiCfSI) ( XArray* /* of CfiExpr */ exprs,
+void ML_(ppDiCfSI) ( const XArray* /* of CfiExpr */ exprs,
                      Addr base, UInt len,
-                     DiCfSI_m* si_m )
+                     const DiCfSI_m* si_m )
 {
 #  define SHOW_HOW(_how, _off)                   \
       do {                                       \
@@ -233,10 +233,8 @@ void ML_(ppDiCfSI) ( XArray* /* of CfiExpr */ exprs,
    a chunking memory allocator rather than reallocating, so the
    pointers are stable.
 */
-HChar* ML_(addStr) ( struct _DebugInfo* di, const HChar* str, Int len )
+const HChar* ML_(addStr) ( DebugInfo* di, const HChar* str, Int len )
 {
-   HChar* p;
-
    if (len == -1) {
       len = VG_(strlen)(str);
    } else {
@@ -248,8 +246,7 @@ HChar* ML_(addStr) ( struct _DebugInfo* di, const HChar* str, Int len )
                                     ML_(dinfo_zalloc),
                                     "di.storage.addStr.1",
                                     ML_(dinfo_free));
-   p = VG_(allocEltDedupPA) (di->strpool, len+1, str);
-   return p;
+   return VG_(allocEltDedupPA) (di->strpool, len+1, str);
 }
 
 UInt ML_(addFnDn) (struct _DebugInfo* di,
@@ -271,7 +268,7 @@ UInt ML_(addFnDn) (struct _DebugInfo* di,
    return fndn_ix;
 }
 
-const HChar* ML_(fndn_ix2filename) (struct _DebugInfo* di,
+const HChar* ML_(fndn_ix2filename) (const DebugInfo* di,
                                     UInt fndn_ix)
 {
    FnDn *fndn;
@@ -283,7 +280,7 @@ const HChar* ML_(fndn_ix2filename) (struct _DebugInfo* di,
    }
 }
 
-const HChar* ML_(fndn_ix2dirname) (struct _DebugInfo* di,
+const HChar* ML_(fndn_ix2dirname) (const DebugInfo* di,
                                    UInt fndn_ix)
 {
    FnDn *fndn;
@@ -301,13 +298,13 @@ const HChar* ML_(fndn_ix2dirname) (struct _DebugInfo* di,
 /* Add a string to the string table of a DebugInfo, by copying the
    string from the given DiCursor.  Measures the length of the string
    itself. */
-HChar* ML_(addStrFromCursor)( struct _DebugInfo* di, DiCursor c )
+const HChar* ML_(addStrFromCursor)( DebugInfo* di, DiCursor c )
 {
    /* This is a less-than-stellar implementation, but it should
       work. */
    vg_assert(ML_(cur_is_valid)(c));
    HChar* str = ML_(cur_read_strdup)(c, "di.addStrFromCursor.1");
-   HChar* res = ML_(addStr)(di, str, -1);
+   const HChar* res = ML_(addStr)(di, str, -1);
    ML_(dinfo_free)(str);
    return res;
 }
@@ -346,7 +343,7 @@ void ML_(addSym) ( struct _DebugInfo* di, DiSym* sym )
    vg_assert(di->symtab_used <= di->symtab_size);
 }
 
-UInt ML_(fndn_ix) (struct _DebugInfo* di, Word locno)
+UInt ML_(fndn_ix) (const DebugInfo* di, Word locno)
 {
    UInt fndn_ix;
 
@@ -659,7 +656,7 @@ void ML_(addInlInfo) ( struct _DebugInfo* di,
    addInl ( di, &inl );
 }
 
-DiCfSI_m* ML_(get_cfsi_m) (struct _DebugInfo* di, UInt pos)
+DiCfSI_m* ML_(get_cfsi_m) (const DebugInfo* di, UInt pos)
 {
    UInt cfsi_m_ix;
 
@@ -685,8 +682,8 @@ void ML_(addDiCfSI) ( struct _DebugInfo* di,
    UInt    new_sz;
    DiCfSI* new_tab;
    SSizeT  delta;
-   struct _DebugInfoMapping* map;
-   struct _DebugInfoMapping* map2;
+   DebugInfoMapping* map;
+   DebugInfoMapping* map2;
 
    if (debug) {
       VG_(printf)("adding DiCfSI: ");
@@ -919,11 +916,11 @@ static void ppCfiReg ( CfiReg reg )
    }
 }
 
-void ML_(ppCfiExpr)( XArray* src, Int ix )
+void ML_(ppCfiExpr)( const XArray* src, Int ix )
 {
    /* VG_(indexXA) checks for invalid src/ix values, so we can
       use it indiscriminately. */
-   CfiExpr* e = (CfiExpr*) VG_(indexXA)( src, ix );
+   const CfiExpr* e = VG_(indexXA)( src, ix );
    switch (e->tag) {
       case Cex_Undef: 
          VG_(printf)("Undef"); 
@@ -1145,10 +1142,10 @@ void ML_(addVar)( struct _DebugInfo* di,
                   Int    level,
                   Addr   aMin,
                   Addr   aMax,
-                  HChar* name, /* in di's .strpool */
+                  const  HChar* name, /* in di's .strpool */
                   UWord  typeR, /* a cuOff */
-                  GExpr* gexpr,
-                  GExpr* fbGX,
+                  const GExpr* gexpr,
+                  const GExpr* fbGX,
                   UInt   fndn_ix, /* where decl'd - may be zero.
                                      index in in di's .fndnpool */
                   Int    lineNo, /* where decl'd - may be zero */
@@ -1419,8 +1416,8 @@ static Int compare_DiSym ( const void* va, const void* vb )
    preferred.
  */
 static
-Bool preferName ( struct _DebugInfo* di,
-                  HChar* a_name, HChar* b_name,
+Bool preferName ( const DebugInfo* di,
+                  const HChar* a_name, const HChar* b_name,
                   Addr sym_avma/*exposition only*/ )
 {
    Word cmp;
@@ -1481,7 +1478,7 @@ Bool preferName ( struct _DebugInfo* di,
    {
       Bool blankA = True;
       Bool blankB = True;
-      HChar *s;
+      const HChar *s;
       s = a_name;
       while (*s) {
          if (!VG_(isspace)(*s++)) {
@@ -1559,14 +1556,15 @@ Bool preferName ( struct _DebugInfo* di,
 
 /* Add the names in FROM to the names in TO. */
 static
-void add_DiSym_names_to_from ( DebugInfo* di, DiSym* to, DiSym* from )
+void add_DiSym_names_to_from ( const DebugInfo* di, DiSym* to,
+                               const DiSym* from )
 {
    vg_assert(to->pri_name);
    vg_assert(from->pri_name);
    /* Figure out how many names there will be in the new combined
       secondary vector. */
-   HChar** to_sec   = to->sec_names;
-   HChar** from_sec = from->sec_names;
+   const HChar** to_sec   = to->sec_names;
+   const HChar** from_sec = from->sec_names;
    Word n_new_sec = 1;
    if (from_sec) {
       while (*from_sec) {
@@ -1584,8 +1582,8 @@ void add_DiSym_names_to_from ( DebugInfo* di, DiSym* to, DiSym* from )
       TRACE_SYMTAB("merge: -> %ld\n", n_new_sec);
    /* Create the new sec and copy stuff into it, putting the new
       entries at the end. */
-   HChar** new_sec = ML_(dinfo_zalloc)( "di.storage.aDntf.1",
-                                        (n_new_sec+1) * sizeof(HChar*) );
+   const HChar** new_sec = ML_(dinfo_zalloc)( "di.storage.aDntf.1",
+                                              (n_new_sec+1) * sizeof(HChar*) );
    from_sec = from->sec_names;
    to_sec   = to->sec_names;
    Word i = 0;
@@ -1616,7 +1614,7 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
 {
    Word  i, j, n_truncated;
    Addr  sta1, sta2, end1, end2, toc1, toc2;
-   HChar *pri1, *pri2, **sec1, **sec2;
+   const HChar *pri1, *pri2, **sec1, **sec2;
    Bool  ist1, ist2, isf1, isf2;
 
 #  define SWAP(ty,aa,bb) \
@@ -1742,7 +1740,7 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
          if (end1 > end2) { 
             sta1 = end2 + 1;
             SWAP(Addr,sta1,sta2); SWAP(Addr,end1,end2); SWAP(Addr,toc1,toc2);
-            SWAP(HChar*,pri1,pri2); SWAP(HChar**,sec1,sec2);
+            SWAP(const HChar*,pri1,pri2); SWAP(const HChar**,sec1,sec2);
             SWAP(Bool,ist1,ist2); SWAP(Bool,isf1,isf2);
          } else 
          if (end1 < end2) {
@@ -1813,7 +1811,7 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
       show the user. */
    for (i = 0; i < ((Word)di->symtab_used)-1; i++) {
       DiSym*  sym = &di->symtab[i];
-      HChar** sec = sym->sec_names;
+      const HChar** sec = sym->sec_names;
       if (!sec)
          continue;
       /* Slow but simple.  Copy all the cands into a temp array,
@@ -1821,8 +1819,8 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
       Word n_tmp = 1;
       while (*sec) { n_tmp++; sec++; }
       j = 0;
-      HChar** tmp = ML_(dinfo_zalloc)( "di.storage.cS.1",
-                                       (n_tmp+1) * sizeof(HChar*) );
+      const HChar** tmp = ML_(dinfo_zalloc)( "di.storage.cS.1",
+                                             (n_tmp+1) * sizeof(HChar*) );
       tmp[j++] = sym->pri_name;
       sec = sym->sec_names;
       while (*sec) { tmp[j++] = *sec; sec++; }
@@ -1840,7 +1838,7 @@ static void canonicaliseSymtab ( struct _DebugInfo* di )
       vg_assert(best >= 0 && best < n_tmp);
       /* Copy back */
       sym->pri_name = tmp[best];
-      HChar** cursor = sym->sec_names;
+      const HChar** cursor = sym->sec_names;
       for (j = 0; j < n_tmp; j++) {
          if (j == best)
             continue;
@@ -2038,7 +2036,7 @@ static Int compare_DiCfSI ( const void* va, const void* vb )
    return 0;
 }
 
-static void get_cfsi_rd_stats ( struct _DebugInfo* di,
+static void get_cfsi_rd_stats ( const DebugInfo* di,
                                 UWord *n_mergeables, UWord *n_holes )
 {
    Word i;
@@ -2268,7 +2266,7 @@ void ML_(canonicaliseTables) ( struct _DebugInfo* di )
 /* Find a symbol-table index containing the specified pointer, or -1
    if not found.  Binary search.  */
 
-Word ML_(search_one_symtab) ( struct _DebugInfo* di, Addr ptr,
+Word ML_(search_one_symtab) ( const DebugInfo* di, Addr ptr,
                               Bool match_anywhere_in_sym,
                               Bool findText )
 {
@@ -2301,7 +2299,7 @@ Word ML_(search_one_symtab) ( struct _DebugInfo* di, Addr ptr,
 /* Find a location-table index containing the specified pointer, or -1
    if not found.  Binary search.  */
 
-Word ML_(search_one_loctab) ( struct _DebugInfo* di, Addr ptr )
+Word ML_(search_one_loctab) ( const DebugInfo* di, Addr ptr )
 {
    Addr a_mid_lo, a_mid_hi;
    Word mid, 
@@ -2325,7 +2323,7 @@ Word ML_(search_one_loctab) ( struct _DebugInfo* di, Addr ptr )
 /* Find a CFI-table index containing the specified pointer, or -1
    if not found.  Binary search.  */
 
-Word ML_(search_one_cfitab) ( struct _DebugInfo* di, Addr ptr )
+Word ML_(search_one_cfitab) ( const DebugInfo* di, Addr ptr )
 {
    Word mid, 
         lo = 0, 
@@ -2355,7 +2353,7 @@ Word ML_(search_one_cfitab) ( struct _DebugInfo* di, Addr ptr )
 /* Find a FPO-table index containing the specified pointer, or -1
    if not found.  Binary search.  */
 
-Word ML_(search_one_fpotab) ( struct _DebugInfo* di, Addr ptr )
+Word ML_(search_one_fpotab) ( const DebugInfo* di, Addr ptr )
 {
    Addr const addr = ptr - di->fpo_base_avma;
    Addr a_mid_lo, a_mid_hi;

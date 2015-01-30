@@ -1157,7 +1157,7 @@ extern void genReload_PPC ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offsetB, Bool mode64 );
 
 extern void         getAllocableRegs_PPC ( Int*, HReg**, Bool mode64 );
-extern HInstrArray* iselSB_PPC           ( IRSB*, 
+extern HInstrArray* iselSB_PPC           ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,
                                            const VexAbiInfo*,
@@ -1165,12 +1165,12 @@ extern HInstrArray* iselSB_PPC           ( IRSB*,
                                            Int offs_Host_EvC_FailAddr,
                                            Bool chainingAllowed,
                                            Bool addProfInc,
-                                           Addr64 max_ga );
+                                           Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and
    host_EvC_COUNTER. */
-extern Int evCheckSzB_PPC ( VexEndness endness_host );
+extern Int evCheckSzB_PPC (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_PPC ( VexEndness endness_host,

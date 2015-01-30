@@ -40,6 +40,8 @@ usage: valgrind [options] prog-and-args
     --num-callers=<number>    show <number> callers in stack traces [12]
     --error-limit=no|yes      stop showing new errors if too many? [yes]
     --error-exitcode=<number> exit code to return if errors found [0=disable]
+    --error-markers=<begin>,<end> add lines with begin/end markers before/after
+                              each error output in plain text mode [none]
     --show-below-main=no|yes  continue stack traces below main() [no]
     --default-suppressions=yes|no
                               load default suppressions [yes]
@@ -89,7 +91,7 @@ usage: valgrind [options] prog-and-args
                               DRD) [no]
     --vgdb-poll=<number>      gdbserver poll max every <number> basic blocks [5000] 
     --vgdb-shadow-registers=no|yes   let gdb see the shadow registers [no]
-    --vgdb-prefix=<prefix>    prefix for vgdb FIFOs [/tmp/vgdb-pipe]
+    --vgdb-prefix=<prefix>    prefix for vgdb FIFOs [.../vgdb-pipe]
     --run-libc-freeres=no|yes free up glibc memory at exit on Linux? [yes]
     --sim-hints=hint1,hint2,...  activate unusual sim behaviours [none] 
          where hint is one of:
@@ -121,6 +123,8 @@ usage: valgrind [options] prog-and-args
                   NOTE: stack scanning is only available on arm-linux.
     --unw-stack-scan-frames=<number>   Max number of frames that can be
                   recovered by stack scanning [5]
+    --resync-filter=no|yes|verbose [yes on MacOS, no on other OSes]
+              attempt to avoid expensive address-space-resync operations
 
   user options for Nulgrind:
     (none)

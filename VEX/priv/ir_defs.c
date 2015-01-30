@@ -1446,16 +1446,18 @@ void ppIRStoreG ( const IRStoreG* sg )
 {
    vex_printf("if (");
    ppIRExpr(sg->guard);
-   vex_printf(") ST%s(", sg->end==Iend_LE ? "le" : "be");
+   vex_printf(") { ST%s(", sg->end==Iend_LE ? "le" : "be");
    ppIRExpr(sg->addr);
    vex_printf(") = ");
    ppIRExpr(sg->data);
+   vex_printf(" }");
 }
 
 void ppIRLoadGOp ( IRLoadGOp cvt )
 {
    switch (cvt) {
       case ILGop_INVALID: vex_printf("ILGop_INVALID"); break;      
+      case ILGop_Ident64: vex_printf("Ident64"); break;      
       case ILGop_Ident32: vex_printf("Ident32"); break;      
       case ILGop_16Uto32: vex_printf("16Uto32"); break;      
       case ILGop_16Sto32: vex_printf("16Sto32"); break;      
@@ -1532,7 +1534,7 @@ void ppIRStmt ( const IRStmt* s )
          vex_printf("IR-NoOp");
          break;
       case Ist_IMark:
-         vex_printf( "------ IMark(0x%llx, %d, %u) ------", 
+         vex_printf( "------ IMark(0x%lx, %u, %u) ------", 
                      s->Ist.IMark.addr, s->Ist.IMark.len,
                      (UInt)s->Ist.IMark.delta);
          break;
@@ -2053,7 +2055,7 @@ IRStmt* IRStmt_NoOp ( void )
    static_closure.tag = Ist_NoOp;
    return &static_closure;
 }
-IRStmt* IRStmt_IMark ( Addr64 addr, Int len, UChar delta ) {
+IRStmt* IRStmt_IMark ( Addr addr, UInt len, UChar delta ) {
    IRStmt* s          = LibVEX_Alloc(sizeof(IRStmt));
    s->tag             = Ist_IMark;
    s->Ist.IMark.addr  = addr;
@@ -3495,6 +3497,8 @@ void typeOfIRLoadGOp ( IRLoadGOp cvt,
                        /*OUT*/IRType* t_res, /*OUT*/IRType* t_arg )
 {
    switch (cvt) {
+      case ILGop_Ident64:
+         *t_res = Ity_I64; *t_arg = Ity_I64; break;
       case ILGop_Ident32:
          *t_res = Ity_I32; *t_arg = Ity_I32; break;
       case ILGop_16Uto32: case ILGop_16Sto32:
@@ -4149,7 +4153,7 @@ void tcStmt ( const IRSB* bb, const IRStmt* stmt, IRType gWordTy )
       case Ist_IMark:
          /* Somewhat heuristic, but rule out totally implausible
             instruction sizes and deltas. */
-         if (stmt->Ist.IMark.len < 0 || stmt->Ist.IMark.len > 20)
+         if (stmt->Ist.IMark.len > 20)
             sanityCheckFail(bb,stmt,"IRStmt.IMark.len: implausible");
          if (stmt->Ist.IMark.delta > 1)
             sanityCheckFail(bb,stmt,"IRStmt.IMark.delta: implausible");

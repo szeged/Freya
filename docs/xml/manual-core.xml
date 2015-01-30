@@ -236,7 +236,7 @@ re-run, passing the <option>-v</option> option to Valgrind.  A second
     of each line of output it prints the current number of active
     connections in round brackets.</para>
 
-    <para><computeroutput>valgrind-listener</computeroutput> accepts two
+    <para><computeroutput>valgrind-listener</computeroutput> accepts three
     command-line options:</para>
     <!-- start of xi:include in the manpage -->
     <variablelist id="listener.opts.list">
@@ -246,6 +246,16 @@ re-run, passing the <option>-v</option> option to Valgrind.  A second
            <para>When the number of connected processes falls back to zero,
            exit.  Without this, it will run forever, that is, until you
            send it Control-C.</para>
+         </listitem>
+       </varlistentry>
+       <varlistentry>
+         <term><option>--max-connect=INTEGER</option></term>
+         <listitem>
+           <para>By default, the listener can connect to up to 50 processes.
+             Occasionally, that number is too small. Use this option to
+             provide a different limit. E.g.
+             <computeroutput>--max-connect=100</computeroutput>.
+           </para>
          </listitem>
        </varlistentry>
        <varlistentry>
@@ -1157,6 +1167,23 @@ that can report errors, e.g. Memcheck, but not Cachegrind.</para>
       This is useful for using Valgrind as part of an automated test
       suite, since it makes it easy to detect test cases for which
       Valgrind has reported errors, just by inspecting return codes.</para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.error-markers" xreflabel="--error-markers">
+    <term>
+      <option><![CDATA[--error-markers=<begin>,<end> [default: none]]]></option>
+    </term>
+    <listitem>
+      <para>When errors are output as plain text (i.e. XML not used),
+      <option>--error-markers</option> instructs to output a line
+      containing the <option>begin</option> (<option>end</option>)
+      string before (after) each error. </para>
+      <para> Such marker lines facilitate searching for errors and/or
+      extracting errors in an output file that contain valgrind errors mixed
+      with the program output. </para>
+      <para> Note that empty markers are accepted. So, only using a begin
+      (or an end) marker is possible.</para>
     </listitem>
   </varlistentry>
 
@@ -2690,7 +2717,7 @@ subject to the following constraints:</para>
    that, on x86 and amd64, essentially all instructions are supported,
    up to and including AVX and AES in 64-bit mode and SSSE3 in 32-bit
    mode.  32-bit mode does in fact support the bare minimum SSE4
-   instructions to needed to run programs on MacOSX 10.6 on 32-bit
+   instructions needed to run programs on MacOSX 10.6 on 32-bit
    targets.
    </para>
   </listitem>

@@ -185,7 +185,7 @@ static void notify_core_of_mmap(Addr a, SizeT len, UInt prot,
    d = VG_(am_notify_client_mmap)( a, len, prot, flags, fd, offset );
 
    if (d)
-      VG_(discard_translations)( (Addr64)a, (ULong)len,
+      VG_(discard_translations)( a, (ULong)len,
                                  "notify_core_of_mmap" );
 }
 
@@ -243,7 +243,7 @@ ML_(notify_core_and_tool_of_munmap) ( Addr a, SizeT len )
    VG_TRACK( die_mem_munmap, a, len );
    VG_(di_notify_munmap)( a, len );
    if (d)
-      VG_(discard_translations)( (Addr64)a, (ULong)len, 
+      VG_(discard_translations)( a, (ULong)len, 
                                  "ML_(notify_core_and_tool_of_munmap)" );
 }
 
@@ -260,7 +260,7 @@ ML_(notify_core_and_tool_of_mprotect) ( Addr a, SizeT len, Int prot )
    VG_TRACK( change_mem_mprotect, a, len, rr, ww, xx );
    VG_(di_notify_mprotect)( a, len, prot );
    if (d)
-      VG_(discard_translations)( (Addr64)a, (ULong)len, 
+      VG_(discard_translations)( a, (ULong)len, 
                                  "ML_(notify_core_and_tool_of_mprotect)" );
 }
 
@@ -427,10 +427,8 @@ SysRes do_mremap( Addr old_addr, SizeT old_len,
    SSizeT needL = new_len - old_len;
 
    vg_assert(needL > 0);
-   if (needA == 0)
-      goto eINVAL; 
-      /* VG_(am_get_advisory_client_simple) interprets zero to mean
-         non-fixed, which is not what we want */
+   vg_assert(needA > 0);
+
    advised = VG_(am_get_advisory_client_simple)( needA, needL, &ok );
    if (ok) {
       /* Fixes bug #129866. */
@@ -482,10 +480,9 @@ SysRes do_mremap( Addr old_addr, SizeT old_len,
    {
    Addr  needA = old_addr + old_len;
    SizeT needL = new_len - old_len;
-   if (needA == 0) 
-      goto eINVAL;
-      /* VG_(am_get_advisory_client_simple) interprets zero to mean
-         non-fixed, which is not what we want */
+
+   vg_assert(needA > 0);
+
    advised = VG_(am_get_advisory_client_simple)( needA, needL, &ok );
    if (ok) {
       /* Fixes bug #129866. */
@@ -585,7 +582,8 @@ void record_fd_close(Int fd)
    some such thing) or that we don't know the filename.  If the fd is
    already open, then we're probably doing a dup2() to an existing fd,
    so just overwrite the existing one. */
-void ML_(record_fd_open_with_given_name)(ThreadId tid, Int fd, char *pathname)
+void ML_(record_fd_open_with_given_name)(ThreadId tid, Int fd,
+                                         const HChar *pathname)
 {
    OpenFd *i;
 
@@ -621,9 +619,9 @@ void ML_(record_fd_open_with_given_name)(ThreadId tid, Int fd, char *pathname)
 // Record opening of an fd, and find its name.
 void ML_(record_fd_open_named)(ThreadId tid, Int fd)
 {
-   static HChar buf[VKI_PATH_MAX];
-   HChar* name;
-   if (VG_(resolve_filename)(fd, buf, VKI_PATH_MAX))
+   const HChar* buf;
+   const HChar* name;
+   if (VG_(resolve_filename)(fd, &buf))
       name = buf;
    else
       name = NULL;
@@ -722,7 +720,7 @@ HChar *inet6_to_name(struct vki_sockaddr_in6 *sa, UInt len, HChar *name)
    } else if (sa->sin6_port == 0) {
       VG_(sprintf)(name, "<unbound>");
    } else {
-      char addr[128];
+      HChar addr[100];    // large enough
       inet6_format(addr, (void *)&(sa->sin6_addr));
       VG_(sprintf)(name, "[%s]:%u", addr, VG_(ntohs)(sa->sin6_port));
    }
@@ -750,8 +748,8 @@ getsockdetails(Int fd)
    if(VG_(getsockname)(fd, (struct vki_sockaddr *)&(laddr.a), &llen) != -1) {
       switch(laddr.a.sa_family) {
       case VKI_AF_INET: {
-         static char lname[32];
-         static char pname[32];
+         HChar lname[32];   // large enough
+         HChar pname[32];   // large enough
          struct vki_sockaddr_in paddr;
          Int plen = sizeof(struct vki_sockaddr_in);
 
@@ -766,8 +764,8 @@ getsockdetails(Int fd)
          return;
          }
       case VKI_AF_INET6: {
-         static char lname[128];
-         static char pname[128];
+         HChar lname[128];  // large enough
+         HChar pname[128];  // large enough
          struct vki_sockaddr_in6 paddr;
          Int plen = sizeof(struct vki_sockaddr_in6);
 
@@ -1128,7 +1126,7 @@ void pre_mem_read_sockaddr ( ThreadId tid,
             struct sockaddr_???? has padding bytes between its elements. */
          VG_(sprintf) ( outmsg, description, "sa_data" );
          PRE_MEM_READ( outmsg, (Addr)&sa->sa_family + sizeof(sa->sa_family),
-                       salen );
+                       salen -  sizeof(sa->sa_family));
          break;
    }
    
@@ -1860,7 +1858,7 @@ SizeT get_shm_size ( Int shmid )
 #ifdef __NR_shmctl
 #  ifdef VKI_IPC_64
    struct vki_shmid64_ds buf;
-#    ifdef VGP_amd64_linux
+#    if defined(VGP_amd64_linux) || defined(VGP_arm64_linux)
      /* See bug 222545 comment 7 */
      SysRes __res = VG_(do_syscall3)(__NR_shmctl, shmid, 
                                      VKI_IPC_STAT, (UWord)&buf);
@@ -1947,7 +1945,7 @@ ML_(generic_POST_sys_shmat) ( ThreadId tid,
       VG_TRACK( new_mem_mmap, res, segmentSize, True, True, False,
                               0/*di_handle*/ );
       if (d)
-         VG_(discard_translations)( (Addr64)res, 
+         VG_(discard_translations)( (Addr)res, 
                                     (ULong)VG_PGROUNDUP(segmentSize),
                                     "ML_(generic_POST_sys_shmat)" );
    }
@@ -1979,7 +1977,7 @@ ML_(generic_POST_sys_shmdt) ( ThreadId tid, UWord res, UWord arg0 )
       s = NULL; /* s is now invalid */
       VG_TRACK( die_mem_munmap, s_start, s_len );
       if (d)
-         VG_(discard_translations)( (Addr64)s_start,
+         VG_(discard_translations)( s_start,
                                     (ULong)s_len,
                                     "ML_(generic_POST_sys_shmdt)" );
    }
@@ -2212,6 +2210,33 @@ ML_(generic_PRE_sys_mmap) ( ThreadId tid,
       sres = VG_(am_do_mmap_NO_NOTIFY)(advised, arg2, arg3,
                                        arg4 | VKI_MAP_FIXED,
                                        arg5, arg6);
+   }
+
+   /* Yet another refinement : sometimes valgrind chooses an address
+      which is not acceptable by the kernel. This at least happens
+      when mmap-ing huge pages, using the flag MAP_HUGETLB.
+      valgrind aspacem does not know about huge pages, and modifying
+      it to handle huge pages is not straightforward (e.g. need
+      to understand special file system mount options).
+      So, let's just redo an mmap, without giving any constraint to
+      the kernel. If that succeeds, check with aspacem that the returned
+      address is acceptable (i.e. is free).
+      This will give a similar effect as if the user would have
+      specified a MAP_FIXED at that address.
+      The aspacem state will be correctly updated afterwards.
+      We however cannot do this last refinement when the user asked
+      for a fixed mapping, as the user asked a specific address. */
+   if (sr_isError(sres) && !(arg4 & VKI_MAP_FIXED)) {
+      advised = 0; 
+      /* try mmap with NULL address and without VKI_MAP_FIXED
+         to let the kernel decide. */
+      sres = VG_(am_do_mmap_NO_NOTIFY)(advised, arg2, arg3,
+                                       arg4,
+                                       arg5, arg6);
+      if (!sr_isError(sres)) {
+         vg_assert(VG_(am_covered_by_single_free_segment)((Addr)sr_Res(sres),
+                                                           arg2));
+      }
    }
 
    if (!sr_isError(sres)) {
@@ -2735,7 +2760,7 @@ PRE(sys_execve)
    // Decide whether or not we want to follow along
    { // Make 'child_argv' be a pointer to the child's arg vector
      // (skipping the exe name)
-     HChar** child_argv = (HChar**)ARG2;
+     const HChar** child_argv = (const HChar**)ARG2;
      if (child_argv && child_argv[0] == NULL)
         child_argv = NULL;
      trace_this_child = VG_(should_we_trace_this_child)( (HChar*)ARG1, child_argv );
@@ -3732,7 +3757,7 @@ POST(sys_munmap)
    Addr  a   = ARG1;
    SizeT len = ARG2;
 
-   ML_(notify_core_and_tool_of_munmap)( (Addr64)a, (ULong)len );
+   ML_(notify_core_and_tool_of_munmap)( a, len );
 }
 
 PRE(sys_mincore)
@@ -3787,7 +3812,7 @@ PRE(sys_open)
       fake file we cooked up at startup (in m_main).  Also, seek the
       cloned fd back to the start. */
    {
-      HChar  name[30];
+      HChar  name[30];   // large enough
       HChar* arg1s = (HChar*) ARG1;
       SysRes sres;
 
@@ -3812,7 +3837,7 @@ PRE(sys_open)
       fake file we cooked up at startup (in m_main).  Also, seek the
       cloned fd back to the start. */
    {
-      HChar  name[30];
+      HChar  name[30];   // large enough
       HChar* arg1s = (HChar*) ARG1;
       SysRes sres;
 
@@ -3960,7 +3985,7 @@ PRE(sys_readlink)
        * Handle the case where readlink is looking at /proc/self/exe or
        * /proc/<pid>/exe.
        */
-      HChar name[25];
+      HChar  name[30];   // large enough
       HChar* arg1s = (HChar*) ARG1;
       VG_(sprintf)(name, "/proc/%d/exe", VG_(getpid)());
       if (ML_(safe_to_deref)(arg1s, 1) &&

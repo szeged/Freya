@@ -317,6 +317,8 @@ typedef
       ARM64vecb_FSUB64x2,    ARM64vecb_FSUB32x4,
       ARM64vecb_FMUL64x2,    ARM64vecb_FMUL32x4,
       ARM64vecb_FDIV64x2,    ARM64vecb_FDIV32x4,
+      ARM64vecb_FMAX64x2,    ARM64vecb_FMAX32x4,
+      ARM64vecb_FMIN64x2,    ARM64vecb_FMIN32x4,
                              ARM64vecb_UMAX32x4,
       ARM64vecb_UMAX16x8,    ARM64vecb_UMAX8x16,
                              ARM64vecb_UMIN32x4,
@@ -491,6 +493,7 @@ typedef
       ARM64in_VBinS,
       ARM64in_VCmpD,
       ARM64in_VCmpS,
+      ARM64in_VFCSel,
       ARM64in_FPCR,
       ARM64in_FPSR,
       /* ARM64in_V*V: vector ops on vector registers */
@@ -627,7 +630,7 @@ typedef
             condition (which could be ARM64cc_AL). */
          struct {
             RetLoc        rloc;     /* where the return value will be */
-            HWord         target;
+            Addr64        target;
             ARM64CondCode cond;
             Int           nArgRegs; /* # regs carrying args: 0 .. 8 */
          } Call;
@@ -743,6 +746,15 @@ typedef
             HReg argL;
             HReg argR;
          } VCmpS;
+         /* 32- or 64-bit FP conditional select */
+         struct {
+            HReg          dst;
+            HReg          argL;
+            HReg          argR;
+            ARM64CondCode cond;
+            Bool          isD;
+         }
+         VFCSel;
          /* Move a 32-bit value to/from the FPCR */
          struct {
             Bool toFPCR;
@@ -865,7 +877,7 @@ extern ARM64Instr* ARM64Instr_XAssisted ( HReg dstGA, ARM64AMode* amPC,
                                           ARM64CondCode cond, IRJumpKind jk );
 extern ARM64Instr* ARM64Instr_CSel    ( HReg dst, HReg argL, HReg argR,
                                         ARM64CondCode cond );
-extern ARM64Instr* ARM64Instr_Call    ( ARM64CondCode, HWord, Int nArgRegs,
+extern ARM64Instr* ARM64Instr_Call    ( ARM64CondCode, Addr64, Int nArgRegs,
                                         RetLoc rloc );
 extern ARM64Instr* ARM64Instr_AddToSP ( Int simm );
 extern ARM64Instr* ARM64Instr_FromSP  ( HReg dst );
@@ -889,6 +901,8 @@ extern ARM64Instr* ARM64Instr_VBinD   ( ARM64FpBinOp op, HReg, HReg, HReg );
 extern ARM64Instr* ARM64Instr_VBinS   ( ARM64FpBinOp op, HReg, HReg, HReg );
 extern ARM64Instr* ARM64Instr_VCmpD   ( HReg argL, HReg argR );
 extern ARM64Instr* ARM64Instr_VCmpS   ( HReg argL, HReg argR );
+extern ARM64Instr* ARM64Instr_VFCSel  ( HReg dst, HReg argL, HReg argR,
+                                        ARM64CondCode cond, Bool isD );
 extern ARM64Instr* ARM64Instr_FPCR    ( Bool toFPCR, HReg iReg );
 extern ARM64Instr* ARM64Instr_FPSR    ( Bool toFPSR, HReg iReg );
 extern ARM64Instr* ARM64Instr_VBinV   ( ARM64VecBinOp op, HReg, HReg, HReg );
@@ -935,7 +949,7 @@ extern void genReload_ARM64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Int offset, Bool );
 
 extern void getAllocableRegs_ARM64 ( Int*, HReg** );
-extern HInstrArray* iselSB_ARM64 ( IRSB*, 
+extern HInstrArray* iselSB_ARM64 ( const IRSB*, 
                                    VexArch,
                                    const VexArchInfo*,
                                    const VexAbiInfo*,
@@ -943,12 +957,12 @@ extern HInstrArray* iselSB_ARM64 ( IRSB*,
                                    Int offs_Host_EvC_FailAddr,
                                    Bool chainingAllowed,
                                    Bool addProfInc,
-                                   Addr64 max_ga );
+                                   Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and
    host_EvC_COUNTER. */
-extern Int evCheckSzB_ARM64 ( VexEndness endness_host );
+extern Int evCheckSzB_ARM64 (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_ARM64 ( VexEndness endness_host,

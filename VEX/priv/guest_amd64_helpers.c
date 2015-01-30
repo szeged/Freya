@@ -2051,18 +2051,18 @@ void amd64g_dirtyhelper_FINIT ( VexGuestAMD64State* gst )
 
 /* CALLED FROM GENERATED CODE */
 /* DIRTY HELPER (reads guest memory) */
-ULong amd64g_dirtyhelper_loadF80le ( ULong addrU )
+ULong amd64g_dirtyhelper_loadF80le ( Addr addrU )
 {
    ULong f64;
-   convert_f80le_to_f64le ( (UChar*)ULong_to_Ptr(addrU), (UChar*)&f64 );
+   convert_f80le_to_f64le ( (UChar*)addrU, (UChar*)&f64 );
    return f64;
 }
 
 /* CALLED FROM GENERATED CODE */
 /* DIRTY HELPER (writes guest memory) */
-void amd64g_dirtyhelper_storeF80le ( ULong addrU, ULong f64 )
+void amd64g_dirtyhelper_storeF80le ( Addr addrU, ULong f64 )
 {
-   convert_f64le_to_f80le( (UChar*)&f64, (UChar*)ULong_to_Ptr(addrU) );
+   convert_f64le_to_f80le( (UChar*)&f64, (UChar*)addrU );
 }
 
 
@@ -3845,10 +3845,19 @@ extern void amd64g_dirtyhelper_AESKEYGENASSIST (
    V128* argL = (V128*)( ((UChar*)gst) + gstOffL );
    V128* argR = (V128*)( ((UChar*)gst) + gstOffR );
 
-   argR->w32[3] = RotWord (SubWord (argL->w32[3])) ^ imm8;
-   argR->w32[2] = SubWord (argL->w32[3]);
-   argR->w32[1] = RotWord (SubWord (argL->w32[1])) ^ imm8;
-   argR->w32[0] = SubWord (argL->w32[1]);
+   // We have to create the result in a temporary in the
+   // case where the src and dst regs are the same.  See #341698.
+   V128 tmp;
+
+   tmp.w32[3] = RotWord (SubWord (argL->w32[3])) ^ imm8;
+   tmp.w32[2] = SubWord (argL->w32[3]);
+   tmp.w32[1] = RotWord (SubWord (argL->w32[1])) ^ imm8;
+   tmp.w32[0] = SubWord (argL->w32[1]);
+
+   argR->w32[3] = tmp.w32[3];
+   argR->w32[2] = tmp.w32[2];
+   argR->w32[1] = tmp.w32[1];
+   argR->w32[0] = tmp.w32[0];
 }
 
 
@@ -3892,9 +3901,10 @@ void LibVEX_GuestAMD64_initialise ( /*OUT*/VexGuestAMD64State* vex_state )
    vex_state->guest_IDFLAG  = 0;
    vex_state->guest_ACFLAG  = 0;
 
-   /* HACK: represent the offset associated with %fs==0. This
-      assumes that %fs is only ever zero. */
-   vex_state->guest_FS_ZERO = 0;
+   /* HACK: represent the offset associated with a constant %fs. 
+      Typically, on linux, this assumes that %fs is only ever zero (main
+      thread) or 0x63. */
+   vex_state->guest_FS_CONST = 0;
 
    vex_state->guest_RIP = 0;
 
@@ -3936,7 +3946,7 @@ void LibVEX_GuestAMD64_initialise ( /*OUT*/VexGuestAMD64State* vex_state )
 
    vex_state->guest_NRADDR   = 0;
    vex_state->guest_SC_CLASS = 0;
-   vex_state->guest_GS_0x60  = 0;
+   vex_state->guest_GS_CONST = 0;
 
    vex_state->guest_IP_AT_SYSCALL = 0;
    vex_state->pad1 = 0;
@@ -4022,7 +4032,7 @@ VexGuestLayout
 		 /*  2 */ ALWAYSDEFD(guest_DFLAG),
                  /*  3 */ ALWAYSDEFD(guest_IDFLAG),
                  /*  4 */ ALWAYSDEFD(guest_RIP),
-                 /*  5 */ ALWAYSDEFD(guest_FS_ZERO),
+                 /*  5 */ ALWAYSDEFD(guest_FS_CONST),
                  /*  6 */ ALWAYSDEFD(guest_FTOP),
                  /*  7 */ ALWAYSDEFD(guest_FPTAG),
                  /*  8 */ ALWAYSDEFD(guest_FPROUND),

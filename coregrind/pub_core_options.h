@@ -46,6 +46,12 @@ extern Bool  VG_(clo_error_limit);
    way. */
 extern Int   VG_(clo_error_exitcode);
 
+/* Markers used to mark the begin/end of an error, when errors are
+   printed in textual (non xml) format.
+   [0] is the error begin marker, [1] is the error end marker.
+   default: no markers. */
+extern HChar *VG_(clo_error_markers)[2];
+
 typedef 
    enum { 
       Vg_VgdbNo,   // Do not activate gdbserver.
@@ -93,11 +99,11 @@ extern Int   VG_(clo_gen_suppressions);
 extern Int   VG_(clo_sanity_level);
 /* Automatically attempt to demangle C++ names?  default: YES */
 extern Bool  VG_(clo_demangle);
-/* Simulate child processes? default: NO */
 /* Soname synonyms : a string containing a list of pairs
    xxxxx=yyyyy separated by commas.
    E.g. --soname-synonyms=somalloc=libtcmalloc*.so*,solibtruc=NONE */
 extern const HChar* VG_(clo_soname_synonyms);
+/* Valgrind-ise child processes (follow execve)? default : NO */
 extern Bool  VG_(clo_trace_children);
 /* String containing comma-separated patterns for executable names
    that should not be traced into even when --trace-children=yes */
@@ -116,8 +122,8 @@ extern Bool  VG_(clo_child_silent_after_fork);
 
 /* If the user specified --log-file=STR and/or --xml-file=STR, these
    hold STR after expansion of the %p and %q templates. */
-extern HChar* VG_(clo_log_fname_expanded);
-extern HChar* VG_(clo_xml_fname_expanded);
+extern const HChar* VG_(clo_log_fname_expanded);
+extern const HChar* VG_(clo_xml_fname_expanded);
 
 /* Add timestamps to log messages?  default: NO */
 extern Bool  VG_(clo_time_stamp);
@@ -351,8 +357,8 @@ extern Bool VG_(clo_dsymutil);
    of the executable.  'child_argv' must not include the name of the
    executable itself; iow child_argv[0] must be the first arg, if any,
    for the child. */
-extern Bool VG_(should_we_trace_this_child) ( HChar* child_exe_name,
-                                              HChar** child_argv );
+extern Bool VG_(should_we_trace_this_child) ( const HChar* child_exe_name,
+                                              const HChar** child_argv );
 
 /* Whether illegal instructions should be reported/diagnosed.
    Can be explicitly set through --sigill-diagnostics otherwise
@@ -371,6 +377,12 @@ extern UInt VG_(clo_unw_stack_scan_thresh);
    Since it tends to pick up a lot of junk, this value is set pretty
    low by default.  Default: 5 */
 extern UInt VG_(clo_unw_stack_scan_frames);
+
+/* Controls the resync-filter on MacOS.  Has no effect on Linux.
+   0=disabled [default on Linux]   "no"
+   1=enabled  [default on MacOS]   "yes"
+   2=enabled and verbose.          "verbose" */
+extern UInt VG_(clo_resync_filter);
 
 #endif   // __PUB_CORE_OPTIONS_H
 

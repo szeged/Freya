@@ -46,13 +46,13 @@
 #include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
 
-static Bool clo_fr_verb     = False;
-static Char* clo_config     = NULL;
-static Bool clo_mmap        = True;
-static Bool clo_cross_free  = False;
-static Int clo_trace        = 10;
-static Int clo_report       = 5;
-static Int clo_min          = 0;
+static Bool clo_fr_verb        = False;
+static const HChar* clo_config = NULL;
+static Bool clo_mmap           = True;
+static Bool clo_cross_free     = False;
+static Int clo_trace           = 10;
+static Int clo_report          = 5;
+static Int clo_min             = 0;
 
 // ---------------------------------------------------------------
 //  Common types
@@ -68,25 +68,26 @@ typedef
       struct _Trace_Block* hash_next; // Next item, who has the same ips
 
       Int                  allocs;   // Number of allocs
+      Int                  reallocs; // Number of reallocs
       Long                 total;    // Total allocated memory
       Int                  current;  // Current memory allocation
       Int                  peak;     // Peak memory consumption
 
       Addr                 ips;      // Stack trace instruction
-      Char*                name;     // Name of a tree node. Valid only if ips == 0
+      HChar*               name;     // Name of a tree node. Valid only if ips == 0
    }
    Trace_Block;
 
 typedef
    struct _Rule_List {
       struct _Rule_List* next;   // Next item
-      Char* name;                    // Rule name
+      HChar* name;                   // Rule name
       SizeT name_len;                // Length of rule name
 
-      Char* func_name;               // Function name
+      HChar* func_name;              // Function name
       SizeT func_name_len;           // Length of function name
 
-      Char* path;                    // Path
+      HChar* path;                   // Path
       SizeT path_len;                // Length of path
 
       Trace_Block* parent;           // Should be used as parent, or NULL for skip
@@ -100,16 +101,15 @@ typedef
 static Rule_List* rule_head = NULL;
 static Trace_Block* default_parent = NULL;
 
-static Char* default_rule = "[total]+\n";
+static const HChar* default_rule = "[total]+\n";
 
 // ---------------------------------------------------------------
 //  Sort and print results
 // ---------------------------------------------------------------
 
-#define NAME_BUFFER_SIZE 128
-#define DIR_BUFFER_SIZE 1024
-static Char fnname_buffer[NAME_BUFFER_SIZE];
-static Char dir_buffer[DIR_BUFFER_SIZE + NAME_BUFFER_SIZE + 1];
+#define DIR_BUFFER_SIZE 2048
+static const HChar* fnname_buffer;
+static HChar dir_buffer[DIR_BUFFER_SIZE];
 
 #define MAX_TRACE       64
 
@@ -120,28 +120,31 @@ static void fr_print_block(Trace_Block* block)
 {
    UInt linenum;
    Bool dirname_available = False;
+   const HChar* file_ptr;
+   const HChar* dir_ptr;
 
    if (block->ips) {
-      if (VG_(get_fnname)( block->ips, fnname_buffer, NAME_BUFFER_SIZE ))
+      if (VG_(get_fnname)( block->ips, &fnname_buffer ))
          VG_(printf)("%s ", fnname_buffer);
 
-      if (VG_(get_filename_linenum)( block->ips, dir_buffer + DIR_BUFFER_SIZE, NAME_BUFFER_SIZE, dir_buffer, DIR_BUFFER_SIZE, &dirname_available, &linenum)) {
+      if (VG_(get_filename_linenum)( block->ips, &file_ptr, &dir_ptr, &linenum)) {
+         dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
-            VG_(printf)("(%s:%d)\n", dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s:%d)\n", file_ptr, linenum);
          else
-            VG_(printf)("(%s/%s:%d)\n", dir_buffer, dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
          return;
       }
 
-      if (VG_(get_objname)( block->ips, dir_buffer, DIR_BUFFER_SIZE ))
-         VG_(printf)("(%s)\n", dir_buffer);
+      if (VG_(get_objname)( block->ips, &dir_ptr))
+         VG_(printf)("(%s)\n", dir_ptr);
       else
          VG_(printf)("(Unknown file)\n");
    } else
       VG_(printf)("Group: %s\n", block->name);
 }
 
-static void fr_print_bytes(Char* name, Long value)
+static void fr_print_bytes(const HChar* name, Long value)
 {
     VG_(printf)("%s", name);
     if (value > 1024 * 1024)
@@ -235,6 +238,7 @@ static void fr_sort_and_dump(Trace_Block* block, Int indent)
       VG_(printf)("[%d] ", indent);
       fr_print_bytes("Peak: ", block->peak);
       VG_(printf)("Allocs: %d ", block->allocs);
+      VG_(printf)("Reallocs: %d ", block->reallocs);
       fr_print_bytes("Total: ", block->total);
       if (block->current > 0)
          fr_print_bytes("Leak: ", block->current);
@@ -266,7 +270,7 @@ typedef
    }
    Trace_Hash;
 
-static VgHashTable trace_hash   = NULL;
+static VgHashTable *trace_hash   = NULL;
 
 static void check_address(Addr ips, Trace_Hash* hash_entry)
 {
@@ -274,29 +278,34 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
    SizeT fnname_len, dir_len;
    Bool dirname_available = False;
    Rule_List* rule_ptr;
-   Char* end;
-   Char* current;
+   const HChar* file_ptr;
+   const HChar* dir_ptr;
+   HChar* end;
+   const HChar* current;
    Int match;
 
    // Get function name
-   if (VG_(get_fnname)( ips, fnname_buffer, NAME_BUFFER_SIZE )) {
+   if (VG_(get_fnname)( ips, &fnname_buffer )) {
       fnname_len = VG_(strlen)(fnname_buffer);
    } else {
-      fnname_buffer[0] = '\0';
+      fnname_buffer = "";
       fnname_len = 0;
    }
 
    // Get directory
    end = dir_buffer;
-   if (VG_(get_filename_linenum)( ips, dir_buffer + DIR_BUFFER_SIZE + 1, NAME_BUFFER_SIZE, dir_buffer, DIR_BUFFER_SIZE, &dirname_available, &linenum)) {
+   if (VG_(get_filename_linenum)( ips, &file_ptr, &dir_ptr, &linenum)) {
+      dirname_available = dir_ptr[0] != '\0';
       // Concat the names
+      VG_(strcpy) (dir_buffer, dir_ptr);
       if (dirname_available) {
          end += VG_(strlen)(dir_buffer);
          *end++ = '/';
-         VG_(strcpy) (end, dir_buffer + DIR_BUFFER_SIZE + 1);
-      } else
-         VG_(strcpy) (dir_buffer, dir_buffer + DIR_BUFFER_SIZE + 1);
-   } else if (!VG_(get_objname)( ips, dir_buffer, DIR_BUFFER_SIZE + NAME_BUFFER_SIZE ))
+         VG_(strcpy) (end, file_ptr);
+      }
+   } else if (VG_(get_objname)( ips, &dir_ptr )) {
+      VG_(strcpy) (dir_buffer, dir_ptr);
+   } else
       dir_buffer[0] = '\0';
 
    while (*end)
@@ -309,7 +318,7 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
 
       if (rule_ptr->func_name) {
          if (rule_ptr->func_name_len <= fnname_len && fnname_buffer[0] == rule_ptr->func_name[0]
-                && VG_(memcmp)(fnname_buffer, rule_ptr->func_name, rule_ptr->func_name_len * sizeof(Char)) == 0) {
+                && VG_(memcmp)(fnname_buffer, rule_ptr->func_name, rule_ptr->func_name_len * sizeof(HChar)) == 0) {
 
             if (!rule_ptr->is_namespace) {
                if (rule_ptr->func_name_len == fnname_len || fnname_buffer[rule_ptr->func_name_len] == ' ' || fnname_buffer[rule_ptr->func_name_len] == '(')
@@ -340,7 +349,7 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
             dir_len--;
 
             if (rule_ptr->path_len <= dir_len && current[0] == rule_ptr->path[0]
-                  && VG_(memcmp)(current, rule_ptr->path, rule_ptr->path_len * sizeof(Char)) == 0
+                  && VG_(memcmp)(current, rule_ptr->path, rule_ptr->path_len * sizeof(HChar)) == 0
                   && (rule_ptr->path_len == dir_len || current[rule_ptr->path_len] == '/')) {
                match = 0;
                break;
@@ -446,6 +455,7 @@ static Trace_Block* alloc_trace(ThreadId tid)
          hash_entry->block = block;
 
          block->allocs = 0;
+         block->reallocs = 0;
          block->total = 0;
          block->current = 0;
          block->peak = 0;
@@ -479,7 +489,7 @@ typedef
    }
    HP_Chunk;
 
-static VgHashTable malloc_list  = NULL;   // HP_Chunks
+static VgHashTable *malloc_list  = NULL;   // HP_Chunks
 
 static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
                   Bool is_zeroed )
@@ -530,17 +540,20 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    int n_ips;
    UInt linenum;
    Bool dirname_available = False;
+   const HChar* file_ptr;
+   const HChar* dir_ptr;
 
    if (!clo_cross_free)
       return;
 
    VG_(printf)("Warning: free or realloc on a different thread!\n=== Original alloc ===\n");
    while (block) {
-      if (block->ips && VG_(get_filename_linenum)( block->ips, dir_buffer + DIR_BUFFER_SIZE, NAME_BUFFER_SIZE, dir_buffer, DIR_BUFFER_SIZE, &dirname_available, &linenum )) {
+      if (block->ips && VG_(get_filename_linenum)( block->ips, &file_ptr, &dir_ptr, &linenum )) {
+         dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
-            VG_(printf)("(%s:%d)\n", dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s:%d)\n", file_ptr, linenum);
          else
-            VG_(printf)("(%s/%s:%d)\n", dir_buffer, dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
       }
       block = block->parent;
    }
@@ -553,11 +566,12 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    ips_ptr = ips;
 
    while (n_ips > 0) {
-      if (VG_(get_filename_linenum)( *ips_ptr, dir_buffer + DIR_BUFFER_SIZE, NAME_BUFFER_SIZE, dir_buffer, DIR_BUFFER_SIZE, &dirname_available, &linenum )) {
+      if (VG_(get_filename_linenum)( *ips_ptr, &file_ptr, &dir_ptr, &linenum )) {
+         dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
-            VG_(printf)("(%s:%d)\n", dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s:%d)\n", file_ptr, linenum);
          else
-            VG_(printf)("(%s/%s:%d)\n", dir_buffer, dir_buffer + DIR_BUFFER_SIZE, linenum);
+            VG_(printf)("(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
       }
       --n_ips;
       ++ips_ptr;
@@ -612,14 +626,15 @@ static void* renew_block ( ThreadId tid, void* p_old, SizeT new_req_szB )
    }
 
    if (tid != hc->tid)
-       cross_thread_free(tid, hc->block);
+      cross_thread_free(tid, hc->block);
 
    block = hc->block;
    while (block) {
+      block->reallocs ++;
       block->current -= hc->req_szB;
-      block->allocs ++;
-      block->total += new_req_szB;
+      block->total -= hc->req_szB;
       block->current += new_req_szB;
+      block->total += new_req_szB;
       if (block->peak < block->current)
          block->peak = block->current;
       block = block->parent;
@@ -672,7 +687,7 @@ typedef
       Trace_Block**         trace_blocks;
       // 0 - do nothing
       // 1 - update on access
-      Char*                 used_blocks;
+      HChar*                used_blocks;
    }
    Mmap_Section;
 
@@ -699,7 +714,7 @@ static Mmap_Section* mmap_section_cache;
 
 #endif
 
-static __inline__ void mark_blocks(Trace_Block **trace_blocks_ptr, Trace_Block **trace_blocks_end, Char* used_blocks_ptr, Trace_Block *block_arg)
+static __inline__ void mark_blocks(Trace_Block **trace_blocks_ptr, Trace_Block **trace_blocks_end, HChar* used_blocks_ptr, Trace_Block *block_arg)
 {
    Trace_Block *head_block = *trace_blocks_ptr;
    SizeT touched = 0;
@@ -776,7 +791,7 @@ static __inline__ void mem_map(Addr addr, Addr end_addr, Trace_Block *block_arg)
              mmap_section->next = NULL;
              mmap_section->page_addr = page_addr;
              mmap_section->trace_blocks = VG_(calloc)("freya.mem_map.2", PAGE_NUMBER, sizeof(Trace_Block*));
-             mmap_section->used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(Char));
+             mmap_section->used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(HChar));
              break;
          }
          mmap_section = mmap_section->next;
@@ -912,7 +927,7 @@ static void fr_munmap(Addr a, SizeT len)
 //  Generator
 // ---------------------------------------------------------------
 
-static Bool fr_process_cmd_line_option(Char* arg)
+static Bool fr_process_cmd_line_option(const HChar* arg)
 {
          if (VG_BOOL_CLO(arg, "--frverb", clo_fr_verb))             {}
     else if (VG_STR_CLO(arg, "--config", clo_config))               {}
@@ -950,8 +965,9 @@ static void fr_print_debug_usage(void)
 static
 IRSB* fr_instrument(VgCallbackClosure* closure,
                     IRSB* sbIn,
-                    VexGuestLayout* layout, 
-                    VexGuestExtents* vge,
+                    const VexGuestLayout* layout,
+                    const VexGuestExtents* vge,
+                    const VexArchInfo* arch,
                     IRType gWordTy, IRType hWordTy)
 {
    Int        i;
@@ -1059,7 +1075,7 @@ static void fr_fini(Int exitcode)
    fr_sort_and_dump(trace_head, 0);
 }
 
-static Char* parse_rule(Char* read_ptr, Rule_List** last_rule_ptr)
+static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
 {
    Rule_List* rule;
    Rule_List* rule_ptr;
@@ -1081,7 +1097,7 @@ static Char* parse_rule(Char* read_ptr, Rule_List** last_rule_ptr)
       // Must have a unique name
       rule_ptr = rule_head;
       while (rule_ptr) {
-         if (rule_ptr->name_len == rule->name_len && VG_(memcmp)(rule->name, rule_ptr->name, rule->name_len * sizeof(Char)) == 0) {
+         if (rule_ptr->name_len == rule->name_len && VG_(memcmp)(rule->name, rule_ptr->name, rule->name_len * sizeof(HChar)) == 0) {
             VG_(printf)("Redefined rule %s. Rule names must be unique!\n", rule->name);
             tl_assert(0);
          }
@@ -1144,14 +1160,14 @@ static Char* parse_rule(Char* read_ptr, Rule_List** last_rule_ptr)
    return read_ptr;
 }
 
-static void search_rule(Trace_Block* block, Char* name, SizeT name_len)
+static void search_rule(Trace_Block* block, HChar* name, SizeT name_len)
 {
    Rule_List* rule_ptr;
 
    rule_ptr = rule_head;
    while (rule_ptr) {
       if (rule_ptr->name_len == name_len && rule_ptr->name[0] == name[0]
-            && VG_(memcmp)(rule_ptr->name, name, name_len * sizeof(Char)) == 0) {
+            && VG_(memcmp)(rule_ptr->name, name, name_len * sizeof(HChar)) == 0) {
          tl_assert2(!rule_ptr->parent, "Rule is already assigned");
          rule_ptr->parent = block;
          return;
@@ -1187,9 +1203,9 @@ static void remove_unused_rules(void)
    }
 }
 
-static Char* parse_extra_rule(Char* read_ptr, Trace_Block* block)
+static HChar* parse_extra_rule(HChar* read_ptr, Trace_Block* block)
 {
-   Char* name;
+   HChar* name;
 
    tl_assert2(block, "the first group cannot be started by {");
    read_ptr++;
@@ -1214,7 +1230,7 @@ static Char* parse_extra_rule(Char* read_ptr, Trace_Block* block)
 static void fr_post_clo_init(void)
 {
    Rule_List* last_rule_ptr = NULL;
-   Char* read_ptr;
+   HChar* read_ptr;
    Trace_Block* block = NULL;
    Trace_Block* parent = NULL;
    Int* indents = (int*)dir_buffer;
@@ -1230,13 +1246,13 @@ static void fr_post_clo_init(void)
       mmap_section.next = NULL;
       mmap_section.page_addr = 0;
       mmap_section.trace_blocks = VG_(calloc)("freya.fr_post_clo_init.2", PAGE_NUMBER, sizeof(Trace_Block*));
-      mmap_section.used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(Char));
+      mmap_section.used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(HChar));
 #else
       mmap_sections = VG_(calloc)("freya.fr_post_clo_init.1", 1, sizeof(Mmap_Section));
       mmap_sections->next = NULL;
       mmap_sections->page_addr = 0;
       mmap_sections->trace_blocks = VG_(calloc)("freya.fr_post_clo_init.2", PAGE_NUMBER, sizeof(Trace_Block*));
-      mmap_sections->used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(Char));
+      mmap_sections->used_blocks = VG_(calloc)("freya.fr_post_clo_init.3", PAGE_NUMBER, sizeof(HChar));
       mmap_section_cache = mmap_sections;
 #endif
    }
@@ -1253,7 +1269,7 @@ static void fr_post_clo_init(void)
          if (clo_fr_verb)
             VG_(printf)("File '%s' (size: %ld bytes) is successfully opened.\n", clo_config, file_size);
 
-         read_ptr = VG_(malloc)("freya.fr_post_clo_init.3", (file_size + 1) * sizeof(Char));
+         read_ptr = VG_(malloc)("freya.fr_post_clo_init.3", (file_size + 1) * sizeof(HChar));
          VG_(read)(fd, read_ptr, file_size);
          read_ptr[file_size] = '\0';
 
@@ -1267,7 +1283,7 @@ static void fr_post_clo_init(void)
 
    if (!read_ptr) {
       // Duplicate
-      read_ptr = VG_(malloc)("freya.fr_post_clo_init.4", (VG_(strlen)(default_rule) + 1) * sizeof(Char));
+      read_ptr = VG_(malloc)("freya.fr_post_clo_init.4", (VG_(strlen)(default_rule) + 1) * sizeof(HChar));
       VG_(strcpy)(read_ptr, default_rule);
    }
 
@@ -1368,6 +1384,7 @@ static void fr_post_clo_init(void)
       block->hash_next = NULL;
 
       block->allocs = 0;
+      block->reallocs = 0;
       block->total = 0;
       block->current = 0;
       block->peak = 0;
@@ -1420,3 +1437,4 @@ VG_DETERMINE_INTERFACE_VERSION(fr_pre_clo_init)
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/
 /*--------------------------------------------------------------------*/
+

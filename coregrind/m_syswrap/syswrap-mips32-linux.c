@@ -365,7 +365,7 @@ static void notify_core_of_mmap(Addr a, SizeT len, UInt prot,
    d = VG_(am_notify_client_mmap)( a, len, prot, flags, fd, offset );
 
    if (d)
-      VG_(discard_translations)( (Addr64)a, (ULong)len,
+      VG_(discard_translations)( a, (ULong)len,
                                  "notify_core_of_mmap" );
 }
 
@@ -752,7 +752,7 @@ PRE (sys_cacheflush)
   PRINT ("cacheflush (%lx, %lx, %lx)", ARG1, ARG2, ARG3);
   PRE_REG_READ3(long, "cacheflush", unsigned long, addr,
                 int, nbytes, int, cache);
-  VG_ (discard_translations) ((Addr64) ARG1, ((ULong) ARG2),
+  VG_ (discard_translations) ((Addr)ARG1, (ULong) ARG2,
                               "PRE(sys_cacheflush)");
   SET_STATUS_Success (0);
 }
@@ -1116,7 +1116,10 @@ static SyscallTableEntry syscall_main_table[] = {
    LINXY (__NR_clock_adjtime,          sys_clock_adjtime),           // 341
    //..
    LINXY (__NR_process_vm_readv,       sys_process_vm_readv),        // 345
-   LINX_ (__NR_process_vm_writev,      sys_process_vm_writev)        // 346
+   LINX_ (__NR_process_vm_writev,      sys_process_vm_writev),       // 346
+   //..
+   LINXY(__NR_getrandom,               sys_getrandom),               // 353
+   LINXY(__NR_memfd_create,            sys_memfd_create)             // 354
 };
 
 SyscallTableEntry* ML_(get_linux_syscall_entry) (UInt sysno)

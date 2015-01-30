@@ -43,7 +43,7 @@ static struct valgrind_target_ops the_low_target;
 static
 char *image_ptid(unsigned long ptid)
 {
-  static char result[100];
+  static char result[50];    // large enough
   VG_(sprintf) (result, "id %ld", ptid);
   return result;
 }
@@ -116,7 +116,7 @@ struct reg* build_shadow_arch (struct reg *reg_defs, int n) {
          new_regs[i*n + r].offset = i*reg_set_len + reg_defs[r].offset;
          new_regs[i*n + r].size = reg_defs[r].size;
          dlog(1,
-              "%10s Nr %d offset(bit) %d offset(byte) %d  size(bit) %d\n",
+              "%-10s Nr %d offset(bit) %d offset(byte) %d  size(bit) %d\n",
               new_regs[i*n + r].name, i*n + r, new_regs[i*n + r].offset,
               (new_regs[i*n + r].offset) / 8, new_regs[i*n + r].size);
       }  
@@ -176,11 +176,9 @@ void gdbserver_process_exit_encountered (unsigned char status, Int code)
 }
 
 static
-char* sym (Addr addr)
+const HChar* sym (Addr addr)
 {
-   static char buf[200];
-   VG_(describe_IP) (addr, buf, 200, NULL);
-   return buf;
+   return VG_(describe_IP) (addr, NULL);
 }
 
 ThreadId vgdb_interrupted_tid = 0;
@@ -560,11 +558,14 @@ static Bool getplatformoffset (SizeT *result)
    // lm_modid_offset is a magic offset, retrieved using an external program.
 
    if (!getplatformoffset_called) {
+      getplatformoffset_called = True;
       const HChar *platform = VG_PLATFORM;
       const HChar *cmdformat = "%s/%s-%s -o %s";
       const HChar *getoff = "getoff";
       HChar outfile[VG_(mkstemp_fullname_bufsz) (VG_(strlen)(getoff))];
       Int fd = VG_(mkstemp) (getoff, outfile);
+      if (fd == -1)
+         return False;
       HChar cmd[ VG_(strlen)(cmdformat)
                  + VG_(strlen)(VG_(libdir)) - 2
                  + VG_(strlen)(getoff)      - 2
@@ -619,7 +620,6 @@ static Bool getplatformoffset (SizeT *result)
       ret = VG_(unlink)( outfile );
       if (ret != 0)
          VG_(umsg) ("error: could not unlink %s\n", outfile);
-      getplatformoffset_called = True;
    }
 
    *result = lm_modid_offset;

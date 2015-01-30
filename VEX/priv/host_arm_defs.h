@@ -724,7 +724,7 @@ typedef
             condition (which could be ARMcc_AL). */
          struct {
             ARMCondCode cond;
-            HWord       target;
+            Addr32      target;
             Int         nArgRegs; /* # regs carrying args: 0 .. 4 */
             RetLoc      rloc;     /* where the return value will be */
          } Call;
@@ -976,7 +976,7 @@ extern ARMInstr* ARMInstr_XIndir   ( HReg dstGA, ARMAMode1* amR15T,
 extern ARMInstr* ARMInstr_XAssisted ( HReg dstGA, ARMAMode1* amR15T,
                                       ARMCondCode cond, IRJumpKind jk );
 extern ARMInstr* ARMInstr_CMov     ( ARMCondCode, HReg dst, ARMRI84* src );
-extern ARMInstr* ARMInstr_Call     ( ARMCondCode, HWord, Int nArgRegs,
+extern ARMInstr* ARMInstr_Call     ( ARMCondCode, Addr32, Int nArgRegs,
                                      RetLoc rloc );
 extern ARMInstr* ARMInstr_Mul      ( ARMMulOp op );
 extern ARMInstr* ARMInstr_LdrEX    ( Int szB );
@@ -1039,7 +1039,7 @@ extern void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offset, Bool );
 
 extern void getAllocableRegs_ARM ( Int*, HReg** );
-extern HInstrArray* iselSB_ARM   ( IRSB*, 
+extern HInstrArray* iselSB_ARM   ( const IRSB*, 
                                    VexArch,
                                    const VexArchInfo*,
                                    const VexAbiInfo*,
@@ -1047,12 +1047,12 @@ extern HInstrArray* iselSB_ARM   ( IRSB*,
                                    Int offs_Host_EvC_FailAddr,
                                    Bool chainingAllowed,
                                    Bool addProfInc,
-                                   Addr64 max_ga );
+                                   Addr max_ga );
 
 /* How big is an event check?  This is kind of a kludge because it
    depends on the offsets of host_EvC_FAILADDR and
    host_EvC_COUNTER. */
-extern Int evCheckSzB_ARM ( VexEndness endness_host );
+extern Int evCheckSzB_ARM (void);
 
 /* Perform a chaining and unchaining of an XDirect jump. */
 extern VexInvalRange chainXDirect_ARM ( VexEndness endness_host,

@@ -626,7 +626,7 @@ void VG_(print_all_arena_stats) ( void )
    for (i = 0; i < VG_N_ARENAS; i++) {
       Arena* a = arenaId_to_ArenaP(i);
       VG_(message)(Vg_DebugMsg,
-                   "%8s: %8lu/%8lu  max/curr mmap'd, "
+                   "%-8s: %8lu/%8lu  max/curr mmap'd, "
                    "%llu/%llu unsplit/split sb unmmap'd,  "
                    "%8lu/%8lu max/curr,  "
                    "%10llu/%10llu totalloc-blocks/bytes,"
@@ -857,7 +857,7 @@ Superblock* newSuperblock ( Arena* a, SizeT cszB )
          ( cszB, VKI_PROT_READ|VKI_PROT_WRITE|VKI_PROT_EXEC );
       if (sr_isError(sres))
          return 0;
-      sb = (Superblock*)(AddrH)sr_Res(sres);
+      sb = (Superblock*)(Addr)sr_Res(sres);
       // Mark this segment as containing client heap.  The leak
       // checker needs to be able to identify such segments so as not
       // to use them as sources of roots during leak checks.
@@ -870,7 +870,7 @@ Superblock* newSuperblock ( Arena* a, SizeT cszB )
          /* NOTREACHED */
          sb = NULL; /* keep gcc happy */
       } else {
-         sb = (Superblock*)(AddrH)sr_Res(sres);
+         sb = (Superblock*)(Addr)sr_Res(sres);
       }
    }
    vg_assert(NULL != sb);
@@ -1358,7 +1358,7 @@ static void sanity_check_malloc_arena ( ArenaId aid )
 
    if (VG_(clo_verbosity) > 2) 
       VG_(message)(Vg_DebugMsg,
-                   "%8s: %2d sbs, %5d bs, %2d/%-2d free bs, "
+                   "%-8s: %2d sbs, %5d bs, %2d/%-2d free bs, "
                    "%7ld mmap, %7ld loan\n",
                    a->name,
                    superblockctr,
@@ -1763,7 +1763,7 @@ void* VG_(arena_malloc) ( ArenaId aid, const HChar* cc, SizeT req_pszB )
                                                    a->sblocks_size * 2);
          /* NOTREACHED */
       }
-      array = (Superblock**)(AddrH)sr_Res(sres);
+      array = (Superblock**)(Addr)sr_Res(sres);
       for (i = 0; i < a->sblocks_used; ++i) array[i] = a->sblocks[i];
 
       a->sblocks_size *= 2;

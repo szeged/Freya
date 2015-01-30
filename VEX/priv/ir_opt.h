@@ -47,7 +47,7 @@ IRSB* do_iropt_BB(
          IRSB* bb,
          IRExpr* (*specHelper) (const HChar*, IRExpr**, IRStmt**, Int),
          Bool (*preciseMemExnsFn)(Int,Int),
-         Addr64 guest_addr,
+         Addr    guest_addr,
          VexArch guest_arch
       );
 
@@ -64,7 +64,7 @@ void do_deadcode_BB ( IRSB* bb );
    the guest address of the highest addressed byte from any insn in
    this block, or Addr64_MAX if unknown (can that ever happen?) */
 extern
-Addr64 ado_treebuild_BB ( IRSB* bb, Bool (*preciseMemExnsFn)(Int,Int) );
+Addr ado_treebuild_BB ( IRSB* bb, Bool (*preciseMemExnsFn)(Int,Int) );
 
 #endif /* ndef __VEX_IR_OPT_H */
 

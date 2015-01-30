@@ -1710,7 +1710,7 @@ PRE(sys_io_destroy)
       Bool d = VG_(am_notify_munmap)( ARG1, size );
       VG_TRACK( die_mem_munmap, ARG1, size );
       if (d)
-         VG_(discard_translations)( (Addr64)ARG1, (ULong)size, 
+        VG_(discard_translations)( (Addr)ARG1, (ULong)size, 
                                     "PRE(sys_io_destroy)" );
    }  
 }  
@@ -2264,7 +2264,7 @@ static Bool linux_kernel_2_6_22(void)
 {
    static Int result = -1;
    Int fd, read;
-   HChar release[64];
+   HChar release[64];   // large enough
    SysRes res;
 
    if (result == -1) {
@@ -2273,12 +2273,13 @@ static Bool linux_kernel_2_6_22(void)
          return False;
       fd = sr_Res(res);
       read = VG_(read)(fd, release, sizeof(release) - 1);
-      vg_assert(read >= 0);
+      if (read < 0)
+         return False;
       release[read] = 0;
       VG_(close)(fd);
       //VG_(printf)("kernel release = %s\n", release);
-      result = (VG_(strncmp)(release, "2.6.22", 6) == 0
-                && (release[6] < '0' || release[6] > '9'));
+      result = VG_(strncmp)(release, "2.6.22", 6) == 0
+               && ! VG_(isdigit)(release[6]);
    }
    vg_assert(result == 0 || result == 1);
    return result == 1;
@@ -3004,6 +3005,39 @@ POST(sys_move_pages)
    POST_MEM_WRITE(ARG5, ARG2 * sizeof(int));
 }
 
+PRE(sys_getrandom)
+{
+   PRINT("sys_getrandom ( %#lx, %ld, %ld )" , ARG1,ARG2,ARG3);
+   PRE_REG_READ3(int, "getrandom",
+                 char *, buf, vki_size_t, count, unsigned int, flags);
+   PRE_MEM_WRITE( "getrandom(cpu)", ARG1, ARG2 );
+}
+
+POST(sys_getrandom)
+{
+   POST_MEM_WRITE( ARG1, ARG2 );
+}
+
+PRE(sys_memfd_create)
+{
+   PRINT("sys_memfd_create ( %#lx, %ld )" , ARG1,ARG2);
+   PRE_REG_READ2(int, "memfd_create",
+                 char *, uname, unsigned int, flags);
+   PRE_MEM_RASCIIZ( "memfd_create(uname)", ARG1 );
+}
+
+POST(sys_memfd_create)
+{
+   vg_assert(SUCCESS);
+   if (!ML_(fd_allowed)(RES, "memfd_create", tid, True)) {
+      VG_(close)(RES);
+      SET_STATUS_Failure( VKI_EMFILE );
+   } else {
+      if (VG_(clo_track_fds))
+         ML_(record_fd_open_nameless)(tid, RES);
+   }
+}
+
 /* ---------------------------------------------------------------------
    utime wrapper
    ------------------------------------------------------------------ */
@@ -3593,6 +3627,15 @@ PRE(sys_ipc)
    case VKI_SHMGET:
       PRE_REG_READ4(int, "ipc",
                     vki_uint, call, int, first, int, second, int, third);
+      if (ARG4 & VKI_SHM_HUGETLB) {
+         static Bool warning_given = False;
+         ARG4 &= ~VKI_SHM_HUGETLB;
+         if (!warning_given) {
+            warning_given = True;
+            VG_(umsg)(
+               "WARNING: valgrind ignores shmget(shmflg) SHM_HUGETLB\n");
+         }
+      }
       break;
    case VKI_SHMCTL: /* IPCOP_shmctl */
       PRE_REG_READ5(int, "ipc",
@@ -3795,6 +3838,15 @@ PRE(sys_shmget)
 {
    PRINT("sys_shmget ( %ld, %ld, %ld )",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "shmget", vki_key_t, key, vki_size_t, size, int, shmflg);
+   if (ARG3 & VKI_SHM_HUGETLB) {
+      static Bool warning_given = False;
+      ARG3 &= ~VKI_SHM_HUGETLB;
+      if (!warning_given) {
+         warning_given = True;
+         VG_(umsg)(
+            "WARNING: valgrind ignores shmget(shmflg) SHM_HUGETLB\n");
+      }
+   }
 }
 
 PRE(wrap_sys_shmat)
@@ -4353,7 +4405,7 @@ POST(sys_socketpair)
 
 PRE(sys_openat)
 {
-   HChar  name[30];
+   HChar  name[30];   // large enough
    SysRes sres;
 
    if (ARG3 & VKI_O_CREAT) {
@@ -4371,10 +4423,11 @@ PRE(sys_openat)
    PRE_MEM_RASCIIZ( "openat(filename)", ARG2 );
 
    /* For absolute filenames, dfd is ignored.  If dfd is AT_FDCWD,
-      filename is relative to cwd.  */
+      filename is relative to cwd.  When comparing dfd against AT_FDCWD,
+      be sure only to compare the bottom 32 bits. */
    if (ML_(safe_to_deref)( (void*)ARG2, 1 )
        && *(Char *)ARG2 != '/'
-       && ARG1 != VKI_AT_FDCWD
+       && ((Int)ARG1) != ((Int)VKI_AT_FDCWD)
        && !ML_(fd_allowed)(ARG1, "openat", tid, False))
       SET_STATUS_Failure( VKI_EBADF );
 
@@ -4534,7 +4587,7 @@ PRE(sys_symlinkat)
 
 PRE(sys_readlinkat)
 {
-   HChar name[25];
+   HChar name[30];       // large enough
    Word  saved = SYSNO;
 
    PRINT("sys_readlinkat ( %ld, %#lx(%s), %#lx, %llu )", ARG1,ARG2,(char*)ARG2,ARG3,(ULong)ARG4);
@@ -4794,7 +4847,7 @@ PRE(sys_process_vm_writev)
 PRE(sys_sendmmsg)
 {
    struct vki_mmsghdr *mmsg = (struct vki_mmsghdr *)ARG2;
-   HChar name[32];
+   HChar name[40];     // large enough
    UInt i;
    *flags |= SfMayBlock;
    PRINT("sys_sendmmsg ( %ld, %#lx, %ld, %ld )",ARG1,ARG2,ARG3,ARG4);
@@ -4822,7 +4875,7 @@ POST(sys_sendmmsg)
 PRE(sys_recvmmsg)
 {
    struct vki_mmsghdr *mmsg = (struct vki_mmsghdr *)ARG2;
-   HChar name[32];
+   HChar name[40];     // large enough
    UInt i;
    *flags |= SfMayBlock;
    PRINT("sys_recvmmsg ( %ld, %#lx, %ld, %ld, %#lx )",ARG1,ARG2,ARG3,ARG4,ARG5);
@@ -4843,7 +4896,7 @@ POST(sys_recvmmsg)
 {
    if (RES > 0) {
       struct vki_mmsghdr *mmsg = (struct vki_mmsghdr *)ARG2;
-      HChar name[32];
+      HChar name[32];    // large enough
       UInt i;
       for (i = 0; i < RES; i++) {
          VG_(sprintf)(name, "mmsg[%u].msg_hdr", i);
@@ -5461,6 +5514,38 @@ PRE(sys_ioctl)
    // this category).  Nb: some of these may well belong in the
    // doesn't-use-ARG3 switch above.
    switch (ARG2 /* request */) {
+
+   case VKI_ION_IOC_ALLOC: {
+      struct vki_ion_allocation_data* data
+         = (struct vki_ion_allocation_data*)ARG3;
+      PRE_FIELD_READ ("ioctl(ION_IOC_ALLOC).len",          data->len);
+      PRE_FIELD_READ ("ioctl(ION_IOC_ALLOC).align",        data->align);
+      PRE_FIELD_READ ("ioctl(ION_IOC_ALLOC).heap_id_mask", data->heap_id_mask);
+      PRE_FIELD_READ ("ioctl(ION_IOC_ALLOC).flags",        data->flags);
+      PRE_FIELD_WRITE("ioctl(ION_IOC_ALLOC).handle",       data->handle);
+      break;
+   }
+   case VKI_ION_IOC_MAP: {
+      struct vki_ion_fd_data* data = (struct vki_ion_fd_data*)ARG3;
+      PRE_FIELD_READ ("ioctl(ION_IOC_MAP).handle", data->handle);
+      PRE_FIELD_WRITE("ioctl(ION_IOC_MAP).fd",     data->fd);
+      break;
+   }
+   case VKI_ION_IOC_IMPORT: {
+      struct vki_ion_fd_data* data = (struct vki_ion_fd_data*)ARG3;
+      PRE_FIELD_READ ("ioctl(ION_IOC_IMPORT).fd",     data->fd);
+      PRE_FIELD_WRITE("ioctl(ION_IOC_IMPORT).handle", data->handle);
+      break;
+   }
+
+   case VKI_SYNC_IOC_MERGE: {
+      struct vki_sync_merge_data* data = (struct vki_sync_merge_data*)ARG3;
+      PRE_FIELD_READ ("ioctl(SYNC_IOC_MERGE).fd2",   data->fd2);
+      PRE_MEM_RASCIIZ("ioctl(SYNC_IOC_MERGE).name",  (Addr)(&data->name[0]));
+      PRE_FIELD_WRITE("ioctl(SYNC_IOC_MERGE).fence", data->fence);
+      break;
+   }
+
    case VKI_TCSETS:
    case VKI_TCSETSW:
    case VKI_TCSETSF:
@@ -5481,6 +5566,7 @@ PRE(sys_ioctl)
    case VKI_TCXONC:
    case VKI_TCSBRKP:
    case VKI_TCFLSH:
+   case VKI_TIOCSIG:
       /* These just take an int by value */
       break;
    case VKI_TIOCGWINSZ:
@@ -8231,25 +8317,38 @@ POST(sys_ioctl)
    /* The Linux kernel "ion" memory allocator, used on Android.  Note:
       this is pretty poor given that there's no pre-handling to check
       that writable areas are addressable. */
-   case VKI_ION_IOC_ALLOC:
-      POST_MEM_WRITE(ARG3, sizeof(struct vki_ion_allocation_data));
+   case VKI_ION_IOC_ALLOC: {
+      struct vki_ion_allocation_data* data
+         = (struct vki_ion_allocation_data*)ARG3;
+      POST_FIELD_WRITE(data->handle);
       break;
-   case VKI_ION_IOC_MAP:
-      POST_MEM_WRITE(ARG3, sizeof(struct vki_ion_fd_data));
+   }
+   case VKI_ION_IOC_MAP: {
+      struct vki_ion_fd_data* data = (struct vki_ion_fd_data*)ARG3;
+      POST_FIELD_WRITE(data->fd);
       break;
+   }
    case VKI_ION_IOC_FREE: // is this necessary?
       POST_MEM_WRITE(ARG3, sizeof(struct vki_ion_handle_data));
       break;
    case VKI_ION_IOC_SHARE:
       break;
-   case VKI_ION_IOC_IMPORT: // is this necessary?
-      POST_MEM_WRITE(ARG3, sizeof(struct vki_ion_fd_data));
+   case VKI_ION_IOC_IMPORT: {
+      struct vki_ion_fd_data* data = (struct vki_ion_fd_data*)ARG3;
+      POST_FIELD_WRITE(data->handle);
       break;
+   }
    case VKI_ION_IOC_SYNC:
       break;
    case VKI_ION_IOC_CUSTOM: // is this necessary?
       POST_MEM_WRITE(ARG3, sizeof(struct vki_ion_custom_data));
       break;
+
+   case VKI_SYNC_IOC_MERGE: {
+      struct vki_sync_merge_data* data = (struct vki_sync_merge_data*)ARG3;
+      POST_FIELD_WRITE(data->fence);
+      break;
+   }
 
    case VKI_TCSETS:
    case VKI_TCSETSW:
@@ -8270,6 +8369,7 @@ POST(sys_ioctl)
    case VKI_TCXONC:
    case VKI_TCSBRKP:
    case VKI_TCFLSH:
+   case VKI_TIOCSIG:
       break;
    case VKI_TIOCGWINSZ:
       POST_MEM_WRITE( ARG3, sizeof(struct vki_winsize) );

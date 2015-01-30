@@ -267,8 +267,7 @@ void VG_(acquire_BigLock)(ThreadId tid, const HChar* who)
 
 #if 0
    if (VG_(clo_trace_sched)) {
-      HChar buf[100];
-      vg_assert(VG_(strlen)(who) <= 100-50);
+      HChar buf[VG_(strlen)(who) + 30];
       VG_(sprintf)(buf, "waiting for lock (%s)", who);
       print_sched_event(tid, buf);
    }
@@ -298,8 +297,7 @@ void VG_(acquire_BigLock)(ThreadId tid, const HChar* who)
    }
 
    if (VG_(clo_trace_sched)) {
-      HChar buf[150];
-      vg_assert(VG_(strlen)(who) <= 150-50);
+      HChar buf[VG_(strlen)(who) + 30];
       VG_(sprintf)(buf, " acquired lock (%s)", who);
       print_sched_event(tid, buf);
    }
@@ -328,10 +326,9 @@ void VG_(release_BigLock)(ThreadId tid, ThreadStatus sleepstate,
    VG_(running_tid) = VG_INVALID_THREADID;
 
    if (VG_(clo_trace_sched)) {
-      HChar buf[200];
-      vg_assert(VG_(strlen)(who) <= 200-100);
-      VG_(sprintf)(buf, "releasing lock (%s) -> %s",
-                        who, VG_(name_of_ThreadStatus)(sleepstate));
+      const HChar *status = VG_(name_of_ThreadStatus)(sleepstate);
+      HChar buf[VG_(strlen)(who) + VG_(strlen)(status) + 30];
+      VG_(sprintf)(buf, "releasing lock (%s) -> %s", who, status);
       print_sched_event(tid, buf);
    }
 
@@ -879,7 +876,7 @@ void run_thread_for_a_while ( /*OUT*/HWord* two_words,
       if (LIKELY(VG_(tt_fast)[cno].guest == (Addr)tst->arch.vex.VG_INSTR_PTR))
          host_code_addr = VG_(tt_fast)[cno].host;
       else {
-         AddrH res   = 0;
+         Addr res = 0;
          /* not found in VG_(tt_fast). Searching here the transtab
             improves the performance compared to returning directly
             to the scheduler. */
@@ -1094,7 +1091,7 @@ static void handle_syscall(ThreadId tid, UInt trc)
       syscall runs. */
 
    if (VG_(clo_sanity_level) >= 3) {
-      HChar buf[50];
+      HChar buf[50];    // large enough
       VG_(sprintf)(buf, "(BEFORE SYSCALL, tid %d)", tid);
       Bool ok = VG_(am_do_sync_check)(buf, __FILE__, __LINE__);
       vg_assert(ok);
@@ -1103,7 +1100,7 @@ static void handle_syscall(ThreadId tid, UInt trc)
    SCHEDSETJMP(tid, jumped, VG_(client_syscall)(tid, trc));
 
    if (VG_(clo_sanity_level) >= 3) {
-      HChar buf[50];
+      HChar buf[50];    // large enough
       VG_(sprintf)(buf, "(AFTER SYSCALL, tid %d)", tid);
       Bool ok = VG_(am_do_sync_check)(buf, __FILE__, __LINE__);
       vg_assert(ok);
@@ -1131,7 +1128,7 @@ void handle_noredir_jump ( /*OUT*/HWord* two_words,
    /* Clear return area. */
    two_words[0] = two_words[1] = 0;
 
-   AddrH hcode = 0;
+   Addr  hcode = 0;
    Addr  ip    = VG_(get_IP)(tid);
 
    Bool  found = VG_(search_unredir_transtab)( &hcode, ip );
@@ -1323,8 +1320,9 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
                               tid, 0/*ignored*/, False );
 
       if (VG_(clo_trace_sched) && VG_(clo_verbosity) > 2) {
-	 HChar buf[50];
-	 VG_(sprintf)(buf, "TRC: %s", name_of_sched_event(trc[0]));
+         const HChar *name = name_of_sched_event(trc[0]);
+         HChar buf[VG_(strlen)(name) + 10];    // large enough
+	 VG_(sprintf)(buf, "TRC: %s", name);
 	 print_sched_event(tid, buf);
       }
 
@@ -1557,7 +1555,7 @@ VgSchedReturnCode VG_(scheduler) ( ThreadId tid )
 
       case VEX_TRC_JMP_INVALICACHE:
          VG_(discard_translations)(
-            (Addr64)VG_(threads)[tid].arch.vex.guest_CMSTART,
+            (Addr)VG_(threads)[tid].arch.vex.guest_CMSTART,
             VG_(threads)[tid].arch.vex.guest_CMLEN,
             "scheduler(VEX_TRC_JMP_INVALICACHE)"
          );
@@ -1825,7 +1823,7 @@ void do_client_request ( ThreadId tid )
    switch (req_no) {
 
       case VG_USERREQ__CLIENT_CALL0: {
-         UWord (*f)(ThreadId) = (void*)arg[1];
+         UWord (*f)(ThreadId) = (__typeof__(f))arg[1];
 	 if (f == NULL)
 	    VG_(message)(Vg_DebugMsg, "VG_USERREQ__CLIENT_CALL0: func=%p\n", f);
 	 else
@@ -1833,7 +1831,7 @@ void do_client_request ( ThreadId tid )
          break;
       }
       case VG_USERREQ__CLIENT_CALL1: {
-         UWord (*f)(ThreadId, UWord) = (void*)arg[1];
+         UWord (*f)(ThreadId, UWord) = (__typeof__(f))arg[1];
 	 if (f == NULL)
 	    VG_(message)(Vg_DebugMsg, "VG_USERREQ__CLIENT_CALL1: func=%p\n", f);
 	 else
@@ -1841,7 +1839,7 @@ void do_client_request ( ThreadId tid )
          break;
       }
       case VG_USERREQ__CLIENT_CALL2: {
-         UWord (*f)(ThreadId, UWord, UWord) = (void*)arg[1];
+         UWord (*f)(ThreadId, UWord, UWord) = (__typeof__(f))arg[1];
 	 if (f == NULL)
 	    VG_(message)(Vg_DebugMsg, "VG_USERREQ__CLIENT_CALL2: func=%p\n", f);
 	 else
@@ -1849,7 +1847,7 @@ void do_client_request ( ThreadId tid )
          break;
       }
       case VG_USERREQ__CLIENT_CALL3: {
-         UWord (*f)(ThreadId, UWord, UWord, UWord) = (void*)arg[1];
+         UWord (*f)(ThreadId, UWord, UWord, UWord) = (__typeof__(f))arg[1];
 	 if (f == NULL)
 	    VG_(message)(Vg_DebugMsg, "VG_USERREQ__CLIENT_CALL3: func=%p\n", f);
 	 else
@@ -1997,25 +1995,25 @@ void do_client_request ( ThreadId tid )
 
       case VG_USERREQ__MAP_IP_TO_SRCLOC: {
          Addr   ip    = arg[1];
-         HChar* buf64 = (HChar*)arg[2];
+         HChar* buf64 = (HChar*)arg[2];  // points to a HChar [64] array
+         const HChar *buf;  // points to a string of unknown size
 
          VG_(memset)(buf64, 0, 64);
          UInt linenum = 0;
          Bool ok = VG_(get_filename_linenum)(
-                      ip, &buf64[0], 50, NULL, 0, NULL, &linenum
+                      ip, &buf, NULL, &linenum
                    );
          if (ok) {
-            /* Find the terminating zero in the first 50 bytes. */
+            /* For backward compatibility truncate the filename to
+               49 characters. */
+            VG_(strncpy)(buf64, buf, 50);
+            buf64[49] = '\0';
             UInt i;
             for (i = 0; i < 50; i++) {
                if (buf64[i] == 0)
                   break;
             }
-            /* We must find a zero somewhere in 0 .. 49.  Else
-               VG_(get_filename_linenum) is not properly zero
-               terminating. */
-            vg_assert(i < 50);
-            VG_(sprintf)(&buf64[i], ":%u", linenum);
+            VG_(sprintf)(buf64+i, ":%u", linenum);  // safe
          } else {
             buf64[0] = 0;
          }

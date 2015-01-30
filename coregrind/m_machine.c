@@ -106,9 +106,9 @@ void VG_(get_UnwindStartRegs) ( /*OUT*/UnwindStartRegs* regs,
    regs->r_pc = (ULong)VG_(threads)[tid].arch.vex.guest_IA;
    regs->r_sp = (ULong)VG_(threads)[tid].arch.vex.guest_SP;
    regs->misc.S390X.r_fp
-      = VG_(threads)[tid].arch.vex.guest_r11;
+      = VG_(threads)[tid].arch.vex.guest_FP;
    regs->misc.S390X.r_lr
-      = VG_(threads)[tid].arch.vex.guest_r14;
+      = VG_(threads)[tid].arch.vex.guest_LR;
 #  elif defined(VGA_mips32)
    regs->r_pc = VG_(threads)[tid].arch.vex.guest_PC;
    regs->r_sp = VG_(threads)[tid].arch.vex.guest_r29;
@@ -537,7 +537,7 @@ static void find_ppc_dcbz_sz(VexArchInfo *arch_info)
 static UInt VG_(get_machine_model)(void)
 {
    static struct model_map {
-      HChar name[5];
+      const HChar name[5];
       UInt  id;
    } model_map[] = {
       { "2064", VEX_S390X_MODEL_Z900 },
@@ -713,7 +713,7 @@ Bool VG_(machine_get_hwcaps)( void )
    LibVEX_default_VexArchInfo(&vai);
 
 #if defined(VGA_x86)
-   { Bool have_sse1, have_sse2, have_cx8, have_lzcnt, have_mmxext;
+   { Bool have_sse1, have_sse2, have_sse3, have_cx8, have_lzcnt, have_mmxext;
      UInt eax, ebx, ecx, edx, max_extended;
      HChar vstr[13];
      vstr[0] = 0;
@@ -742,6 +742,7 @@ Bool VG_(machine_get_hwcaps)( void )
 
      have_sse1 = (edx & (1<<25)) != 0; /* True => have sse insns */
      have_sse2 = (edx & (1<<26)) != 0; /* True => have sse2 insns */
+     have_sse3 = (ecx & (1<<0)) != 0;  /* True => have sse3 insns */
 
      /* cmpxchg8b is a minimum requirement now; if we don't have it we
         must simply give up.  But all CPUs since Pentium-I have it, so
@@ -775,7 +776,16 @@ Bool VG_(machine_get_hwcaps)( void )
 
      va = VexArchX86;
      vai.endness = VexEndnessLE;
-     if (have_sse2 && have_sse1 && have_mmxext) {
+
+     if (have_sse3 && have_sse2 && have_sse1 && have_mmxext) {
+        vai.hwcaps  = VEX_HWCAPS_X86_MMXEXT;
+        vai.hwcaps |= VEX_HWCAPS_X86_SSE1;
+        vai.hwcaps |= VEX_HWCAPS_X86_SSE2;
+        vai.hwcaps |= VEX_HWCAPS_X86_SSE3;
+        if (have_lzcnt)
+           vai.hwcaps |= VEX_HWCAPS_X86_LZCNT;
+        VG_(machine_x86_have_mxcsr) = 1;
+     } else if (have_sse2 && have_sse1 && have_mmxext) {
         vai.hwcaps  = VEX_HWCAPS_X86_MMXEXT;
         vai.hwcaps |= VEX_HWCAPS_X86_SSE1;
         vai.hwcaps |= VEX_HWCAPS_X86_SSE2;
@@ -1263,7 +1273,7 @@ Bool VG_(machine_get_hwcaps)( void )
                              ".short 0x0057" : : : "r0", "r1", "cc", "memory");
      }
 
-     /* Check availability og STFLE. If available store facility bits
+     /* Check availability of STFLE. If available store facility bits
         in hoststfle. */
      ULong hoststfle[S390_NUM_FACILITY_DW];
 

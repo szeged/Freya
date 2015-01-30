@@ -71,7 +71,7 @@ static UInt safe_fndn_ix (XArray* fndn_ix_xa, Int xa_ix)
 /* if xa_ix is a valid index in dirname_xa,
     return the element (i.e. the HChar*).
    If xa_ix is invalid, return NULL. */
-static HChar* safe_dirname_ix (XArray* dirname_xa, Int xa_ix)
+static const HChar* safe_dirname_ix (XArray* dirname_xa, Int xa_ix)
 {
    if (xa_ix < 0) return NULL;
    if (xa_ix >= VG_(sizeXA) (dirname_xa)) return NULL;
@@ -339,7 +339,7 @@ void process_extended_line_op( struct _DebugInfo* di,
  */
 static 
 void read_dwarf2_lineblock ( struct _DebugInfo* di,
-                             UnitInfo* ui, 
+                             const UnitInfo* ui, 
                              DiCursor  theBlock, /* IMAGE */
                              Int       noLargerThan )
 {
@@ -348,8 +348,8 @@ void read_dwarf2_lineblock ( struct _DebugInfo* di,
    Bool           is64;
    XArray*        fndn_ix_xa; /* xarray of UInt fndn_ix */
    UInt           fndn_ix;
-   XArray*        dirname_xa;   /* xarray of HChar* dirname */
-   HChar*         dirname;
+   XArray*        dirname_xa;   /* xarray of const HChar* dirname */
+   const HChar*   dirname;
 
    DiCursor       external = theBlock;
    DiCursor       data = theBlock;
@@ -518,35 +518,33 @@ void read_dwarf2_lineblock ( struct _DebugInfo* di,
 
    while (ML_(cur_read_UChar)(data) != 0) {
 
-#     define NBUF 4096
-      static HChar buf[NBUF];
-
       HChar* data_str = ML_(cur_read_strdup)(data, "di.rd2l.1");
       if (di->ddump_line)
          VG_(printf)("  %s\n", data_str);
 
       /* If data[0] is '/', then 'data' is an absolute path and we
-         don't mess with it.  Otherwise, if we can, construct the
+         don't mess with it.  Otherwise, construct the
          path 'ui->compdir' ++ "/" ++ 'data'. */
 
       if (data_str[0] != '/' 
           /* not an absolute path */
           && ML_(cur_is_valid)(ui->compdir)
           /* actually got something sensible for compdir */
-          && ML_(cur_strlen)(ui->compdir)
-             + VG_(strlen)(data_str) + 5/*paranoia*/ < NBUF
-          /* it's short enough to concatenate */) 
+          && ML_(cur_strlen)(ui->compdir))
       {
-         buf[0] = 0;
          HChar* compdir_str = ML_(cur_read_strdup)(ui->compdir, "di.rd2l.1b");
-         VG_(strcat)(buf, compdir_str);
+         SizeT  len = VG_(strlen)(compdir_str) + 1 + VG_(strlen)(data_str);
+         HChar *buf = ML_(dinfo_zalloc)("di.rd2l.1c", len + 1);
+
+         VG_(strcpy)(buf, compdir_str);
          VG_(strcat)(buf, "/");
          VG_(strcat)(buf, data_str);
-         vg_assert(VG_(strlen)(buf) < NBUF);
-         dirname = ML_(addStr)(di,buf,-1);
+
+         dirname = ML_(addStr)(di, buf, len);
          VG_(addToXA) (dirname_xa, &dirname);
          if (0) VG_(printf)("rel path  %s\n", buf);
          ML_(dinfo_free)(compdir_str);
+         ML_(dinfo_free)(buf);
       } else {
          /* just use 'data'. */
          dirname = ML_(addStr)(di,data_str,-1);
@@ -556,8 +554,6 @@ void read_dwarf2_lineblock ( struct _DebugInfo* di,
 
       data = ML_(cur_plus)(data, VG_(strlen)(data_str) + 1);
       ML_(dinfo_free)(data_str);
-
-#     undef NBUF
    }
 
    if (di->ddump_line)
@@ -1898,7 +1894,7 @@ typedef
    }
    RegRule;
 
-static void ppRegRule ( XArray* exprs, RegRule* rrule )
+static void ppRegRule ( const XArray* exprs, const RegRule* rrule )
 {
    vg_assert(exprs);
    switch (rrule->tag) {
@@ -1952,12 +1948,12 @@ typedef
    }
    UnwindContext;
 
-static void ppUnwindContext ( UnwindContext* ctx )
+static void ppUnwindContext ( const UnwindContext* ctx )
 {
    Int j, i;
    VG_(printf)("0x%llx: ", (ULong)ctx->loc);
    for (j = 0; j <= ctx->state_sp; j++) {
-      struct UnwindContextState* ctxs = &ctx->state[j];
+      const struct UnwindContextState* ctxs = &ctx->state[j];
       VG_(printf)("%s[%d]={ ", j > 0 ? " " : "", j);
       if (ctxs->cfa_is_regoff) {
          VG_(printf)("%d(r%d) ", ctxs->cfa_off, ctxs->cfa_reg);
@@ -2033,9 +2029,8 @@ typedef
 
 /* Forward */
 static 
-Int copy_convert_CfiExpr_tree ( XArray*        dst,
-                                UnwindContext* srcuc, 
-                                Int            nd );
+Int copy_convert_CfiExpr_tree ( XArray* dst, const UnwindContext* srcuc, 
+                                Int nd );
 
 /* Summarise ctx into si, if possible.  Returns True if successful.
    This is taken to be just after ctx's loc advances; hence the
@@ -2046,11 +2041,11 @@ static Bool summarise_context(/*OUT*/Addr* base,
                               /*OUT*/UInt* len,
                               /*OUT*/DiCfSI_m* si_m,
                                Addr loc_start,
-	                       UnwindContext* ctx,
-                               struct _DebugInfo* debuginfo )
+	                       const UnwindContext* ctx,
+                               DebugInfo* debuginfo )
 {
    Int why = 0;
-   struct UnwindContextState* ctxs;
+   const struct UnwindContextState* ctxs;
 
    *base = 0;
    *len = 0;
@@ -2420,7 +2415,7 @@ static Bool summarise_context(/*OUT*/Addr* base,
    there is no equivalent register, return -1.  This has the
    undesirable side effect of de-dagifying the input; oh well. */
 static Int copy_convert_CfiExpr_tree ( XArray*        dstxa,
-                                       UnwindContext* srcuc, 
+                                       const UnwindContext* srcuc, 
                                        Int            srcix )
 {
    CfiExpr* src;
@@ -2500,9 +2495,9 @@ static Int copy_convert_CfiExpr_tree ( XArray*        dstxa,
 }
 
 
-static void ppUnwindContext_summary ( UnwindContext* ctx )
+static void ppUnwindContext_summary ( const UnwindContext* ctx )
 {
-   struct UnwindContextState* ctxs = &ctx->state[ctx->state_sp];
+   const struct UnwindContextState* ctxs = &ctx->state[ctx->state_sp];
 
    VG_(printf)("0x%llx-1: ", (ULong)ctx->loc);
 
@@ -2573,7 +2568,7 @@ static UInt size_of_encoded_Addr ( UChar encoding )
    }
 }
 
-static Addr step_encoded_Addr ( AddressDecodingInfo* adi,
+static Addr step_encoded_Addr ( const AddressDecodingInfo* adi,
                                 /*MOD*/DiCursor* data )
 {
    /* Regarding the handling of DW_EH_PE_absptr.  DWARF3 says this
@@ -2662,7 +2657,7 @@ static Addr step_encoded_Addr ( AddressDecodingInfo* adi,
    ctx->exprs of the root node.  Or fail in which case return -1. */
 /* IMPORTANT: when adding expression forms here, also remember to
    add suitable evaluation code in evalCfiExpr in debuginfo.c. */
-static Int dwarfexpr_to_dag ( UnwindContext* ctx, 
+static Int dwarfexpr_to_dag ( const UnwindContext* ctx, 
                               DiCursor expr, Int exprlen, 
                               Bool push_cfa_at_start,
                               Bool ddump_frames )
@@ -2697,7 +2692,7 @@ static Int dwarfexpr_to_dag ( UnwindContext* ctx,
 
    Int sp; /* # of top element: valid is -1 .. N_EXPR_STACK-1 */
    Int stack[N_EXPR_STACK];  /* indices into ctx->exprs */
-   struct UnwindContextState* ctxs = &ctx->state[ctx->state_sp];
+   const struct UnwindContextState* ctxs = &ctx->state[ctx->state_sp];
 
    XArray*  dst   = ctx->exprs;
    DiCursor limit = ML_(cur_plus)(expr, exprlen);
@@ -2921,9 +2916,9 @@ static Int dwarfexpr_to_dag ( UnwindContext* ctx,
 */
 static Int run_CF_instruction ( /*MOD*/UnwindContext* ctx, 
                                 DiCursor instrIN,
-                                UnwindContext* restore_ctx,
-                                AddressDecodingInfo* adi,
-                                struct _DebugInfo* di )
+                                const UnwindContext* restore_ctx,
+                                const AddressDecodingInfo* adi,
+                                const DebugInfo* di )
 {
    Int      off, reg, reg2, len, j;
    UInt     delta;
@@ -3329,7 +3324,7 @@ static Int run_CF_instruction ( /*MOD*/UnwindContext* ctx,
    readelf --debug-dump=frames would. */
 
 static Int show_CF_instruction ( DiCursor instrIN,
-                                 AddressDecodingInfo* adi,
+                                 const AddressDecodingInfo* adi,
                                  Int code_a_f, Int data_a_f )
 {
    Int      off, coff, reg, reg2, len;
@@ -3535,7 +3530,7 @@ static Int show_CF_instruction ( DiCursor instrIN,
 
 /* Show the instructions in instrs[0 .. ilen-1]. */
 static void show_CF_instructions ( DiCursor instrs, Int ilen,
-                                   AddressDecodingInfo* adi,
+                                   const AddressDecodingInfo* adi,
                                    Int code_a_f, Int data_a_f )
 {
    Int i = 0;
@@ -3551,12 +3546,12 @@ static void show_CF_instructions ( DiCursor instrs, Int ilen,
    reached, or until there is a failure.  Return True iff success. 
 */
 static 
-Bool run_CF_instructions ( struct _DebugInfo* di,
+Bool run_CF_instructions ( DebugInfo* di,
                            Bool record,
                            UnwindContext* ctx, DiCursor instrs, Int ilen,
                            UWord fde_arange,
-                           UnwindContext* restore_ctx,
-                           AddressDecodingInfo* adi )
+                           const UnwindContext* restore_ctx,
+                           const AddressDecodingInfo* adi )
 {
    Addr base;
    UInt len;
@@ -3636,9 +3631,8 @@ static void init_CIE ( CIE* cie )
    cie->saw_z_augmentation = False;
 }
 
-#define N_CIEs 8000
-static CIE the_CIEs[N_CIEs];
-
+static CIE *the_CIEs = NULL;
+static SizeT N_CIEs = 0;
 
 /* Read, summarise and store CFA unwind info from .eh_frame and
    .debug_frame sections.  is_ehframe tells us which kind we are
@@ -3777,14 +3771,14 @@ void ML_(read_callframe_info_dwarf3)
 
          /* --------- CIE --------- */
 	 if (di->trace_cfi) 
-            VG_(printf)("------ new CIE (#%d of 0 .. %d) ------\n", 
-                        n_CIEs, N_CIEs - 1);
+            VG_(printf)("------ new CIE #%d ------\n", n_CIEs);
 
 	 /* Allocate a new CIE record. */
-         vg_assert(n_CIEs >= 0 && n_CIEs <= N_CIEs);
+         vg_assert(n_CIEs >= 0);
          if (n_CIEs == N_CIEs) {
-            how = "N_CIEs is too low.  Increase and recompile.";
-            goto bad;
+            N_CIEs += 1000;
+            the_CIEs = ML_(dinfo_realloc)("di.rcid3.2", the_CIEs,
+                                          N_CIEs * sizeof the_CIEs[0]);
          }
 
          this_CIE = n_CIEs;

@@ -51,15 +51,15 @@
    bb_to_IR.h. */
 extern
 DisResult disInstr_AMD64 ( IRSB*        irbb,
-                           Bool         (*resteerOkFn) ( void*, Addr64 ),
+                           Bool         (*resteerOkFn) ( void*, Addr ),
                            Bool         resteerCisOk,
                            void*        callback_opaque,
                            const UChar* guest_code,
                            Long         delta,
-                           Addr64       guest_IP,
+                           Addr         guest_IP,
                            VexArch      guest_arch,
-                           VexArchInfo* archinfo,
-                           VexAbiInfo*  abiinfo,
+                           const VexArchInfo* archinfo,
+                           const VexAbiInfo*  abiinfo,
                            VexEndness   host_endness,
                            Bool         sigill_diag );
 
@@ -159,9 +159,9 @@ extern ULong amd64g_calculate_pdep  ( ULong, ULong );
 
 /* --- DIRTY HELPERS --- */
 
-extern ULong amd64g_dirtyhelper_loadF80le  ( ULong/*addr*/ );
+extern ULong amd64g_dirtyhelper_loadF80le  ( Addr/*addr*/ );
 
-extern void  amd64g_dirtyhelper_storeF80le ( ULong/*addr*/, ULong/*data*/ );
+extern void  amd64g_dirtyhelper_storeF80le ( Addr/*addr*/, ULong/*data*/ );
 
 extern void  amd64g_dirtyhelper_CPUID_baseline ( VexGuestAMD64State* st );
 extern void  amd64g_dirtyhelper_CPUID_sse3_and_cx16 ( VexGuestAMD64State* st );

@@ -316,14 +316,14 @@ void LibVEX_default_VexArchInfo ( /*OUT*/VexArchInfo* vai );
       guest is amd64-linux                ==> 128
       guest is other                      ==> inapplicable
 
-   guest_amd64_assume_fs_is_zero
+   guest_amd64_assume_fs_is_const
       guest is amd64-linux                ==> True
       guest is amd64-darwin               ==> False
       guest is other                      ==> inapplicable
 
-   guest_amd64_assume_gs_is_0x60
+   guest_amd64_assume_gs_is_const
       guest is amd64-darwin               ==> True
-      guest is amd64-linux                ==> False
+      guest is amd64-linux                ==> True
       guest is other                      ==> inapplicable
 
    guest_ppc_zap_RZ_at_blr
@@ -350,13 +350,13 @@ typedef
 
       /* AMD64 GUESTS only: should we translate %fs-prefixed
          instructions using the assumption that %fs always contains
-         zero? */
-      Bool guest_amd64_assume_fs_is_zero;
+         the same value? (typically zero on linux) */
+      Bool guest_amd64_assume_fs_is_const;
 
       /* AMD64 GUESTS only: should we translate %gs-prefixed
          instructions using the assumption that %gs always contains
-         0x60? */
-      Bool guest_amd64_assume_gs_is_0x60;
+         the same value? (typically 0x60 on darwin)? */
+      Bool guest_amd64_assume_gs_is_const;
 
       /* PPC GUESTS only: should we zap the stack red zone at a 'blr'
          (function return) ? */
@@ -366,7 +366,7 @@ typedef
          (function call) ?  Is supplied with the guest address of the
          target of the call since that may be significant.  If NULL,
          is assumed equivalent to a fn which always returns False. */
-      Bool (*guest_ppc_zap_RZ_at_bl)(Addr64);
+      Bool (*guest_ppc_zap_RZ_at_bl)(Addr);
 
       /* PPC32/PPC64 HOSTS only: does '&f' give us a pointer to a
          function descriptor on the host, or to the function code
@@ -452,50 +452,8 @@ void LibVEX_default_VexControl ( /*OUT*/ VexControl* vcon );
    You can only call it inside an instrumentation or optimisation
    callback that you have previously specified in a call to
    LibVEX_Translate.  The storage allocated will only stay alive until
-   translation of the current basic block is complete.
- */
-extern HChar* private_LibVEX_alloc_first;
-extern HChar* private_LibVEX_alloc_curr;
-extern HChar* private_LibVEX_alloc_last;
-extern void   private_LibVEX_alloc_OOM(void) __attribute__((noreturn));
-
-static inline void* LibVEX_Alloc ( Int nbytes )
-{
-   struct align {
-      char c;
-      union {
-         char c;
-         short s;
-         int i;
-         long l;
-         long long ll;
-         float f;
-         double d;
-         /* long double is currently not used and would increase alignment
-            unnecessarily. */
-         /* long double ld; */
-         void *pto;
-         void (*ptf)(void);
-      } x;
-   };
-
-#if 0
-  /* Nasty debugging hack, do not use. */
-  return malloc(nbytes);
-#else
-   HChar* curr;
-   HChar* next;
-   Int    ALIGN;
-   ALIGN  = offsetof(struct align,x) - 1;
-   nbytes = (nbytes + ALIGN) & ~ALIGN;
-   curr   = private_LibVEX_alloc_curr;
-   next   = curr + nbytes;
-   if (next >= private_LibVEX_alloc_last)
-      private_LibVEX_alloc_OOM();
-   private_LibVEX_alloc_curr = next;
-   return curr;
-#endif
-}
+   translation of the current basic block is complete. */
+extern void* LibVEX_Alloc ( SizeT nbytes );
 
 /* Show Vex allocation statistics. */
 extern void LibVEX_ShowAllocStats ( void );
@@ -574,7 +532,7 @@ extern void LibVEX_Init (
    void (*failure_exit) ( void ),
 
    /* logging output function */
-   void (*log_bytes) ( HChar*, Int nbytes ),
+   void (*log_bytes) ( const HChar*, SizeT nbytes ),
 
    /* debug paranoia level */
    Int debuglevel,
@@ -611,12 +569,13 @@ typedef
    scheme of describing a chunk of guest code merely by its start
    address and length is inadequate.
 
-   Hopefully this struct is only 32 bytes long.  Space is important as
-   clients will have to store one of these for each translation made.
+   This struct uses 20 bytes on a 32-bit archtecture and 32 bytes on a
+   64-bit architecture.  Space is important as clients will have to store
+   one of these for each translation made.
 */
 typedef
    struct {
-      Addr64 base[3];
+      Addr   base[3];
       UShort len[3];
       UShort n_used;
    }
@@ -647,11 +606,11 @@ typedef
          This is the post-redirection guest address.  Not that Vex
          understands anything about redirection; that is all done on
          the Valgrind side. */
-      Addr64  guest_bytes_addr;
+      Addr    guest_bytes_addr;
 
       /* Is it OK to chase into this guest address?  May not be
 	 NULL. */
-      Bool    (*chase_into_ok) ( /*callback_opaque*/void*, Addr64 );
+      Bool    (*chase_into_ok) ( /*callback_opaque*/void*, Addr );
 
       /* OUT: which bits of guest code actually got translated */
       VexGuestExtents* guest_extents;
@@ -809,8 +768,7 @@ VexInvalRange LibVEX_UnChain ( VexArch     arch_host,
    calculate the fast entry point address if the slow entry point
    address is known (the usual case), or vice versa. */
 extern
-Int LibVEX_evCheckSzB ( VexArch    arch_host,
-                        VexEndness endness_host );
+Int LibVEX_evCheckSzB ( VexArch arch_host );
 
 
 /* Patch the counter location into an existing ProfInc point.  The

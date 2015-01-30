@@ -687,8 +687,10 @@ void received_signal (int signum)
       sigpipe++;
    } else if (signum == SIGALRM) {
       sigalrm++;
-#if defined(VGPV_arm_linux_android) || defined(VGPV_x86_linux_android) \
-    || defined(VGPV_mips32_linux_android)
+#if defined(VGPV_arm_linux_android) \
+    || defined(VGPV_x86_linux_android) \
+    || defined(VGPV_mips32_linux_android) \
+    || defined(VGPV_arm64_linux_android)
       /* Android has no pthread_cancel. As it also does not have
          an invoker implementation, there is no need for cleanup action.
          So, we just do nothing. */
@@ -749,6 +751,11 @@ void install_handlers(void)
       to cleanup.  */
    if (sigaction (SIGALRM, &action, &oldaction) != 0)
       XERROR (errno, "vgdb error sigaction SIGALRM\n");
+
+   /* unmask all signals, in case the process that launched vgdb
+      masked some. */
+   if (sigprocmask (SIG_SETMASK, &action.sa_mask, NULL) != 0)
+      XERROR (errno, "vgdb error sigprocmask");
 }
 
 /* close the FIFOs provided connections, terminate the invoker thread.  */
@@ -1055,37 +1062,44 @@ void standalone_send_commands(int pid,
 }
 
 /* report to user the existence of a vgdb-able valgrind process 
-   with given pid */
+   with given pid.
+   Note: this function does not use XERROR if an error is encountered
+   while producing the command line for pid, as this is not critical
+   and at least on MacOS, reading cmdline is not available. */
 static
 void report_pid (int pid, Bool on_stdout)
 {
-   char cmdline_file[100];
-   char cmdline[1000];
-   int fd;
-   int i, sz;
+   char cmdline_file[50];   // large enough
+   int fd, i;
+   FILE *out = on_stdout ? stdout : stderr;
+
+   fprintf(out, "use --pid=%d for ", pid);
 
    sprintf(cmdline_file, "/proc/%d/cmdline", pid);
    fd = open (cmdline_file, O_RDONLY);
    if (fd == -1) {
       DEBUG(1, "error opening cmdline file %s %s\n", 
             cmdline_file, strerror(errno));
-      sprintf(cmdline, "(could not open process command line)");
+      fprintf(out, "(could not open process command line)\n");
    } else {
-      sz = read(fd, cmdline, 1000);
-      for (i = 0; i < sz; i++)
-         if (cmdline[i] == 0)
-            cmdline[i] = ' ';
-      if (sz >= 0)
+      char cmdline[100];
+      ssize_t sz;
+      while ((sz = read(fd, cmdline, sizeof cmdline - 1)) != 0) {
+         for (i = 0; i < sz; i++)
+            if (cmdline[i] == 0)
+               cmdline[i] = ' ';
          cmdline[sz] = 0;
-      else {
+         fprintf(out, "%s", cmdline);
+      }
+      if (sz == -1) {
          DEBUG(1, "error reading cmdline file %s %s\n", 
                cmdline_file, strerror(errno));
-         sprintf(cmdline, "(could not read process command line)");
+         fprintf(out, "(error reading process command line)");
       }
+      fprintf(out, "\n");
       close (fd);
    }  
-   fprintf((on_stdout ? stdout : stderr), "use --pid=%d for %s\n", pid, cmdline);
-   fflush((on_stdout ? stdout : stderr));
+   fflush(out);
 }
 
 static

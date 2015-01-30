@@ -1160,6 +1160,9 @@ struct vki_ipc_perm
 
 #define VKI_IPC_64  0x0100  /* New version (support 32-bit UIDs, bigger
 			       message sizes, etc. */
+// From /usr/include/bits/shm.h
+# define VKI_SHM_HUGETLB   04000
+
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/sem.h
@@ -2955,6 +2958,10 @@ struct vki_getcpu_cache {
 #define VKI_FIOQSIZE 0x5460     /* Value differs on some platforms */
 #endif
 
+#ifndef VKI_TIOCSIG
+#define VKI_TIOCSIG _VKI_IOW('T', 0x36, int) /* Value differs on some platforms */
+#endif
+
 //----------------------------------------------------------------------
 // From kernel/common/include/linux/ashmem.h
 //----------------------------------------------------------------------
@@ -3537,6 +3544,43 @@ struct vki_ion_custom_data {
 
 #define VKI_ION_IOC_CUSTOM \
    _VKI_IOWR(VKI_ION_IOC_MAGIC, 6, struct vki_ion_custom_data)
+
+//----------------------------------------------------------------------
+// From linux-3.19-rc5/drivers/staging/android/uapi/sync.h
+//----------------------------------------------------------------------
+
+struct vki_sync_merge_data {
+        __vki_s32 fd2;
+        char      name[32];
+        __vki_s32 fence;
+};
+
+struct vki_sync_pt_info {
+        __vki_u32 len;
+        char      obj_name[32];
+        char      driver_name[32];
+        __vki_s32 status;
+        __vki_u64 timestamp_ns;
+        __vki_u8  driver_data[0];
+};
+
+struct vki_sync_fence_info_data {
+        __vki_u32 len;
+        char      name[32];
+        __vki_s32 status;
+        __vki_u8  pt_info[0];
+};
+
+#define VKI_SYNC_IOC_MAGIC   '>'
+
+#define VKI_SYNC_IOC_WAIT \
+   _VKI_IOW(VKI_SYNC_IOC_MAGIC, 0, __vki_s32)
+
+#define VKI_SYNC_IOC_MERGE \
+   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 1, struct vki_sync_merge_data)
+
+#define VKI_SYNC_IOC_FENCE_INFO \
+   _VKI_IOWR(VKI_SYNC_IOC_MAGIC, 2, struct vki_sync_fence_info_data)
 
 //----------------------------------------------------------------------
 // From drivers/staging/lustre/lustre/include/lustre/lustre_user.h

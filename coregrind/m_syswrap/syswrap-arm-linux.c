@@ -497,13 +497,12 @@ PRE(sys_clone)
 
    default:
       /* should we just ENOSYS? */
-      VG_(message)(Vg_UserMsg, "");
-      VG_(message)(Vg_UserMsg, "Unsupported clone() flags: 0x%lx", ARG1);
-      VG_(message)(Vg_UserMsg, "");
-      VG_(message)(Vg_UserMsg, "The only supported clone() uses are:");
-      VG_(message)(Vg_UserMsg, " - via a threads library (LinuxThreads or NPTL)");
-      VG_(message)(Vg_UserMsg, " - via the implementation of fork or vfork");
-      VG_(message)(Vg_UserMsg, " - for the Quadrics Elan3 user-space driver");
+      VG_(message)(Vg_UserMsg, "Unsupported clone() flags: 0x%lx\n", ARG1);
+      VG_(message)(Vg_UserMsg, "\n");
+      VG_(message)(Vg_UserMsg, "The only supported clone() uses are:\n");
+      VG_(message)(Vg_UserMsg, " - via a threads library (LinuxThreads or NPTL)\n");
+      VG_(message)(Vg_UserMsg, " - via the implementation of fork or vfork\n");
+      VG_(message)(Vg_UserMsg, " - for the Quadrics Elan3 user-space driver\n");
       VG_(unimplemented)
          ("Valgrind does not support general clone().");
    }
@@ -600,7 +599,7 @@ PRE(sys_cacheflush)
 {
    PRINT("cacheflush (%lx, %#lx, %#lx)",ARG1,ARG2,ARG3);
    PRE_REG_READ3(long, "cacheflush", void*, addrlow,void*, addrhigh,int, flags);
-   VG_(discard_translations)( (Addr64)ARG1,
+   VG_(discard_translations)( (Addr)ARG1,
                               ((ULong)ARG2) - ((ULong)ARG1) + 1ULL/*paranoia*/,
                               "PRE(sys_cacheflush)" );
    SET_STATUS_Success(0);
@@ -1088,7 +1087,6 @@ static SyscallTableEntry syscall_main_table[] = {
 
    LINX_(__NR_tgkill,            sys_tgkill),         // 270 */Linux
    GENX_(__NR_utimes,            sys_utimes),         // 271
-//   LINX_(__NR_fadvise64_64,      sys_fadvise64_64),   // 272 */(Linux?)
    GENX_(__NR_vserver,           sys_ni_syscall),     // 273
    LINX_(__NR_mbind,             sys_mbind),          // 274 ?/?
 
@@ -1189,6 +1187,8 @@ static SyscallTableEntry syscall_main_table[] = {
    // correspond to what's in include/vki/vki-scnums-arm-linux.h.
    // From here onwards, please ensure the numbers are correct.
 
+   LINX_(__NR_arm_fadvise64_64,  sys_fadvise64_64),     // 270 */(Linux?)
+
    LINX_(__NR_pselect6,          sys_pselect6),         // 335
    LINXY(__NR_ppoll,             sys_ppoll),            // 336
 
@@ -1214,7 +1214,9 @@ static SyscallTableEntry syscall_main_table[] = {
    LINXY(__NR_name_to_handle_at, sys_name_to_handle_at),// 370
    LINXY(__NR_open_by_handle_at, sys_open_by_handle_at),// 371
    LINXY(__NR_clock_adjtime,     sys_clock_adjtime),    // 372
-   LINXY(__NR_sendmmsg,          sys_sendmmsg)          // 374
+   LINXY(__NR_sendmmsg,          sys_sendmmsg),         // 374
+   LINXY(__NR_getrandom,         sys_getrandom),        // 384
+   LINXY(__NR_memfd_create,      sys_memfd_create)      // 385
 };
 
 

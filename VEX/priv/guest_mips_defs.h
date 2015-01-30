@@ -42,15 +42,15 @@
 
 /* Convert one MIPS insn to IR. See the type DisOneInstrFn in bb_to_IR.h. */
 extern DisResult disInstr_MIPS ( IRSB*        irbb,
-                                 Bool         (*resteerOkFn) (void *, Addr64),
+                                 Bool         (*resteerOkFn) (void *, Addr),
                                  Bool         resteerCisOk,
                                  void*        callback_opaque,
                                  const UChar* guest_code,
                                  Long         delta,
-                                 Addr64       guest_IP,
+                                 Addr         guest_IP,
                                  VexArch      guest_arch,
-                                 VexArchInfo* archinfo,
-                                 VexAbiInfo*  abiinfo,
+                                 const VexArchInfo* archinfo,
+                                 const VexAbiInfo*  abiinfo,
                                  VexEndness   host_endness,
                                  Bool         sigill_diag );
 

@@ -589,6 +589,10 @@ static void showARM64VecBinOp(/*OUT*/const HChar** nm,
       case ARM64vecb_FSUB32x4:     *nm = "fsub  ";    *ar = "4s";   return;
       case ARM64vecb_FMUL32x4:     *nm = "fmul  ";    *ar = "4s";   return;
       case ARM64vecb_FDIV32x4:     *nm = "fdiv  ";    *ar = "4s";   return;
+      case ARM64vecb_FMAX64x2:     *nm = "fmax  ";    *ar = "2d";   return;
+      case ARM64vecb_FMAX32x4:     *nm = "fmax  ";    *ar = "4s";   return;
+      case ARM64vecb_FMIN64x2:     *nm = "fmin  ";    *ar = "2d";   return;
+      case ARM64vecb_FMIN32x4:     *nm = "fmin  ";    *ar = "4s";   return;
       case ARM64vecb_UMAX32x4:     *nm = "umax  ";    *ar = "4s";   return;
       case ARM64vecb_UMAX16x8:     *nm = "umax  ";    *ar = "8h";   return;
       case ARM64vecb_UMAX8x16:     *nm = "umax  ";    *ar = "16b";  return;
@@ -953,7 +957,7 @@ ARM64Instr* ARM64Instr_CSel ( HReg dst, HReg argL, HReg argR,
    i->ARM64in.CSel.cond = cond;
    return i;
 }
-ARM64Instr* ARM64Instr_Call ( ARM64CondCode cond, HWord target, Int nArgRegs,
+ARM64Instr* ARM64Instr_Call ( ARM64CondCode cond, Addr64 target, Int nArgRegs,
                               RetLoc rloc ) {
    ARM64Instr* i = LibVEX_Alloc(sizeof(ARM64Instr));
    i->tag                   = ARM64in_Call;
@@ -1112,6 +1116,17 @@ ARM64Instr* ARM64Instr_VCmpS ( HReg argL, HReg argR ) {
    i->ARM64in.VCmpS.argR = argR;
    return i;
 }
+ARM64Instr* ARM64Instr_VFCSel ( HReg dst, HReg argL, HReg argR,
+                                ARM64CondCode cond, Bool isD ) {
+   ARM64Instr* i          = LibVEX_Alloc(sizeof(ARM64Instr));
+   i->tag                 = ARM64in_VFCSel;
+   i->ARM64in.VFCSel.dst  = dst;
+   i->ARM64in.VFCSel.argL = argL;
+   i->ARM64in.VFCSel.argR = argR;
+   i->ARM64in.VFCSel.cond = cond;
+   i->ARM64in.VFCSel.isD  = isD;
+   return i;
+}
 ARM64Instr* ARM64Instr_FPCR ( Bool toFPCR, HReg iReg ) {
    ARM64Instr* i = LibVEX_Alloc(sizeof(ARM64Instr));
    i->tag                 = ARM64in_FPCR;
@@ -1235,6 +1250,14 @@ ARM64Instr* ARM64Instr_VImmQ (HReg rQ, UShort imm) {
    i->tag               = ARM64in_VImmQ;
    i->ARM64in.VImmQ.rQ  = rQ;
    i->ARM64in.VImmQ.imm = imm;
+   /* Check that this is something that can actually be emitted. */
+   switch (imm) {
+      case 0x0000: case 0x0001: case 0x0003:
+      case 0x000F: case 0x003F: case 0x00FF: case 0xFFFF:
+         break;
+      default:
+         vassert(0);
+   }
    return i;
 }
 ARM64Instr* ARM64Instr_VDfromX ( HReg rD, HReg rX ) {
@@ -1467,7 +1490,7 @@ void ppARM64Instr ( const ARM64Instr* i ) {
          vex_printf("call%s ",
                     i->ARM64in.Call.cond==ARM64cc_AL
                        ? "  " : showARM64CondCode(i->ARM64in.Call.cond));
-         vex_printf("0x%lx [nArgRegs=%d, ",
+         vex_printf("0x%llx [nArgRegs=%d, ",
                     i->ARM64in.Call.target, i->ARM64in.Call.nArgRegs);
          ppRetLoc(i->ARM64in.Call.rloc);
          vex_printf("]");
@@ -1638,6 +1661,18 @@ void ppARM64Instr ( const ARM64Instr* i ) {
          vex_printf(", ");
          ppHRegARM64asSreg(i->ARM64in.VCmpS.argR);
          return;
+      case ARM64in_VFCSel: {
+         void (*ppHRegARM64fp)(HReg)
+            = (i->ARM64in.VFCSel.isD ? ppHRegARM64 : ppHRegARM64asSreg);
+         vex_printf("fcsel  ");
+         ppHRegARM64fp(i->ARM64in.VFCSel.dst);
+         vex_printf(", ");
+         ppHRegARM64fp(i->ARM64in.VFCSel.argL);
+         vex_printf(", ");
+         ppHRegARM64fp(i->ARM64in.VFCSel.argR);
+         vex_printf(", %s", showARM64CondCode(i->ARM64in.VFCSel.cond));
+         return;
+      }
       case ARM64in_FPCR:
          if (i->ARM64in.FPCR.toFPCR) {
             vex_printf("msr    fpcr, ");
@@ -2020,6 +2055,11 @@ void getRegUsage_ARM64Instr ( HRegUsage* u, const ARM64Instr* i, Bool mode64 )
          addHRegUse(u, HRmRead, i->ARM64in.VCmpS.argL);
          addHRegUse(u, HRmRead, i->ARM64in.VCmpS.argR);
          return;
+      case ARM64in_VFCSel:
+         addHRegUse(u, HRmRead, i->ARM64in.VFCSel.argL);
+         addHRegUse(u, HRmRead, i->ARM64in.VFCSel.argR);
+         addHRegUse(u, HRmWrite, i->ARM64in.VFCSel.dst);
+         return;
       case ARM64in_FPCR:
          if (i->ARM64in.FPCR.toFPCR)
             addHRegUse(u, HRmRead, i->ARM64in.FPCR.iReg);
@@ -2247,6 +2287,11 @@ void mapRegs_ARM64Instr ( HRegRemap* m, ARM64Instr* i, Bool mode64 )
       case ARM64in_VCmpS:
          i->ARM64in.VCmpS.argL = lookupHRegRemap(m, i->ARM64in.VCmpS.argL);
          i->ARM64in.VCmpS.argR = lookupHRegRemap(m, i->ARM64in.VCmpS.argR);
+         return;
+      case ARM64in_VFCSel:
+         i->ARM64in.VFCSel.argL = lookupHRegRemap(m, i->ARM64in.VFCSel.argL);
+         i->ARM64in.VFCSel.argR = lookupHRegRemap(m, i->ARM64in.VFCSel.argR);
+         i->ARM64in.VFCSel.dst  = lookupHRegRemap(m, i->ARM64in.VFCSel.dst);
          return;
       case ARM64in_FPCR:
          i->ARM64in.FPCR.iReg = lookupHRegRemap(m, i->ARM64in.FPCR.iReg);
@@ -3391,7 +3436,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
                   = i->ARM64in.XDirect.toFastEP ? disp_cp_chain_me_to_fastEP 
                                                 : disp_cp_chain_me_to_slowEP;
          p = imm64_to_iregNo_EXACTLY4(p, /*x*/9,
-                                      Ptr_to_ULong(disp_cp_chain_me));
+                                      (Addr)disp_cp_chain_me);
          *p++ = 0xD63F0120;
          /* --- END of PATCHABLE BYTES --- */
 
@@ -3434,7 +3479,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
 
          /* imm64 x9, VG_(disp_cp_xindir) */
          /* br    x9 */
-         p = imm64_to_iregNo(p, /*x*/9, Ptr_to_ULong(disp_cp_xindir));
+         p = imm64_to_iregNo(p, /*x*/9, (Addr)disp_cp_xindir);
          *p++ = 0xD61F0120; /* br x9 */
 
          /* Fix up the conditional jump, if there was one. */
@@ -3484,7 +3529,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
             case Ijk_InvalICache: trcval = VEX_TRC_JMP_INVALICACHE; break;
             case Ijk_FlushDCache: trcval = VEX_TRC_JMP_FLUSHDCACHE; break;
             case Ijk_NoRedir:     trcval = VEX_TRC_JMP_NOREDIR;     break;
-            //case Ijk_SigTRAP:     trcval = VEX_TRC_JMP_SIGTRAP;     break;
+            case Ijk_SigTRAP:     trcval = VEX_TRC_JMP_SIGTRAP;     break;
             //case Ijk_SigSEGV:     trcval = VEX_TRC_JMP_SIGSEGV;     break;
             case Ijk_Boring:      trcval = VEX_TRC_JMP_BORING;      break;
             /* We don't expect to see the following being assisted. */
@@ -3501,7 +3546,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
 
          /* imm64 x9, VG_(disp_cp_xassisted) */
          /* br    x9 */
-         p = imm64_to_iregNo(p, /*x*/9, Ptr_to_ULong(disp_cp_xassisted));
+         p = imm64_to_iregNo(p, /*x*/9, (Addr)disp_cp_xassisted);
          *p++ = 0xD61F0120; /* br x9 */
 
          /* Fix up the conditional jump, if there was one. */
@@ -3950,6 +3995,21 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
          *p++ = X_3_8_5_6_5_5(X000, X11110001, sM, X001000, sN, X00000);
          goto done;
       }
+      case ARM64in_VFCSel: {
+         /* 31        23 21 20 15   11 9 5
+            000 11110 00 1  m  cond 11 n d  FCSEL Sd,Sn,Sm,cond
+            000 11110 01 1  m  cond 11 n d  FCSEL Dd,Dn,Dm,cond
+         */
+         Bool isD  = i->ARM64in.VFCSel.isD;
+         UInt dd   = dregNo(i->ARM64in.VFCSel.dst);
+         UInt nn   = dregNo(i->ARM64in.VFCSel.argL);
+         UInt mm   = dregNo(i->ARM64in.VFCSel.argR);
+         UInt cond = (UInt)i->ARM64in.VFCSel.cond;
+         vassert(cond < 16);
+         *p++ = X_3_8_5_6_5_5(X000, isD ? X11110011 : X11110001,
+                              mm, (cond << 2) | X000011, nn, dd);
+         goto done; 
+      }
       case ARM64in_FPCR: {
          Bool toFPCR = i->ARM64in.FPCR.toFPCR;
          UInt iReg   = iregNo(i->ARM64in.FPCR.iReg);
@@ -3997,6 +4057,11 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
             011 01110 00 1 m  110111 n d   FMUL Vd.4s, Vn.4s, Vm.4s
             011 01110 01 1 m  111111 n d   FDIV Vd.2d, Vn.2d, Vm.2d
             011 01110 00 1 m  111111 n d   FDIV Vd.4s, Vn.4s, Vm.4s
+
+            010 01110 01 1 m  111101 n d   FMAX Vd.2d, Vn.2d, Vm.2d
+            010 01110 00 1 m  111101 n d   FMAX Vd.4s, Vn.4s, Vm.4s
+            010 01110 11 1 m  111101 n d   FMIN Vd.2d, Vn.2d, Vm.2d
+            010 01110 10 1 m  111101 n d   FMIN Vd.4s, Vn.4s, Vm.4s
 
             011 01110 10 1 m  011001 n d   UMAX Vd.4s,  Vn.4s,  Vm.4s
             011 01110 01 1 m  011001 n d   UMAX Vd.8h,  Vn.8h,  Vm.8h
@@ -4172,6 +4237,19 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
                break;
             case ARM64vecb_FDIV32x4:
                *p++ = X_3_8_5_6_5_5(X011, X01110001, vM, X111111, vN, vD);
+               break;
+
+            case ARM64vecb_FMAX64x2:
+               *p++ = X_3_8_5_6_5_5(X010, X01110011, vM, X111101, vN, vD);
+               break;
+            case ARM64vecb_FMAX32x4:
+               *p++ = X_3_8_5_6_5_5(X010, X01110001, vM, X111101, vN, vD);
+               break;
+            case ARM64vecb_FMIN64x2:
+               *p++ = X_3_8_5_6_5_5(X010, X01110111, vM, X111101, vN, vD);
+               break;
+            case ARM64vecb_FMIN32x4:
+               *p++ = X_3_8_5_6_5_5(X010, X01110101, vM, X111101, vN, vD);
                break;
 
             case ARM64vecb_UMAX32x4:
@@ -4925,41 +5003,38 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
       case ARM64in_VImmQ: {
          UInt   rQ  = qregNo(i->ARM64in.VImmQ.rQ);
          UShort imm = i->ARM64in.VImmQ.imm;
-         if (imm == 0x0000) {
-            /* movi rQ.4s, #0x0 == 0x4F 0x00 0x04 000 rQ */
-            vassert(rQ < 32);
-            *p++ = 0x4F000400 | rQ;
-            goto done;
-         }
-         if (imm == 0x0001) {
-            /* movi rD, #0xFF == 0x2F 0x00 0xE4 001 rD */
-            vassert(rQ < 32);
-            *p++ = 0x2F00E420 | rQ;
-            goto done;
-         }
-         if (imm == 0x0003) {
-            /* movi rD, #0xFFFF == 0x2F 0x00 0xE4 011 rD */
-            vassert(rQ < 32);
-            *p++ = 0x2F00E460 | rQ;
-            goto done;
-         }
-         if (imm == 0x000F) {
-            /* movi rD, #0xFFFFFFFF == 0x2F 0x00 0xE5 111 rD */
-            vassert(rQ < 32);
-            *p++ = 0x2F00E5E0 | rQ;
-            goto done;
-         }
-         if (imm == 0x00FF) {
-            /* movi rD, #0xFFFFFFFFFFFFFFFF == 0x2F 0x07 0xE7 111 rD */
-            vassert(rQ < 32);
-            *p++ = 0x2F07E7E0 | rQ;
-            goto done;
-         }
-         if (imm == 0xFFFF) {
-            /* mvni rQ.4s, #0x0 == 0x6F 0x00 0x04 000 rQ */
-            vassert(rQ < 32);
-            *p++ = 0x6F000400 | rQ;
-            goto done;
+         vassert(rQ < 32);
+         switch (imm) {
+            case 0x0000:
+               // movi rQ.4s, #0x0 == 0x4F 0x00 0x04 000 rQ
+               *p++ = 0x4F000400 | rQ;
+               goto done;
+            case 0x0001:
+               // movi rQ, #0xFF == 0x2F 0x00 0xE4 001 rQ
+               *p++ = 0x2F00E420 | rQ;
+               goto done;
+            case 0x0003:
+               // movi rQ, #0xFFFF == 0x2F 0x00 0xE4 011 rQ
+               *p++ = 0x2F00E460 | rQ;
+               goto done;
+            case 0x000F:
+               // movi rQ, #0xFFFFFFFF == 0x2F 0x00 0xE5 111 rQ
+               *p++ = 0x2F00E5E0 | rQ;
+               goto done;
+            case 0x003F:
+               // movi rQ, #0xFFFFFFFFFFFF == 0x2F 0x01 0xE7 111 rQ
+               *p++ = 0x2F01E7E0 | rQ;
+               goto done;
+            case 0x00FF:
+               // movi rQ, #0xFFFFFFFFFFFFFFFF == 0x2F 0x07 0xE7 111 rQ
+               *p++ = 0x2F07E7E0 | rQ;
+               goto done;
+            case 0xFFFF:
+               // mvni rQ.4s, #0x0 == 0x6F 0x00 0x04 000 rQ
+               *p++ = 0x6F000400 | rQ;
+               goto done;
+            default:
+               break;
          }
          goto bad; /* no other handled cases right now */
       }
@@ -5083,7 +5158,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
          /* nofail: */
 
          /* Crosscheck */
-         vassert(evCheckSzB_ARM64(endness_host) == (UChar*)p - (UChar*)p0);
+         vassert(evCheckSzB_ARM64() == (UChar*)p - (UChar*)p0);
          goto done;
       }
 
@@ -5127,7 +5202,7 @@ Int emit_ARM64Instr ( /*MB_MOD*/Bool* is_profInc,
 /* How big is an event check?  See case for ARM64in_EvCheck in
    emit_ARM64Instr just above.  That crosschecks what this returns, so
    we can tell if we're inconsistent. */
-Int evCheckSzB_ARM64 ( VexEndness endness_host )
+Int evCheckSzB_ARM64 (void)
 {
    return 24;
 }
@@ -5155,7 +5230,7 @@ VexInvalRange chainXDirect_ARM64 ( VexEndness endness_host,
    UInt* p = (UInt*)place_to_chain;
    vassert(0 == (3 & (HWord)p));
    vassert(is_imm64_to_iregNo_EXACTLY4(
-              p, /*x*/9, Ptr_to_ULong(disp_cp_chain_me_EXPECTED)));
+           p, /*x*/9, (Addr)disp_cp_chain_me_EXPECTED));
    vassert(p[4] == 0xD63F0120);
 
    /* And what we want to change it to is:
@@ -5171,7 +5246,7 @@ VexInvalRange chainXDirect_ARM64 ( VexEndness endness_host,
       The replacement has the same length as the original.
    */
    (void)imm64_to_iregNo_EXACTLY4(
-            p, /*x*/9, Ptr_to_ULong(place_to_jump_to));
+               p, /*x*/9, (Addr)place_to_jump_to);
    p[4] = 0xD61F0120;
 
    VexInvalRange vir = {(HWord)p, 20};
@@ -5201,7 +5276,7 @@ VexInvalRange unchainXDirect_ARM64 ( VexEndness endness_host,
    UInt* p = (UInt*)place_to_unchain;
    vassert(0 == (3 & (HWord)p));
    vassert(is_imm64_to_iregNo_EXACTLY4(
-              p, /*x*/9, Ptr_to_ULong(place_to_jump_to_EXPECTED)));
+              p, /*x*/9, (Addr)place_to_jump_to_EXPECTED));
    vassert(p[4] == 0xD61F0120);
 
    /* And what we want to change it to is:
@@ -5215,7 +5290,7 @@ VexInvalRange unchainXDirect_ARM64 ( VexEndness endness_host,
         D6 3F 01 20
    */
    (void)imm64_to_iregNo_EXACTLY4(
-            p, /*x*/9, Ptr_to_ULong(disp_cp_chain_me));
+            p, /*x*/9, (Addr)disp_cp_chain_me);
    p[4] = 0xD63F0120;
 
    VexInvalRange vir = {(HWord)p, 20};
@@ -5238,7 +5313,7 @@ VexInvalRange patchProfInc_ARM64 ( VexEndness endness_host,
    vassert(p[5] == 0x91000508);
    vassert(p[6] == 0xF9000128);
    imm64_to_iregNo_EXACTLY4(p, /*x*/9, 
-                            Ptr_to_ULong(location_of_counter));
+                            (Addr)location_of_counter);
    VexInvalRange vir = {(HWord)p, 4*4};
    return vir;
 }

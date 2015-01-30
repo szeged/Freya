@@ -176,7 +176,7 @@ typedef
    }
    Cursor;
 
-static inline Bool is_sane_Cursor ( Cursor* c ) {
+static inline Bool is_sane_Cursor ( const Cursor* c ) {
    if (!c)                return False;
    if (!c->barf)          return False;
    if (!c->barfstr)       return False;
@@ -204,12 +204,12 @@ static void init_Cursor ( /*OUT*/Cursor* c,
    vg_assert(is_sane_Cursor(c));
 }
 
-static Bool is_at_end_Cursor ( Cursor* c ) {
+static Bool is_at_end_Cursor ( const Cursor* c ) {
    vg_assert(is_sane_Cursor(c));
    return c->sli_next >= c->sli.ioff + c->sli.szB;
 }
 
-static inline ULong get_position_of_Cursor ( Cursor* c ) {
+static inline ULong get_position_of_Cursor ( const Cursor* c ) {
    vg_assert(is_sane_Cursor(c));
    return c->sli_next - c->sli.ioff;
 }
@@ -222,7 +222,7 @@ static inline void advance_position_of_Cursor ( Cursor* c, ULong delta ) {
    vg_assert(is_sane_Cursor(c));
 }
 
-static /*signed*/Long get_remaining_length_Cursor ( Cursor* c ) {
+static /*signed*/Long get_remaining_length_Cursor ( const Cursor* c ) {
    vg_assert(is_sane_Cursor(c));
    return c->sli.ioff + c->sli.szB - c->sli_next;
 }
@@ -232,7 +232,7 @@ static /*signed*/Long get_remaining_length_Cursor ( Cursor* c ) {
 //   return &c->region_start_img[ c->region_next ];
 //}
 
-static DiCursor get_DiCursor_from_Cursor ( Cursor* c ) {
+static DiCursor get_DiCursor_from_Cursor ( const Cursor* c ) {
    return mk_DiCursor(c->sli.img, c->sli_next);
 }
 
@@ -385,11 +385,11 @@ static ULong get_Initial_Length ( /*OUT*/Bool* is64,
 typedef
    struct _name_form {
       ULong at_name;  // Dwarf Attribute name
-      ULong at_form;  // Dward Attribute form
+      ULong at_form;  // Dwarf Attribute form
       UInt  skip_szB; // Nr of bytes skippable from here ...
       UInt  next_nf;  // ... to reach this attr/form index in the g_abbv.nf
    } name_form;
-/* skip_szB and n_nf are used to optimise the skipping of uninteresting DIEs.
+/* skip_szB and next_nf are used to optimise the skipping of uninteresting DIEs.
    Each name_form maintains how many (fixed) nr of bytes can be skipped from
    the beginning of this form till the next attr/form to look at.
    The next form to look can be:
@@ -467,7 +467,7 @@ typedef
       /* --- Needed so we can add stuff to the string table. --- */
       struct _DebugInfo* di;
       /* --- a hash table of g_abbv (i.e. parsed abbreviations) --- */
-      VgHashTable ht_abbvs;
+      VgHashTable *ht_abbvs;
 
       /* True if this came from .debug_types; otherwise it came from
          .debug_info.  */
@@ -480,7 +480,7 @@ typedef
 
       /* Signatured type hash; computed once and then shared by all
          CUs.  */
-      VgHashTable signature_types;
+      VgHashTable *signature_types;
 
       /* True if this came from alternate .debug_info; otherwise
          it came from normal .debug_info or .debug_types.  */
@@ -495,7 +495,7 @@ typedef
    a contiguous whole, so that DIEs coming from .debug_types are numbered
    starting at the end of .debug_info and DIEs coming from alternate
    .debug_info are numbered starting at the end of .debug_types.  */
-static UWord cook_die( CUConst* cc, UWord die )
+static UWord cook_die( const CUConst* cc, UWord die )
 {
    if (cc->is_type_unit)
       die += cc->types_cuOff_bias;
@@ -508,7 +508,7 @@ static UWord cook_die( CUConst* cc, UWord die )
    DW_FORM_ref_sig8 reference are already cooked.  Also, handle
    DW_FORM_GNU_ref_alt from within primary .debug_info or .debug_types
    as reference to alternate .debug_info.  */
-static UWord cook_die_using_form( CUConst *cc, UWord die, DW_FORM form)
+static UWord cook_die_using_form( const CUConst *cc, UWord die, DW_FORM form)
 {
    if (form == DW_FORM_ref_sig8)
       return die;
@@ -520,7 +520,7 @@ static UWord cook_die_using_form( CUConst *cc, UWord die, DW_FORM form)
 /* Return the uncooked offset of DIE and set *TYPE_FLAG to true if the DIE
    came from the .debug_types section and *ALT_FLAG to true if the DIE
    came from alternate .debug_info section.  */
-static UWord uncook_die( CUConst *cc, UWord die, /*OUT*/Bool *type_flag,
+static UWord uncook_die( const CUConst *cc, UWord die, /*OUT*/Bool *type_flag,
                          Bool *alt_flag )
 {
    *alt_flag = False;
@@ -585,7 +585,7 @@ static UWord uncook_die( CUConst *cc, UWord die, /*OUT*/Bool *type_flag,
 
 
 /* Apply a text bias to a GX. */
-static void bias_GX ( /*MOD*/GExpr* gx, struct _DebugInfo* di )
+static void bias_GX ( /*MOD*/GExpr* gx, const DebugInfo* di )
 {
    UShort nbytes;
    UChar* p = &gx->payload[0];
@@ -651,7 +651,7 @@ static GExpr* make_singleton_GX ( DiCursor block, ULong nbytes )
 }
 
 __attribute__((noinline))
-static GExpr* make_general_GX ( CUConst* cc,
+static GExpr* make_general_GX ( const CUConst* cc,
                                 Bool     td3,
                                 ULong    debug_loc_offset,
                                 Addr     svma_of_referencing_CU )
@@ -774,7 +774,8 @@ typedef
 
 /* Generate an arbitrary structural total ordering on
    XArray* of AddrRange. */
-static Word cmp__XArrays_of_AddrRange ( XArray* rngs1, XArray* rngs2 )
+static Word cmp__XArrays_of_AddrRange ( const XArray* rngs1,
+                                        const XArray* rngs2 )
 {
    Word n1, n2, i;
    vg_assert(rngs1 && rngs2);
@@ -830,10 +831,10 @@ static XArray* unitary_range_list ( Addr aMin, Addr aMax )
    caller must deallocate it. */
 __attribute__((noinline))
 static XArray* /* of AddrRange */
-       get_range_list ( CUConst* cc,
-                        Bool     td3,
-                        UWord    debug_ranges_offset,
-                        Addr     svma_of_referencing_CU )
+get_range_list ( const CUConst* cc,
+                 Bool     td3,
+                 UWord    debug_ranges_offset,
+                 Addr     svma_of_referencing_CU )
 {
    Addr      base;
    Cursor    ranges;
@@ -885,7 +886,7 @@ static XArray* /* of AddrRange */
 }
 
 #define VARSZ_FORM 0xffffffff
-static UInt get_Form_szB (CUConst* cc, DW_FORM form );
+static UInt get_Form_szB (const CUConst* cc, DW_FORM form );
 
 /* Initialises the hash table of abbreviations.
    We do a single scan of the abbv slice to parse and
@@ -979,7 +980,7 @@ static void init_ht_abbvs (CUConst* cc,
    #undef SZ_G_ABBV
 }
 
-static g_abbv* get_abbv (CUConst* cc, ULong abbv_code)
+static g_abbv* get_abbv (const CUConst* cc, ULong abbv_code)
 {
    g_abbv *abbv;
 
@@ -1081,7 +1082,7 @@ typedef
    D3SignatureType;
 
 /* Record a signatured type in the hash table.  */
-static void record_signatured_type ( VgHashTable tab,
+static void record_signatured_type ( VgHashTable *tab,
                                      ULong type_signature,
                                      UWord die )
 {
@@ -1096,7 +1097,7 @@ static void record_signatured_type ( VgHashTable tab,
 /* Given a type signature hash table and a type signature, return the
    cooked DIE offset of the type.  If the type cannot be found, call
    BARF.  */
-static UWord lookup_signatured_type ( VgHashTable tab,
+static UWord lookup_signatured_type ( const VgHashTable *tab,
                                       ULong type_signature,
                                       void (*barf)( const HChar* ) __attribute__((noreturn)) )
 {
@@ -1130,7 +1131,7 @@ typedef
    at a DiCursor.*/
 static
 void get_Form_contents ( /*OUT*/FormContents* cts,
-                         CUConst* cc, Cursor* c,
+                         const CUConst* cc, Cursor* c,
                          Bool td3, DW_FORM form )
 {
    VG_(bzero_inline)(cts, sizeof(*cts));
@@ -1461,7 +1462,7 @@ static inline UInt sizeof_Dwarfish_UWord (Bool is_dw64)
 /* If the form is a fixed length form, return the nr of bytes for this form.
    If the form is a variable length form, return VARSZ_FORM. */
 static
-UInt get_Form_szB (CUConst* cc, DW_FORM form )
+UInt get_Form_szB (const CUConst* cc, DW_FORM form )
 {
    // !!! keep switch in sync with get_Form_contents : the nr of bytes
    // read from a cursor by get_Form_contents must be returned by
@@ -1536,8 +1537,8 @@ UInt get_Form_szB (CUConst* cc, DW_FORM form )
 static
 void skip_DIE (UWord  *sibling,
                Cursor* c_die,
-               g_abbv *abbv,
-               CUConst* cc)
+               const g_abbv *abbv,
+               const CUConst* cc)
 {
    UInt nf_i;
    FormContents cts;
@@ -1571,7 +1572,7 @@ void skip_DIE (UWord  *sibling,
 
 typedef
    struct _TempVar {
-      HChar*  name; /* in DebugInfo's .strpool */
+      const HChar*  name; /* in DebugInfo's .strpool */
       /* Represent ranges economically.  nRanges is the number of
          ranges.  Cases:
          0: .rngOneMin .rngOneMax .manyRanges are all zero
@@ -1604,8 +1605,6 @@ typedef
    }
    TempVar;
 
-#define N_D3_VAR_STACK 48
-
 typedef
    struct {
       /* Contains the range stack: a stack of address ranges, one
@@ -1625,18 +1624,42 @@ typedef
       */
       Int     sp; /* [sp] is innermost active entry; sp==-1 for empty
                      stack */
-      XArray* ranges[N_D3_VAR_STACK]; /* XArray of AddrRange */
-      Int     level[N_D3_VAR_STACK];  /* D3 DIE levels */
-      Bool    isFunc[N_D3_VAR_STACK]; /* from DW_AT_subprogram? */
-      GExpr*  fbGX[N_D3_VAR_STACK];   /* if isFunc, contains the FB
-                                         expr, else NULL */
+      Int     stack_size;
+      XArray **ranges; /* XArray of AddrRange */
+      Int     *level;  /* D3 DIE levels */
+      Bool    *isFunc; /* from DW_AT_subprogram? */
+      GExpr  **fbGX;   /* if isFunc, contains the FB expr, else NULL */
       /* The fndn_ix file name/dirname table.  Is a mapping from dwarf
          integer index to the index in di->fndnpool. */
       XArray* /* of UInt* */ fndn_ix_Table;
    }
    D3VarParser;
 
-static void varstack_show ( D3VarParser* parser, const HChar* str ) {
+/* Completely initialise a variable parser object */
+static void
+var_parser_init ( D3VarParser *parser )
+{
+   parser->sp = -1;
+   parser->stack_size = 0;
+   parser->ranges = NULL;
+   parser->level  = NULL;
+   parser->isFunc = NULL;
+   parser->fbGX = NULL;
+   parser->fndn_ix_Table = NULL;
+}
+
+/* Release any memory hanging off a variable parser object */
+static void
+var_parser_release ( D3VarParser *parser )
+{
+   ML_(dinfo_free)( parser->ranges );
+   ML_(dinfo_free)( parser->level );
+   ML_(dinfo_free)( parser->isFunc );
+   ML_(dinfo_free)( parser->fbGX );
+}
+
+static void varstack_show ( const D3VarParser* parser, const HChar* str )
+{
    Word i, j;
    VG_(printf)("  varstack (%s) {\n", str);
    for (i = 0; i <= parser->sp; i++) {
@@ -1668,7 +1691,7 @@ static
 void varstack_preen ( D3VarParser* parser, Bool td3, Int level )
 {
    Bool changed = False;
-   vg_assert(parser->sp < N_D3_VAR_STACK);
+   vg_assert(parser->sp < parser->stack_size);
    while (True) {
       vg_assert(parser->sp >= -1);
       if (parser->sp == -1) break;
@@ -1679,10 +1702,6 @@ void varstack_preen ( D3VarParser* parser, Bool td3, Int level )
       /* Who allocated this xa?  get_range_list() or
          unitary_range_list(). */
       VG_(deleteXA)( parser->ranges[parser->sp] );
-      parser->ranges[parser->sp] = NULL;
-      parser->level[parser->sp]  = 0;
-      parser->isFunc[parser->sp] = False;
-      parser->fbGX[parser->sp]   = NULL;
       parser->sp--;
       changed = True;
    }
@@ -1690,7 +1709,7 @@ void varstack_preen ( D3VarParser* parser, Bool td3, Int level )
       varstack_show( parser, "after preen" );
 }
 
-static void varstack_push ( CUConst* cc,
+static void varstack_push ( const CUConst* cc,
                             D3VarParser* parser,
                             Bool td3,
                             XArray* ranges, Int level,
@@ -1704,17 +1723,25 @@ static void varstack_push ( CUConst* cc,
    varstack_preen(parser, /*td3*/False, level-1);
 
    vg_assert(parser->sp >= -1);
-   vg_assert(parser->sp < N_D3_VAR_STACK);
-   if (parser->sp == N_D3_VAR_STACK-1)
-      cc->barf("varstack_push: N_D3_VAR_STACK is too low; "
-               "increase and recompile");
+   vg_assert(parser->sp < parser->stack_size);
+   if (parser->sp == parser->stack_size - 1) {
+      parser->stack_size += 48;
+      parser->ranges =
+         ML_(dinfo_realloc)("di.readdwarf3.varpush.1", parser->ranges,
+                            parser->stack_size * sizeof parser->ranges[0]);
+      parser->level =
+         ML_(dinfo_realloc)("di.readdwarf3.varpush.2", parser->level,
+                            parser->stack_size * sizeof parser->level[0]);
+      parser->isFunc =
+         ML_(dinfo_realloc)("di.readdwarf3.varpush.3", parser->isFunc,
+                            parser->stack_size * sizeof parser->isFunc[0]);
+      parser->fbGX =
+         ML_(dinfo_realloc)("di.readdwarf3.varpush.4", parser->fbGX,
+                            parser->stack_size * sizeof parser->fbGX[0]);
+   }
    if (parser->sp >= 0)
       vg_assert(parser->level[parser->sp] < level);
    parser->sp++;
-   vg_assert(parser->ranges[parser->sp] == NULL);
-   vg_assert(parser->level[parser->sp]  == 0);
-   vg_assert(parser->isFunc[parser->sp] == False);
-   vg_assert(parser->fbGX[parser->sp]   == NULL);
    vg_assert(ranges != NULL);
    if (!isFunc) vg_assert(fbGX == NULL);
    parser->ranges[parser->sp] = ranges;
@@ -1731,7 +1758,7 @@ static void varstack_push ( CUConst* cc,
    in both cases bundle the expression or location list into a
    so-called GExpr (guarded expression). */
 __attribute__((noinline))
-static GExpr* get_GX ( CUConst* cc, Bool td3, const FormContents* cts )
+static GExpr* get_GX ( const CUConst* cc, Bool td3, const FormContents* cts )
 {
    GExpr* gexpr = NULL;
    if (cts->szB < 0) {
@@ -1761,20 +1788,20 @@ static GExpr* get_GX ( CUConst* cc, Bool td3, const FormContents* cts )
    whatever that means, according to the DWARF3 spec.
    FIXME??? readdwarf3.c/readdwarf.c have a lot of duplicated code */
 static
-XArray* read_dirname_xa (struct _DebugInfo* di, const HChar *compdir,
+XArray* read_dirname_xa (DebugInfo* di, const HChar *compdir,
                          Cursor *c,
                          Bool td3 )
 {
    XArray*        dirname_xa;   /* xarray of HChar* dirname */
    const HChar*   dirname;
-   UInt           compdir_len = 0;
+   UInt           compdir_len;
 
    dirname_xa = VG_(newXA) (ML_(dinfo_zalloc), "di.rdxa.1", ML_(dinfo_free),
                             sizeof(HChar*) );
 
    if (compdir == NULL) {
       dirname = ".";
-      compdir_len = 0;
+      compdir_len = 1;
    } else {
       dirname = compdir;
       compdir_len = VG_(strlen)(compdir);
@@ -1786,32 +1813,31 @@ XArray* read_dirname_xa (struct _DebugInfo* di, const HChar *compdir,
 
    while (peek_UChar(c) != 0) {
 
-#     define NBUF 4096
-      static HChar buf[NBUF];
       DiCursor cur = get_AsciiZ(c);
       HChar* data_str = ML_(cur_read_strdup)( cur, "dirname_xa.1" );
       TRACE_D3("  %s\n", data_str);
 
       /* If data_str[0] is '/', then 'data' is an absolute path and we
-         don't mess with it.  Otherwise, if we can, construct the
+         don't mess with it.  Otherwise, construct the
          path 'compdir' ++ "/" ++ 'data'. */
 
       if (data_str[0] != '/' 
           /* not an absolute path */
           && compdir
           /* actually got something sensible for compdir */
-          && compdir_len
-             + VG_(strlen)(data_str) + 5/*paranoia*/ < NBUF
-          /* it's short enough to concatenate */) 
+          && compdir_len)
       {
-         buf[0] = 0;
-         VG_(strcat)(buf, compdir);
+         SizeT  len = compdir_len + 1 + VG_(strlen)(data_str);
+         HChar *buf = ML_(dinfo_zalloc)("dirname_xa.2", len + 1);
+
+         VG_(strcpy)(buf, compdir);
          VG_(strcat)(buf, "/");
          VG_(strcat)(buf, data_str);
-         vg_assert(VG_(strlen)(buf) < NBUF);
-         dirname = ML_(addStr)(di,buf,-1);
+
+         dirname = ML_(addStr)(di, buf, len);
          VG_(addToXA) (dirname_xa, &dirname);
          if (0) VG_(printf)("rel path  %s\n", buf);
+         ML_(dinfo_free)(buf);
       } else {
          /* just use 'data'. */
          dirname = ML_(addStr)(di,data_str,-1);
@@ -1820,8 +1846,6 @@ XArray* read_dirname_xa (struct _DebugInfo* di, const HChar *compdir,
       }
 
       ML_(dinfo_free)(data_str);
-
-#     undef NBUF
    }
 
    TRACE_D3 ("\n");
@@ -1838,8 +1862,8 @@ XArray* read_dirname_xa (struct _DebugInfo* di, const HChar *compdir,
 
 static 
 void read_filename_table( /*MOD*/XArray* /* of UInt* */ fndn_ix_Table,
-                          HChar* compdir,
-                          CUConst* cc, ULong debug_line_offset,
+                          const HChar* compdir,
+                          const CUConst* cc, ULong debug_line_offset,
                           Bool td3 )
 {
    Bool   is_dw64;
@@ -1847,10 +1871,10 @@ void read_filename_table( /*MOD*/XArray* /* of UInt* */ fndn_ix_Table,
    Word   i;
    UShort version;
    UChar  opcode_base;
-   HChar* str;
+   const HChar* str;
    XArray* dirname_xa;   /* xarray of HChar* dirname */
    ULong  dir_xa_ix;     /* Index in dirname_xa, as read from dwarf info. */
-   HChar* dirname;
+   const HChar* dirname;
    UInt   fndn_ix;
 
    vg_assert(fndn_ix_Table && cc && cc->barf);
@@ -1962,8 +1986,8 @@ static void trace_DIE(
    UWord posn,
    Int level,
    UWord saved_die_c_offset,
-   g_abbv *abbv,
-   CUConst* cc)
+   const g_abbv *abbv,
+   const CUConst* cc)
 {
    Cursor c;
    FormContents cts;
@@ -1991,7 +2015,7 @@ static void trace_DIE(
       DW_FORM form = (DW_FORM)abbv->nf[nf_i].at_form;
       nf_i++;
       if (attr == 0 && form == 0) break;
-      VG_(printf)("     %18s: ", ML_(pp_DW_AT)(attr));
+      VG_(printf)("     %-18s: ", ML_(pp_DW_AT)(attr));
       /* Get the form contents, so as to print them */
       get_Form_contents( &cts, cc, &c, True, form );
       if (attr == DW_AT_sibling && cts.szB > 0) {
@@ -2020,8 +2044,8 @@ static void dump_bad_die_and_barf(
    Int level,
    Cursor* c_die,
    UWord saved_die_c_offset,
-   g_abbv *abbv,
-   CUConst* cc)
+   const g_abbv *abbv,
+   const CUConst* cc)
 {
    trace_DIE (dtag, posn, level, saved_die_c_offset, abbv, cc);
    VG_(printf)("%s:\n", whichparser);
@@ -2045,7 +2069,7 @@ static void parse_var_DIE (
    UWord posn,
    Int level,
    Cursor* c_die,
-   g_abbv *abbv,
+   const g_abbv *abbv,
    CUConst* cc,
    Bool td3
 )
@@ -2067,7 +2091,7 @@ static void parse_var_DIE (
       Addr ip_lo    = 0;
       Addr ip_hi1   = 0;
       Addr rangeoff = 0;
-      HChar *compdir = NULL;
+      const HChar *compdir = NULL;
       nf_i = 0;
       while (True) {
          DW_AT   attr = (DW_AT)  abbv->nf[nf_i].at_name;
@@ -2248,7 +2272,7 @@ static void parse_var_DIE (
    }
 
    if (dtag == DW_TAG_variable || dtag == DW_TAG_formal_parameter) {
-      HChar* name        = NULL;
+      const  HChar* name = NULL;
       UWord  typeR       = D3_INVALID_CUOFF;
       Bool   global      = False;
       GExpr* gexpr       = NULL;
@@ -2324,7 +2348,7 @@ static void parse_var_DIE (
             stack. */
          GExpr*   fbGX = NULL;
          Word     i, nRanges;
-         XArray*  /* of AddrRange */ xa;
+         const XArray*  /* of AddrRange */ xa;
          TempVar* tv;
          /* Stack can't be empty; we put a dummy entry on it for the
             entire address range before starting with the DIEs for
@@ -2549,15 +2573,15 @@ typedef
    table is kept, while we must handle all abbreviations in all CUs
    referenced by an absori (being a reference to an alt CU, or a previous
    or following CU). */
-static HChar* get_inlFnName (Int absori, CUConst* cc, Bool td3)
+static const HChar* get_inlFnName (Int absori, const CUConst* cc, Bool td3)
 {
    Cursor c;
-   g_abbv *abbv;
+   const g_abbv *abbv;
    ULong  atag, abbv_code;
    UInt   has_children;
    UWord  posn;
    Bool type_flag, alt_flag;
-   HChar *ret = NULL;
+   const HChar *ret = NULL;
    FormContents cts;
    UInt nf_i;
 
@@ -2660,7 +2684,7 @@ static Bool parse_inl_DIE (
    UWord posn,
    Int level,
    Cursor* c_die,
-   g_abbv *abbv,
+   const g_abbv *abbv,
    CUConst* cc,
    Bool td3
 )
@@ -2675,7 +2699,7 @@ static Bool parse_inl_DIE (
    if (dtag == DW_TAG_compile_unit || dtag == DW_TAG_partial_unit) {
       Bool have_lo    = False;
       Addr ip_lo    = 0;
-      HChar *compdir = NULL;
+      const HChar *compdir = NULL;
 
       nf_i = 0;
       while (True) {
@@ -2789,7 +2813,8 @@ static Bool parse_inl_DIE (
          /* This inlined call is several address ranges. */
          XArray *ranges;
          Word j;
-         HChar *inlfnname = get_inlFnName (inlinedfn_abstract_origin, cc, td3);
+         const HChar *inlfnname =
+            get_inlFnName (inlinedfn_abstract_origin, cc, td3);
 
          /* Ranges are biased for the inline info using the same logic
             as what is used for biasing ranges for the var info, for which
@@ -2836,8 +2861,6 @@ static Bool parse_inl_DIE (
 /*---                                                      ---*/
 /*------------------------------------------------------------*/
 
-#define N_D3_TYPE_STACK 16
-
 typedef
    struct {
       /* What source language?  'A'=Ada83/95,
@@ -2849,18 +2872,38 @@ typedef
       /* A stack of types which are currently under construction */
       Int   sp; /* [sp] is innermost active entry; sp==-1 for empty
                    stack */
+      Int   stack_size;
       /* Note that the TyEnts in qparentE are temporary copies of the
          ones accumulating in the main tyent array.  So it is not safe
          to free up anything on them when popping them off the stack
          (iow, it isn't safe to use TyEnt__make_EMPTY on them).  Just
          memset them to zero when done. */
-      TyEnt qparentE[N_D3_TYPE_STACK]; /* parent TyEnts */
-      Int   qlevel[N_D3_TYPE_STACK];
-
+      TyEnt *qparentE; /* parent TyEnts */
+      Int   *qlevel;
    }
    D3TypeParser;
 
-static void typestack_show ( D3TypeParser* parser, const HChar* str ) {
+/* Completely initialise a type parser object */
+static void
+type_parser_init ( D3TypeParser *parser )
+{
+   parser->sp = -1;
+   parser->language = '?';
+   parser->stack_size = 0;
+   parser->qparentE = NULL;
+   parser->qlevel   = NULL;
+}
+
+/* Release any memory hanging off a type parser object */
+static void
+type_parser_release ( D3TypeParser *parser )
+{
+   ML_(dinfo_free)( parser->qparentE );
+   ML_(dinfo_free)( parser->qlevel );
+}
+
+static void typestack_show ( const D3TypeParser* parser, const HChar* str )
+{
    Word i;
    VG_(printf)("  typestack (%s) {\n", str);
    for (i = 0; i <= parser->sp; i++) {
@@ -2876,7 +2919,7 @@ static
 void typestack_preen ( D3TypeParser* parser, Bool td3, Int level )
 {
    Bool changed = False;
-   vg_assert(parser->sp < N_D3_TYPE_STACK);
+   vg_assert(parser->sp < parser->stack_size);
    while (True) {
       vg_assert(parser->sp >= -1);
       if (parser->sp == -1) break;
@@ -2884,10 +2927,6 @@ void typestack_preen ( D3TypeParser* parser, Bool td3, Int level )
       if (0) 
          TRACE_D3("BBBBAAAA typestack_pop [newsp=%d]\n", parser->sp-1);
       vg_assert(ML_(TyEnt__is_type)(&parser->qparentE[parser->sp]));
-      VG_(memset)(&parser->qparentE[parser->sp], 0, sizeof(TyEnt));
-      parser->qparentE[parser->sp].cuOff = D3_INVALID_CUOFF;
-      parser->qparentE[parser->sp].tag = Te_EMPTY;
-      parser->qlevel[parser->sp] = 0;
       parser->sp--;
       changed = True;
    }
@@ -2895,15 +2934,17 @@ void typestack_preen ( D3TypeParser* parser, Bool td3, Int level )
       typestack_show( parser, "after preen" );
 }
 
-static Bool typestack_is_empty ( D3TypeParser* parser ) {
-   vg_assert(parser->sp >= -1 && parser->sp < N_D3_TYPE_STACK);
+static Bool typestack_is_empty ( const D3TypeParser* parser )
+{
+   vg_assert(parser->sp >= -1 && parser->sp < parser->stack_size);
    return parser->sp == -1;
 }
 
-static void typestack_push ( CUConst* cc,
+static void typestack_push ( const CUConst* cc,
                              D3TypeParser* parser,
                              Bool td3,
-                             TyEnt* parentE, Int level ) {
+                             const TyEnt* parentE, Int level )
+{
    if (0)
    TRACE_D3("BBBBAAAA typestack_push[newsp=%d]: %d  %05lx\n",
             parser->sp+1, level, parentE->cuOff);
@@ -2913,15 +2954,19 @@ static void typestack_push ( CUConst* cc,
    typestack_preen(parser, /*td3*/False, level-1);
 
    vg_assert(parser->sp >= -1);
-   vg_assert(parser->sp < N_D3_TYPE_STACK);
-   if (parser->sp == N_D3_TYPE_STACK-1)
-      cc->barf("typestack_push: N_D3_TYPE_STACK is too low; "
-               "increase and recompile");
+   vg_assert(parser->sp < parser->stack_size);
+   if (parser->sp == parser->stack_size - 1) {
+      parser->stack_size += 16;
+      parser->qparentE =
+         ML_(dinfo_realloc)("di.readdwarf3.typush.1", parser->qparentE,
+                            parser->stack_size * sizeof parser->qparentE[0]);
+      parser->qlevel =
+         ML_(dinfo_realloc)("di.readdwarf3.typush.2", parser->qlevel,
+                            parser->stack_size * sizeof parser->qlevel[0]);
+   }
    if (parser->sp >= 0)
       vg_assert(parser->qlevel[parser->sp] < level);
    parser->sp++;
-   vg_assert(parser->qparentE[parser->sp].tag == Te_EMPTY);
-   vg_assert(parser->qlevel[parser->sp]  == 0);
    vg_assert(parentE);
    vg_assert(ML_(TyEnt__is_type)(parentE));
    vg_assert(parentE->cuOff != D3_INVALID_CUOFF);
@@ -2932,7 +2977,7 @@ static void typestack_push ( CUConst* cc,
 }
 
 /* True if the subrange type being parsed gives the bounds of an array. */
-static Bool subrange_type_denotes_array_bounds ( D3TypeParser* parser,
+static Bool subrange_type_denotes_array_bounds ( const D3TypeParser* parser,
                                                  DW_TAG dtag ) {
    vg_assert(dtag == DW_TAG_subrange_type);
    /* For most languages, a subrange_type dtag always gives the 
@@ -2982,8 +3027,8 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
                              UWord posn,
                              Int level,
                              Cursor* c_die,
-                             g_abbv *abbv,
-                             CUConst* cc,
+                             const g_abbv *abbv,
+                             const CUConst* cc,
                              Bool td3 )
 {
    FormContents cts;
@@ -3026,7 +3071,8 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
             case DW_LANG_C89: case DW_LANG_C:
             case DW_LANG_C_plus_plus: case DW_LANG_ObjC:
             case DW_LANG_ObjC_plus_plus: case DW_LANG_UPC:
-            case DW_LANG_Upc: case DW_LANG_C99:
+            case DW_LANG_Upc: case DW_LANG_C99: case DW_LANG_C11:
+            case DW_LANG_C_plus_plus_11: case DW_LANG_C_plus_plus_14:
                parser->language = 'C'; break;
             case DW_LANG_Fortran77: case DW_LANG_Fortran90:
             case DW_LANG_Fortran95:
@@ -3037,7 +3083,7 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
             case DW_LANG_Cobol85: case DW_LANG_Pascal83:
             case DW_LANG_Modula2: case DW_LANG_Java:
             case DW_LANG_PLI:
-            case DW_LANG_D: case DW_LANG_Python:
+            case DW_LANG_D: case DW_LANG_Python: case DW_LANG_Go:
             case DW_LANG_Mips_Assembler:
                parser->language = '?'; break;
             default:
@@ -3776,7 +3822,7 @@ static void parse_type_DIE ( /*MOD*/XArray* /* of TyEnt */ tyents,
 /*------------------------------------------------------------*/
 
 static UWord chase_cuOff ( Bool* changed,
-                           XArray* /* of TyEnt */ ents,
+                           const XArray* /* of TyEnt */ ents,
                            TyEntIndexCache* ents_cache,
                            UWord cuOff )
 {
@@ -3802,7 +3848,7 @@ static UWord chase_cuOff ( Bool* changed,
 
 static
 void chase_cuOffs_in_XArray ( Bool* changed,
-                              XArray* /* of TyEnt */ ents,
+                              const XArray* /* of TyEnt */ ents,
                               TyEntIndexCache* ents_cache,
                               /*MOD*/XArray* /* of UWord */ cuOffs )
 {
@@ -3818,7 +3864,7 @@ void chase_cuOffs_in_XArray ( Bool* changed,
    *changed = b2;
 }
 
-static Bool TyEnt__subst_R_fields ( XArray* /* of TyEnt */ ents,
+static Bool TyEnt__subst_R_fields ( const XArray* /* of TyEnt */ ents,
                                     TyEntIndexCache* ents_cache,
                                     /*MOD*/TyEnt* te )
 {
@@ -4115,7 +4161,7 @@ static void read_DIE (
    Cursor* c, Bool td3, CUConst* cc, Int level
 )
 {
-   g_abbv *abbv;
+   const g_abbv *abbv;
    ULong  atag, abbv_code;
    UWord  posn;
    UInt   has_children;
@@ -4249,7 +4295,7 @@ static void read_DIE (
 
 }
 
-static void trace_debug_loc (struct _DebugInfo* di,
+static void trace_debug_loc (const DebugInfo* di,
                              __attribute__((noreturn)) void (*barf)( const HChar* ),
                              DiSlice escn_debug_loc)
 {
@@ -4316,7 +4362,7 @@ static void trace_debug_loc (struct _DebugInfo* di,
 #endif
 }
 
-static void trace_debug_ranges (struct _DebugInfo* di,
+static void trace_debug_ranges (const DebugInfo* di,
                                 __attribute__((noreturn)) void (*barf)( const HChar* ),
                                 DiSlice escn_debug_ranges)
 {
@@ -4370,7 +4416,7 @@ static void trace_debug_ranges (struct _DebugInfo* di,
    }
 }
 
-static void trace_debug_abbrev (struct _DebugInfo* di,
+static void trace_debug_abbrev (const DebugInfo* di,
                                 __attribute__((noreturn)) void (*barf)( const HChar* ),
                                 DiSlice escn_debug_abbv)
 {
@@ -4402,7 +4448,7 @@ static void trace_debug_abbrev (struct _DebugInfo* di,
                ULong at_name = get_ULEB128( &abbv );
                ULong at_form = get_ULEB128( &abbv );
                if (at_name == 0 && at_form == 0) break;
-               TRACE_D3("    %18s %s\n", 
+               TRACE_D3("    %-18s %s\n", 
                         ML_(pp_DW_AT)(at_name), ML_(pp_DW_FORM)(at_form));
             }
          }
@@ -4412,7 +4458,7 @@ static void trace_debug_abbrev (struct _DebugInfo* di,
 
 static
 void new_dwarf3_reader_wrk ( 
-   struct _DebugInfo* di,
+   DebugInfo* di,
    __attribute__((noreturn)) void (*barf)( const HChar* ),
    DiSlice escn_debug_info,      DiSlice escn_debug_types,
    DiSlice escn_debug_abbv,      DiSlice escn_debug_line,
@@ -4439,7 +4485,7 @@ void new_dwarf3_reader_wrk (
    Bool td3 = di->trace_symtab;
    XArray* /* of TempVar* */ dioff_lookup_tab;
    Int pass;
-   VgHashTable signature_types = NULL;
+   VgHashTable *signature_types = NULL;
 
    /* Display/trace various information, if requested. */
    if (TD3) {
@@ -4451,9 +4497,7 @@ void new_dwarf3_reader_wrk (
 
    /* Zero out all parsers. Parsers will really be initialised
       according to VG_(clo_read_*_info). */
-   VG_(memset)( &varparser, 0, sizeof(varparser) );
    VG_(memset)( &inlparser, 0, sizeof(inlparser) );
-   VG_(memset)( &typarser, 0, sizeof(typarser) );
 
    if (VG_(clo_read_var_info)) {
       /* We'll park the harvested type information in here.  Also create
@@ -4506,14 +4550,9 @@ void new_dwarf3_reader_wrk (
          types.  It'll be discarded as soon as we've completed the CU,
          since the resulting information is tipped in to 'tyents' as it
          is generated. */
-      typarser.sp = -1;
-      typarser.language = '?';
-      for (i = 0; i < N_D3_TYPE_STACK; i++) {
-         typarser.qparentE[i].tag   = Te_EMPTY;
-         typarser.qparentE[i].cuOff = D3_INVALID_CUOFF;
-      }
+      type_parser_init(&typarser);
 
-      varparser.sp = -1;
+      var_parser_init(&varparser);
 
       signature_types = VG_(HT_construct) ("signature_types");
    }
@@ -4641,15 +4680,8 @@ void new_dwarf3_reader_wrk (
          if (VG_(clo_read_var_info)) {
             /* Check the varparser's stack is in a sane state. */
             vg_assert(varparser.sp == -1);
-            for (i = 0; i < N_D3_VAR_STACK; i++) {
-               vg_assert(varparser.ranges[i] == NULL);
-               vg_assert(varparser.level[i] == 0);
-            }
-            for (i = 0; i < N_D3_TYPE_STACK; i++) {
-               vg_assert(typarser.qparentE[i].cuOff == D3_INVALID_CUOFF);
-               vg_assert(typarser.qparentE[i].tag   == Te_EMPTY);
-               vg_assert(typarser.qlevel[i] == 0);
-            }
+            /* Check the typarser's stack is in a sane state. */
+            vg_assert(typarser.sp == -1);
          }
 
          cu_start_offset = get_position_of_Cursor( &info );
@@ -5110,6 +5142,12 @@ void new_dwarf3_reader_wrk (
       vg_assert(!di->admin_gexprs);
       di->admin_gexprs = gexprs;
    }
+
+   // Free up dynamically allocated memory
+   if (VG_(clo_read_var_info)) {
+      type_parser_release(&typarser);
+      var_parser_release(&varparser);
+   }
 }
 
 
@@ -5134,7 +5172,7 @@ static __attribute__((noreturn)) void barf ( const HChar* reason ) {
 
 void 
 ML_(new_dwarf3_reader) (
-   struct _DebugInfo* di,
+   DebugInfo* di,
    DiSlice escn_debug_info,      DiSlice escn_debug_types,
    DiSlice escn_debug_abbv,      DiSlice escn_debug_line,
    DiSlice escn_debug_str,       DiSlice escn_debug_ranges,

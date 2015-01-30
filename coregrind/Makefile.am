@@ -269,6 +269,7 @@ COREGRIND_SOURCES_COMMON = \
 	m_addrinfo.c \
 	m_cache.c \
 	m_commandline.c \
+	m_compiler.c \
 	m_clientstate.c \
 	m_cpuid.S \
 	m_deduppoolalloc.c \
@@ -641,7 +642,7 @@ if VGCONF_OS_IS_DARWIN
 
 BUILT_SOURCES += fixup_macho_loadcmds
 fixup_macho_loadcmds: fixup_macho_loadcmds.c
-	$(CC) -g -Wall -o $@ $<
+	$(CC) -I $(top_srcdir) -g -Wall -o $@ $<
 
 CLEANFILES += fixup_macho_loadcmds
 

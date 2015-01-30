@@ -1,5 +1,4 @@
 
-
 /*--------------------------------------------------------------------*/
 /*--- begin                                       guest_ppc_toIR.c ---*/
 /*--------------------------------------------------------------------*/
@@ -224,9 +223,8 @@ static Bool mode64 = False;
 // Given a pointer to a function as obtained by "& functionname" in C,
 // produce a pointer to the actual entry point for the function.  For
 // most platforms it's the identity function.  Unfortunately, on
-// ppc64-linux it isn't (sigh) and ditto for ppc32-aix5 and
-// ppc64-aix5.
-static void* fnptr_to_fnentry( VexAbiInfo* vbi, void* f )
+// ppc64-linux it isn't (sigh)
+static void* fnptr_to_fnentry( const VexAbiInfo* vbi, void* f )
 {
    if (vbi->host_ppc_calls_use_fndescrs) {
       /* f is a pointer to a 3-word function descriptor, of which the
@@ -1764,7 +1762,7 @@ static void gen_SIGBUS_if_misaligned ( IRTemp addr, UChar align )
    ppc32 doesn't have this "feature" (how fortunate for it).  nia is
    the address of the next instruction to be executed.
 */
-static void make_redzone_AbiHint ( VexAbiInfo* vbi, 
+static void make_redzone_AbiHint ( const VexAbiInfo* vbi, 
                                    IRTemp nia, const HChar* who )
 {
    Int szB = vbi->guest_stack_redzone_size;
@@ -5156,7 +5154,7 @@ static Bool dis_int_load ( UInt theInstr )
 /*
   Integer Store Instructions
 */
-static Bool dis_int_store ( UInt theInstr, VexAbiInfo* vbi )
+static Bool dis_int_store ( UInt theInstr, const VexAbiInfo* vbi )
 {
    /* D-Form, X-Form, DS-Form */
    UChar opc1    = ifieldOPC(theInstr);
@@ -5685,9 +5683,9 @@ static IRExpr* /* :: Ity_I32 */ branch_cond_ok( UInt BO, UInt BI )
   Integer Branch Instructions
 */
 static Bool dis_branch ( UInt theInstr, 
-                         VexAbiInfo* vbi,
+                         const VexAbiInfo* vbi,
                          /*OUT*/DisResult* dres,
-                         Bool (*resteerOkFn)(void*,Addr64),
+                         Bool (*resteerOkFn)(void*,Addr),
                          void* callback_opaque )
 {
    UChar opc1    = ifieldOPC(theInstr);
@@ -6191,7 +6189,7 @@ static Bool dis_trap ( UInt theInstr,
   System Linkage Instructions
 */
 static Bool dis_syslink ( UInt theInstr, 
-                          VexAbiInfo* abiinfo, DisResult* dres )
+                          const VexAbiInfo* abiinfo, DisResult* dres )
 {
    IRType ty = mode64 ? Ity_I64 : Ity_I32;
 
@@ -6203,7 +6201,7 @@ static Bool dis_syslink ( UInt theInstr,
    // sc  (System Call, PPC32 p504)
    DIP("sc\n");
 
-   /* Copy CIA into the IP_AT_SYSCALL pseudo-register, so that on AIX
+   /* Copy CIA into the IP_AT_SYSCALL pseudo-register, so that on Darwin
       Valgrind can back the guest up to this instruction if it needs
       to restart the syscall. */
    putGST( PPC_GST_IP_AT_SYSCALL, getGST( PPC_GST_CIA ) );
@@ -6879,7 +6877,7 @@ static Bool dis_int_ldst_rev ( UInt theInstr )
 /*
   Processor Control Instructions
 */
-static Bool dis_proc_ctl ( VexAbiInfo* vbi, UInt theInstr )
+static Bool dis_proc_ctl ( const VexAbiInfo* vbi, UInt theInstr )
 {
    UChar opc1     = ifieldOPC(theInstr);
    
@@ -7282,7 +7280,7 @@ static Bool dis_proc_ctl ( VexAbiInfo* vbi, UInt theInstr )
 */
 static Bool dis_cache_manage ( UInt         theInstr, 
                                DisResult*   dres,
-                               VexArchInfo* guest_archinfo )
+                               const VexArchInfo* guest_archinfo )
 {
    /* X-Form */
    UChar opc1    = ifieldOPC(theInstr);
@@ -15323,7 +15321,22 @@ dis_vx_load ( UInt theInstr )
 
       DIP("lxvw4x %d,r%u,r%u\n", (UInt)XT, rA_addr, rB_addr);
 
-      t0 = load( Ity_V128, mkexpr( EA ) );
+      /* The load will result in the data being in BE order. */
+      if (host_endness == VexEndnessLE) {
+         IRExpr *t0_BE;
+         IRTemp perm_LE = newTemp(Ity_V128);
+
+         t0_BE = load( Ity_V128, mkexpr( EA ) );
+
+         /*  Permute the data to LE format */
+         assign( perm_LE, binop( Iop_64HLtoV128, mkU64(0x0c0d0e0f08090a0bULL),
+                                 mkU64(0x0405060700010203ULL)));
+
+         t0 = binop( Iop_Perm8x16, t0_BE, mkexpr(perm_LE) );
+      } else {
+         t0 = load( Ity_V128, mkexpr( EA ) );
+      }
+
       putVSReg( XT, t0 );
       break;
    }
@@ -15565,7 +15578,7 @@ dis_vx_permute_misc( UInt theInstr, UInt opc2 )
 /*
   AltiVec Load Instructions
 */
-static Bool dis_av_load ( VexAbiInfo* vbi, UInt theInstr )
+static Bool dis_av_load ( const VexAbiInfo* vbi, UInt theInstr )
 {
    /* X-Form */
    UChar opc1     = ifieldOPC(theInstr);
@@ -18282,9 +18295,9 @@ static Bool dis_av_fp_convert ( UInt theInstr )
 }
 
 static Bool dis_transactional_memory ( UInt theInstr, UInt nextInstr,
-                                       VexAbiInfo* vbi,
+                                       const VexAbiInfo* vbi,
                                        /*OUT*/DisResult* dres,
-                                       Bool (*resteerOkFn)(void*,Addr64),
+                                       Bool (*resteerOkFn)(void*,Addr),
                                        void* callback_opaque )
 {
    UInt   opc2      = IFIELD( theInstr, 1, 10 );
@@ -18687,12 +18700,12 @@ static UInt get_VSX60_opc2(UInt opc2_full)
 
 static   
 DisResult disInstr_PPC_WRK ( 
-             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+             Bool         (*resteerOkFn) ( /*opaque*/void*, Addr ),
              Bool         resteerCisOk,
              void*        callback_opaque,
              Long         delta64,
-             VexArchInfo* archinfo,
-             VexAbiInfo*  abiinfo,
+             const VexArchInfo* archinfo,
+             const VexAbiInfo*  abiinfo,
              Bool         sigill_diag
           )
 {
@@ -18767,10 +18780,26 @@ DisResult disInstr_PPC_WRK (
       UInt word2 = mode64 ? 0x78006800 : 0x5400683E;
       UInt word3 = mode64 ? 0x7800E802 : 0x5400E83E;
       UInt word4 = mode64 ? 0x78009802 : 0x5400983E;
+      Bool is_special_preamble = False;
       if (getUIntPPCendianly(code+ 0) == word1 &&
           getUIntPPCendianly(code+ 4) == word2 &&
           getUIntPPCendianly(code+ 8) == word3 &&
           getUIntPPCendianly(code+12) == word4) {
+         is_special_preamble = True;
+      } else if (! mode64 &&
+                 getUIntPPCendianly(code+ 0) == 0x54001800 &&
+                 getUIntPPCendianly(code+ 4) == 0x54006800 &&
+                 getUIntPPCendianly(code+ 8) == 0x5400E800 &&
+                 getUIntPPCendianly(code+12) == 0x54009800) {
+         static Bool reported = False;
+         if (!reported) {
+            vex_printf("disInstr(ppc): old ppc32 instruction magic detected. Code might clobber r0.\n");
+            vex_printf("disInstr(ppc): source needs to be recompiled against latest valgrind.h.\n");
+            reported = True;
+         }
+         is_special_preamble = True;
+      }
+      if (is_special_preamble) {
          /* Got a "Special" instruction preamble.  Which one is it? */
          if (getUIntPPCendianly(code+16) == 0x7C210B78 /* or 1,1,1 */) {
             /* %R3 = client_request ( %R4 ) */
@@ -20152,15 +20181,15 @@ DisResult disInstr_PPC_WRK (
    is located in host memory at &guest_code[delta]. */
 
 DisResult disInstr_PPC ( IRSB*        irsb_IN,
-                         Bool         (*resteerOkFn) ( void*, Addr64 ),
+                         Bool         (*resteerOkFn) ( void*, Addr ),
                          Bool         resteerCisOk,
                          void*        callback_opaque,
                          const UChar* guest_code_IN,
                          Long         delta,
-                         Addr64       guest_IP,
+                         Addr         guest_IP,
                          VexArch      guest_arch,
-                         VexArchInfo* archinfo,
-                         VexAbiInfo*  abiinfo,
+                         const VexArchInfo* archinfo,
+                         const VexAbiInfo*  abiinfo,
                          VexEndness   host_endness_IN,
                          Bool         sigill_diag_IN )
 {

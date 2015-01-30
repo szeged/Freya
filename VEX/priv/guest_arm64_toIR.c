@@ -29,48 +29,21 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
-//ZZ /* XXXX thumb to check:
-//ZZ    that all cases where putIRegT writes r15, we generate a jump.
-//ZZ 
-//ZZ    All uses of newTemp assign to an IRTemp and not a UInt
-//ZZ 
-//ZZ    For all thumb loads and stores, including VFP ones, new-ITSTATE is
-//ZZ    backed out before the memory op, and restored afterwards.  This
-//ZZ    needs to happen even after we go uncond.  (and for sure it doesn't
-//ZZ    happen for VFP loads/stores right now).
-//ZZ 
-//ZZ    VFP on thumb: check that we exclude all r13/r15 cases that we
-//ZZ    should.
-//ZZ 
-//ZZ    XXXX thumb to do: improve the ITSTATE-zeroing optimisation by
-//ZZ    taking into account the number of insns guarded by an IT.
-//ZZ 
-//ZZ    remove the nasty hack, in the spechelper, of looking for Or32(...,
-//ZZ    0xE0) in as the first arg to armg_calculate_condition, and instead
-//ZZ    use Slice44 as specified in comments in the spechelper.
-//ZZ 
-//ZZ    add specialisations for armg_calculate_flag_c and _v, as they
-//ZZ    are moderately often needed in Thumb code.
-//ZZ 
-//ZZ    Correctness: ITSTATE handling in Thumb SVCs is wrong.
-//ZZ 
-//ZZ    Correctness (obscure): in m_transtab, when invalidating code
-//ZZ    address ranges, invalidate up to 18 bytes after the end of the
-//ZZ    range.  This is because the ITSTATE optimisation at the top of
-//ZZ    _THUMB_WRK below analyses up to 18 bytes before the start of any
-//ZZ    given instruction, and so might depend on the invalidated area.
-//ZZ */
-//ZZ 
-//ZZ /* Limitations, etc
-//ZZ 
-//ZZ    - pretty dodgy exception semantics for {LD,ST}Mxx and {LD,ST}RD.
-//ZZ      These instructions are non-restartable in the case where the
-//ZZ      transfer(s) fault.
-//ZZ 
-//ZZ    - SWP: the restart jump back is Ijk_Boring; it should be
-//ZZ      Ijk_NoRedir but that's expensive.  See comments on casLE() in
-//ZZ      guest_x86_toIR.c.
-//ZZ */
+/* KNOWN LIMITATIONS 2014-Nov-16
+
+   * Correctness: FMAXNM, FMINNM are implemented the same as FMAX/FMIN.
+
+     Also FP comparison "unordered" .. is implemented as normal FP
+     comparison.
+
+     Both should be fixed.  They behave incorrectly in the presence of
+     NaNs.
+
+   * Floating multiply-add (etc) insns.  Are split into a multiply and 
+     an add, and so suffer double rounding and hence sometimes the
+     least significant mantissa bit is incorrect.  Fix: use the IR
+     multiply-add IROps instead.
+*/
 
 /* "Special" instructions.
 
@@ -404,18 +377,18 @@ void newTempsV128_3(IRTemp* t1, IRTemp* t2, IRTemp* t3)
    *t3 = newTempV128();
 }
 
-//static
-//void newTempsV128_4(IRTemp* t1, IRTemp* t2, IRTemp* t3, IRTemp* t4)
-//{
-//   vassert(t1 && *t1 == IRTemp_INVALID);
-//   vassert(t2 && *t2 == IRTemp_INVALID);
-//   vassert(t3 && *t3 == IRTemp_INVALID);
-//   vassert(t4 && *t4 == IRTemp_INVALID);
-//   *t1 = newTempV128();
-//   *t2 = newTempV128();
-//   *t3 = newTempV128();
-//   *t4 = newTempV128();
-//}
+static
+void newTempsV128_4(IRTemp* t1, IRTemp* t2, IRTemp* t3, IRTemp* t4)
+{
+   vassert(t1 && *t1 == IRTemp_INVALID);
+   vassert(t2 && *t2 == IRTemp_INVALID);
+   vassert(t3 && *t3 == IRTemp_INVALID);
+   vassert(t4 && *t4 == IRTemp_INVALID);
+   *t1 = newTempV128();
+   *t2 = newTempV128();
+   *t3 = newTempV128();
+   *t4 = newTempV128();
+}
 
 static
 void newTempsV128_7(IRTemp* t1, IRTemp* t2, IRTemp* t3,
@@ -989,6 +962,26 @@ static IROp mkVecQSHLNSATSU ( UInt size ) {
    return ops[size];
 }
 
+static IROp mkVecADDF ( UInt size ) {
+   const IROp ops[4]
+      = { Iop_INVALID, Iop_INVALID, Iop_Add32Fx4, Iop_Add64Fx2 };
+   vassert(size < 4);
+   return ops[size];
+}
+
+static IROp mkVecMAXF ( UInt size ) {
+   const IROp ops[4]
+      = { Iop_INVALID, Iop_INVALID, Iop_Max32Fx4, Iop_Max64Fx2 };
+   vassert(size < 4);
+   return ops[size];
+}
+
+static IROp mkVecMINF ( UInt size ) {
+   const IROp ops[4]
+      = { Iop_INVALID, Iop_INVALID, Iop_Min32Fx4, Iop_Min64Fx2 };
+   vassert(size < 4);
+   return ops[size];
+}
 
 /* Generate IR to create 'arg rotated right by imm', for sane values
    of 'ty' and 'imm'. */
@@ -3338,36 +3331,51 @@ Bool dis_ARM64_data_processing_register(/*MB_OUT*/DisResult* dres,
       UInt   nn    = INSN(9,5);
       UInt   dd    = INSN(4,0);
       IRTemp src   = newTemp(Ity_I64);
+      IRTemp srcZ  = newTemp(Ity_I64);
       IRTemp dst   = newTemp(Ity_I64);
-      if (!isCLS) { // CLS not yet supported
-         if (is64) {
-            assign(src, getIReg64orZR(nn));
-            assign(dst, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(src), mkU64(0)),
-                                   mkU64(64),
-                                   unop(Iop_Clz64, mkexpr(src))));
-            putIReg64orZR(dd, mkexpr(dst));
-         } else {
-            assign(src, binop(Iop_Shl64,
-                              unop(Iop_32Uto64, getIReg32orZR(nn)), mkU8(32)));
-            assign(dst, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(src), mkU64(0)),
-                                   mkU64(32),
-                                   unop(Iop_Clz64, mkexpr(src))));
-            putIReg32orZR(dd, unop(Iop_64to32, mkexpr(dst)));
-         }
-         DIP("cl%c %s, %s\n",
-             isCLS ? 's' : 'z', nameIRegOrZR(is64, dd), nameIRegOrZR(is64, nn));
-         return True;
+      /* Get the argument, widened out to 64 bit */
+      if (is64) {
+         assign(src, getIReg64orZR(nn));
+      } else {
+         assign(src, binop(Iop_Shl64,
+                           unop(Iop_32Uto64, getIReg32orZR(nn)), mkU8(32)));
       }
+      /* If this is CLS, mash the arg around accordingly */
+      if (isCLS) {
+         IRExpr* one = mkU8(1);
+         assign(srcZ,
+         binop(Iop_Xor64,
+               binop(Iop_Shl64, mkexpr(src), one),
+               binop(Iop_Shl64, binop(Iop_Shr64, mkexpr(src), one), one)));
+      } else {
+         assign(srcZ, mkexpr(src));
+      }
+      /* And compute CLZ. */
+      if (is64) {
+         assign(dst, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(srcZ), mkU64(0)),
+                                mkU64(isCLS ? 63 : 64),
+                                unop(Iop_Clz64, mkexpr(srcZ))));
+         putIReg64orZR(dd, mkexpr(dst));
+      } else {
+         assign(dst, IRExpr_ITE(binop(Iop_CmpEQ64, mkexpr(srcZ), mkU64(0)),
+                                mkU64(isCLS ? 31 : 32),
+                                unop(Iop_Clz64, mkexpr(srcZ))));
+         putIReg32orZR(dd, unop(Iop_64to32, mkexpr(dst)));
+      }
+      DIP("cl%c %s, %s\n", isCLS ? 's' : 'z',
+          nameIRegOrZR(is64, dd), nameIRegOrZR(is64, nn));
+      return True;
    }
 
-   /* -------------------- LSLV/LSRV/ASRV -------------------- */   
+   /* ------------------ LSLV/LSRV/ASRV/RORV ------------------ */   
    /*    30 28        20 15   11 9 4
       sf 00 1101 0110 m  0010 00 n d   LSLV Rd,Rn,Rm
       sf 00 1101 0110 m  0010 01 n d   LSRV Rd,Rn,Rm
       sf 00 1101 0110 m  0010 10 n d   ASRV Rd,Rn,Rm
+      sf 00 1101 0110 m  0010 11 n d   RORV Rd,Rn,Rm
    */
    if (INSN(30,21) == BITS10(0,0,1,1,0,1,0,1,1,0)
-       && INSN(15,12) == BITS4(0,0,1,0) && INSN(11,10) < BITS2(1,1)) {
+       && INSN(15,12) == BITS4(0,0,1,0)) {
       Bool   is64 = INSN(31,31) == 1;
       UInt   mm   = INSN(20,16);
       UInt   op   = INSN(11,10);
@@ -3375,24 +3383,45 @@ Bool dis_ARM64_data_processing_register(/*MB_OUT*/DisResult* dres,
       UInt   dd   = INSN(4,0);
       IRType ty   = is64 ? Ity_I64 : Ity_I32;
       IRTemp srcL = newTemp(ty);
-      IRTemp srcR = newTemp(Ity_I8);
+      IRTemp srcR = newTemp(Ity_I64);
       IRTemp res  = newTemp(ty);
       IROp   iop  = Iop_INVALID;
       assign(srcL, getIRegOrZR(is64, nn));
-      assign(srcR,
-             unop(Iop_64to8,
-                  binop(Iop_And64,
-                        getIReg64orZR(mm), mkU64(is64 ? 63 : 31))));
-      switch (op) {
-         case BITS2(0,0): iop = mkSHL(ty); break;
-         case BITS2(0,1): iop = mkSHR(ty); break;
-         case BITS2(1,0): iop = mkSAR(ty); break;
-         default: vassert(0);
+      assign(srcR, binop(Iop_And64, getIReg64orZR(mm),
+                                    mkU64(is64 ? 63 : 31)));
+      if (op < 3) {
+         // LSLV, LSRV, ASRV
+         switch (op) {
+            case BITS2(0,0): iop = mkSHL(ty); break;
+            case BITS2(0,1): iop = mkSHR(ty); break;
+            case BITS2(1,0): iop = mkSAR(ty); break;
+            default: vassert(0);
+         }
+         assign(res, binop(iop, mkexpr(srcL),
+                                unop(Iop_64to8, mkexpr(srcR))));
+      } else {
+         // RORV
+         IROp opSHL = mkSHL(ty);
+         IROp opSHR = mkSHR(ty);
+         IROp opOR  = mkOR(ty);
+         IRExpr* width = mkU64(is64 ? 64: 32);
+         assign(
+            res,
+            IRExpr_ITE(
+               binop(Iop_CmpEQ64, mkexpr(srcR), mkU64(0)),
+               mkexpr(srcL),
+               binop(opOR,
+                     binop(opSHL,
+                           mkexpr(srcL),
+                           unop(Iop_64to8, binop(Iop_Sub64, width,
+                                                            mkexpr(srcR)))),
+                     binop(opSHR,
+                           mkexpr(srcL), unop(Iop_64to8, mkexpr(srcR))))
+         ));
       }
-      assign(res, binop(iop, mkexpr(srcL), mkexpr(srcR)));
       putIRegOrZR(is64, dd, mkexpr(res));
-      vassert(op < 3);
-      const HChar* names[3] = { "lslv", "lsrv", "asrv" };
+      vassert(op < 4);
+      const HChar* names[4] = { "lslv", "lsrv", "asrv", "rorv" };
       DIP("%s %s, %s, %s\n",
           names[op], nameIRegOrZR(is64,dd),
                      nameIRegOrZR(is64,nn), nameIRegOrZR(is64,mm));
@@ -3467,6 +3496,950 @@ Bool dis_ARM64_data_processing_register(/*MB_OUT*/DisResult* dres,
 
 
 /*------------------------------------------------------------*/
+/*--- Math helpers for vector interleave/deinterleave      ---*/
+/*------------------------------------------------------------*/
+
+#define EX(_tmp) \
+           mkexpr(_tmp)
+#define SL(_hi128,_lo128,_nbytes) \
+           ( (_nbytes) == 0 \
+                ? (_lo128) \
+                : triop(Iop_SliceV128,(_hi128),(_lo128),mkU8(_nbytes)) )
+#define ROR(_v128,_nbytes) \
+           SL((_v128),(_v128),(_nbytes))
+#define ROL(_v128,_nbytes) \
+           SL((_v128),(_v128),16-(_nbytes))
+#define SHR(_v128,_nbytes) \
+           binop(Iop_ShrV128,(_v128),mkU8(8*(_nbytes)))
+#define SHL(_v128,_nbytes) \
+           binop(Iop_ShlV128,(_v128),mkU8(8*(_nbytes)))
+#define ILO64x2(_argL,_argR) \
+           binop(Iop_InterleaveLO64x2,(_argL),(_argR))
+#define IHI64x2(_argL,_argR) \
+           binop(Iop_InterleaveHI64x2,(_argL),(_argR))
+#define ILO32x4(_argL,_argR) \
+           binop(Iop_InterleaveLO32x4,(_argL),(_argR))
+#define IHI32x4(_argL,_argR) \
+           binop(Iop_InterleaveHI32x4,(_argL),(_argR))
+#define ILO16x8(_argL,_argR) \
+           binop(Iop_InterleaveLO16x8,(_argL),(_argR))
+#define IHI16x8(_argL,_argR) \
+           binop(Iop_InterleaveHI16x8,(_argL),(_argR))
+#define ILO8x16(_argL,_argR) \
+           binop(Iop_InterleaveLO8x16,(_argL),(_argR))
+#define IHI8x16(_argL,_argR) \
+           binop(Iop_InterleaveHI8x16,(_argL),(_argR))
+#define CEV32x4(_argL,_argR) \
+           binop(Iop_CatEvenLanes32x4,(_argL),(_argR))
+#define COD32x4(_argL,_argR) \
+           binop(Iop_CatOddLanes32x4,(_argL),(_argR))
+#define COD16x8(_argL,_argR) \
+           binop(Iop_CatOddLanes16x8,(_argL),(_argR))
+#define COD8x16(_argL,_argR) \
+           binop(Iop_CatOddLanes8x16,(_argL),(_argR))
+#define CEV8x16(_argL,_argR) \
+           binop(Iop_CatEvenLanes8x16,(_argL),(_argR))
+#define AND(_arg1,_arg2) \
+           binop(Iop_AndV128,(_arg1),(_arg2))
+#define OR2(_arg1,_arg2) \
+           binop(Iop_OrV128,(_arg1),(_arg2))
+#define OR3(_arg1,_arg2,_arg3) \
+           binop(Iop_OrV128,(_arg1),binop(Iop_OrV128,(_arg2),(_arg3)))
+#define OR4(_arg1,_arg2,_arg3,_arg4) \
+           binop(Iop_OrV128, \
+                 binop(Iop_OrV128,(_arg1),(_arg2)), \
+                 binop(Iop_OrV128,(_arg3),(_arg4)))
+
+
+/* Do interleaving for 1 128 bit vector, for ST1 insns. */
+static
+void math_INTERLEAVE1_128( /*OUTx1*/ IRTemp* i0,
+                           UInt laneSzBlg2, IRTemp u0 )
+{
+   assign(*i0, mkexpr(u0));
+}
+
+
+/* Do interleaving for 2 128 bit vectors, for ST2 insns. */
+static
+void math_INTERLEAVE2_128( /*OUTx2*/ IRTemp* i0, IRTemp* i1,
+                           UInt laneSzBlg2, IRTemp u0, IRTemp u1 )
+{
+   /* This is pretty easy, since we have primitives directly to
+      hand. */
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      // u1 == B1 B0, u0 == A1 A0
+      // i1 == B1 A1, i0 == B0 A0
+      assign(*i0, binop(Iop_InterleaveLO64x2, mkexpr(u1), mkexpr(u0)));
+      assign(*i1, binop(Iop_InterleaveHI64x2, mkexpr(u1), mkexpr(u0)));
+      return;
+   }
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      // u1 == B3 B2 B1 B0, u0 == A3 A2 A1 A0, 
+      // i1 == B3 A3 B2 A2, i0 == B1 A1 B0 A0
+      assign(*i0, binop(Iop_InterleaveLO32x4, mkexpr(u1), mkexpr(u0)));
+      assign(*i1, binop(Iop_InterleaveHI32x4, mkexpr(u1), mkexpr(u0)));
+      return;
+   } 
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // u1 == B{7..0}, u0 == A{7..0}
+      // i0 == B3 A3 B2 A2 B1 A1 B0 A0
+      // i1 == B7 A7 B6 A6 B5 A5 B4 A4
+      assign(*i0, binop(Iop_InterleaveLO16x8, mkexpr(u1), mkexpr(u0)));
+      assign(*i1, binop(Iop_InterleaveHI16x8, mkexpr(u1), mkexpr(u0)));
+      return;
+   }
+   if (laneSzBlg2 == 0) {
+      // 8x16
+      // u1 == B{f..0}, u0 == A{f..0}
+      // i0 == B7 A7 B6 A6 B5 A5 B4 A4 B3 A3 B2 A2 B1 A1 B0 A0
+      // i1 == Bf Af Be Ae Bd Ad Bc Ac Bb Ab Ba Aa B9 A9 B8 A8
+      assign(*i0, binop(Iop_InterleaveLO8x16, mkexpr(u1), mkexpr(u0)));
+      assign(*i1, binop(Iop_InterleaveHI8x16, mkexpr(u1), mkexpr(u0)));
+      return;
+   }
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Do interleaving for 3 128 bit vectors, for ST3 insns. */
+static
+void math_INTERLEAVE3_128( 
+        /*OUTx3*/ IRTemp* i0, IRTemp* i1, IRTemp* i2,
+        UInt laneSzBlg2,
+        IRTemp u0, IRTemp u1, IRTemp u2 )
+{
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      // u2 == C1 C0, u1 == B1 B0, u0 == A1 A0
+      // i2 == C1 B1, i1 == A1 C0, i0 == B0 A0,
+      assign(*i2, IHI64x2( EX(u2), EX(u1) ));
+      assign(*i1, ILO64x2( ROR(EX(u0),8), EX(u2) ));
+      assign(*i0, ILO64x2( EX(u1), EX(u0) ));
+      return;
+   }
+
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      // u2 == C3 C2 C1 C0, u1 == B3 B2 B1 B0, u0 == A3 A2 A1 A0
+      // p2 == C3 C2 B3 B2, p1 == A3 A2 C1 C0, p0 == B1 B0 A1 A0
+      // i2 == C3 B3 A2 C2, i1 == B2 A2 C1 B1, i0 == A1 C0 B0 A0
+      IRTemp p0    = newTempV128();
+      IRTemp p1    = newTempV128();
+      IRTemp p2    = newTempV128();
+      IRTemp c1100 = newTempV128();
+      IRTemp c0011 = newTempV128();
+      IRTemp c0110 = newTempV128();
+      assign(c1100, mkV128(0xFF00));
+      assign(c0011, mkV128(0x00FF));
+      assign(c0110, mkV128(0x0FF0));
+      // First interleave them at 64x2 granularity,
+      // generating partial ("p") values.
+      math_INTERLEAVE3_128(&p0, &p1, &p2, 3, u0, u1, u2);
+      // And more shuffling around for the final answer
+      assign(*i2, OR2( AND( IHI32x4(EX(p2), ROL(EX(p2),8)), EX(c1100) ),
+                       AND( IHI32x4(ROR(EX(p1),4), EX(p2)), EX(c0011) ) ));
+      assign(*i1, OR3( SHL(EX(p2),12),
+                       AND(EX(p1),EX(c0110)),
+                       SHR(EX(p0),12) ));
+      assign(*i0, OR2( AND( ILO32x4(EX(p0),ROL(EX(p1),4)), EX(c1100) ),
+                       AND( ILO32x4(ROR(EX(p0),8),EX(p0)), EX(c0011) ) ));
+      return;
+   }
+
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // u2 == C7 C6 C5 C4 C3 C2 C1 C0
+      // u1 == B7 B6 B5 B4 B3 B2 B1 B0
+      // u0 == A7 A6 A5 A4 A3 A2 A1 A0
+      //
+      // p2 == C7 C6 B7 B6 A7 A6 C5 C4
+      // p1 == B5 B4 A5 A4 C3 C2 B3 B2
+      // p0 == A3 A2 C1 C0 B1 B0 A1 A0
+      //
+      // i2 == C7 B7 A7 C6 B6 A6 C5 B5
+      // i1 == A5 C4 B4 A4 C4 B3 A3 C2
+      // i0 == B2 A2 C1 B1 A1 C0 B0 A0
+      IRTemp p0    = newTempV128();
+      IRTemp p1    = newTempV128();
+      IRTemp p2    = newTempV128();
+      IRTemp c1000 = newTempV128();
+      IRTemp c0100 = newTempV128();
+      IRTemp c0010 = newTempV128();
+      IRTemp c0001 = newTempV128();
+      assign(c1000, mkV128(0xF000));
+      assign(c0100, mkV128(0x0F00));
+      assign(c0010, mkV128(0x00F0));
+      assign(c0001, mkV128(0x000F));
+      // First interleave them at 32x4 granularity,
+      // generating partial ("p") values.
+      math_INTERLEAVE3_128(&p0, &p1, &p2, 2, u0, u1, u2);
+      // And more shuffling around for the final answer
+      assign(*i2,
+             OR4( AND( IHI16x8( EX(p2),        ROL(EX(p2),4) ), EX(c1000) ),
+                  AND( IHI16x8( ROL(EX(p2),6), EX(p2)        ), EX(c0100) ),
+                  AND( IHI16x8( ROL(EX(p2),2), ROL(EX(p2),6) ), EX(c0010) ),
+                  AND( ILO16x8( ROR(EX(p2),2), ROL(EX(p1),2) ), EX(c0001) )
+      ));
+      assign(*i1,
+             OR4( AND( IHI16x8( ROL(EX(p1),4), ROR(EX(p2),2) ), EX(c1000) ),
+                  AND( IHI16x8( EX(p1),        ROL(EX(p1),4) ), EX(c0100) ),
+                  AND( IHI16x8( ROL(EX(p1),4), ROL(EX(p1),8) ), EX(c0010) ),
+                  AND( IHI16x8( ROR(EX(p0),6), ROL(EX(p1),4) ), EX(c0001) )
+      ));
+      assign(*i0,
+             OR4( AND( IHI16x8( ROR(EX(p1),2), ROL(EX(p0),2) ), EX(c1000) ),
+                  AND( IHI16x8( ROL(EX(p0),2), ROL(EX(p0),6) ), EX(c0100) ),
+                  AND( IHI16x8( ROL(EX(p0),8), ROL(EX(p0),2) ), EX(c0010) ),
+                  AND( IHI16x8( ROL(EX(p0),4), ROL(EX(p0),8) ), EX(c0001) )
+      ));
+      return;
+   }
+
+   if (laneSzBlg2 == 0) {
+      // 8x16.  It doesn't seem worth the hassle of first doing a
+      // 16x8 interleave, so just generate all 24 partial results
+      // directly :-(
+      // u2 == Cf .. C0, u1 == Bf .. B0, u0 == Af .. A0
+      // i2 == Cf Bf Af Ce .. Bb Ab Ca
+      // i1 == Ba Aa C9 B9 .. A6 C5 B5
+      // i0 == A5 C4 B4 A4 .. C0 B0 A0
+
+      IRTemp i2_FEDC = newTempV128(); IRTemp i2_BA98 = newTempV128();
+      IRTemp i2_7654 = newTempV128(); IRTemp i2_3210 = newTempV128();
+      IRTemp i1_FEDC = newTempV128(); IRTemp i1_BA98 = newTempV128();
+      IRTemp i1_7654 = newTempV128(); IRTemp i1_3210 = newTempV128();
+      IRTemp i0_FEDC = newTempV128(); IRTemp i0_BA98 = newTempV128();
+      IRTemp i0_7654 = newTempV128(); IRTemp i0_3210 = newTempV128();
+      IRTemp i2_hi64 = newTempV128(); IRTemp i2_lo64 = newTempV128();
+      IRTemp i1_hi64 = newTempV128(); IRTemp i1_lo64 = newTempV128();
+      IRTemp i0_hi64 = newTempV128(); IRTemp i0_lo64 = newTempV128();
+
+      // eg XXXX(qqq, CC, 0xF, BB, 0xA)) sets qqq to be a vector
+      // of the form 14 bytes junk : CC[0xF] : BB[0xA]
+      //
+#     define XXXX(_tempName,_srcVec1,_srcShift1,_srcVec2,_srcShift2) \
+         IRTemp t_##_tempName = newTempV128(); \
+         assign(t_##_tempName, \
+                ILO8x16( ROR(EX(_srcVec1),(_srcShift1)), \
+                         ROR(EX(_srcVec2),(_srcShift2)) ) )
+
+      // Let CC, BB, AA be (handy) aliases of u2, u1, u0 respectively
+      IRTemp CC = u2; IRTemp BB = u1; IRTemp AA = u0;
+
+      // The slicing and reassembly are done as interleavedly as possible,
+      // so as to minimise the demand for registers in the back end, which
+      // was observed to be a problem in testing.
+
+      XXXX(CfBf, CC, 0xf, BB, 0xf); // i2[15:14]
+      XXXX(AfCe, AA, 0xf, CC, 0xe);
+      assign(i2_FEDC, ILO16x8(EX(t_CfBf), EX(t_AfCe)));
+
+      XXXX(BeAe, BB, 0xe, AA, 0xe);
+      XXXX(CdBd, CC, 0xd, BB, 0xd);
+      assign(i2_BA98, ILO16x8(EX(t_BeAe), EX(t_CdBd)));
+      assign(i2_hi64, ILO32x4(EX(i2_FEDC), EX(i2_BA98)));
+
+      XXXX(AdCc, AA, 0xd, CC, 0xc);
+      XXXX(BcAc, BB, 0xc, AA, 0xc);
+      assign(i2_7654, ILO16x8(EX(t_AdCc), EX(t_BcAc)));
+
+      XXXX(CbBb, CC, 0xb, BB, 0xb);
+      XXXX(AbCa, AA, 0xb, CC, 0xa); // i2[1:0] 
+      assign(i2_3210, ILO16x8(EX(t_CbBb), EX(t_AbCa)));
+      assign(i2_lo64, ILO32x4(EX(i2_7654), EX(i2_3210)));
+      assign(*i2, ILO64x2(EX(i2_hi64), EX(i2_lo64)));
+
+      XXXX(BaAa, BB, 0xa, AA, 0xa); // i1[15:14]
+      XXXX(C9B9, CC, 0x9, BB, 0x9);
+      assign(i1_FEDC, ILO16x8(EX(t_BaAa), EX(t_C9B9)));
+
+      XXXX(A9C8, AA, 0x9, CC, 0x8);
+      XXXX(B8A8, BB, 0x8, AA, 0x8);
+      assign(i1_BA98, ILO16x8(EX(t_A9C8), EX(t_B8A8)));
+      assign(i1_hi64, ILO32x4(EX(i1_FEDC), EX(i1_BA98)));
+
+      XXXX(C7B7, CC, 0x7, BB, 0x7);
+      XXXX(A7C6, AA, 0x7, CC, 0x6);
+      assign(i1_7654, ILO16x8(EX(t_C7B7), EX(t_A7C6)));
+
+      XXXX(B6A6, BB, 0x6, AA, 0x6);
+      XXXX(C5B5, CC, 0x5, BB, 0x5); // i1[1:0]
+      assign(i1_3210, ILO16x8(EX(t_B6A6), EX(t_C5B5)));
+      assign(i1_lo64, ILO32x4(EX(i1_7654), EX(i1_3210)));
+      assign(*i1, ILO64x2(EX(i1_hi64), EX(i1_lo64)));
+
+      XXXX(A5C4, AA, 0x5, CC, 0x4); // i0[15:14]
+      XXXX(B4A4, BB, 0x4, AA, 0x4);
+      assign(i0_FEDC, ILO16x8(EX(t_A5C4), EX(t_B4A4)));
+
+      XXXX(C3B3, CC, 0x3, BB, 0x3);
+      XXXX(A3C2, AA, 0x3, CC, 0x2);
+      assign(i0_BA98, ILO16x8(EX(t_C3B3), EX(t_A3C2)));
+      assign(i0_hi64, ILO32x4(EX(i0_FEDC), EX(i0_BA98)));
+
+      XXXX(B2A2, BB, 0x2, AA, 0x2);
+      XXXX(C1B1, CC, 0x1, BB, 0x1);
+      assign(i0_7654, ILO16x8(EX(t_B2A2), EX(t_C1B1)));
+
+      XXXX(A1C0, AA, 0x1, CC, 0x0);
+      XXXX(B0A0, BB, 0x0, AA, 0x0); // i0[1:0]
+      assign(i0_3210, ILO16x8(EX(t_A1C0), EX(t_B0A0)));
+      assign(i0_lo64, ILO32x4(EX(i0_7654), EX(i0_3210)));
+      assign(*i0, ILO64x2(EX(i0_hi64), EX(i0_lo64)));
+
+#     undef XXXX
+      return;
+   }
+
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Do interleaving for 4 128 bit vectors, for ST4 insns. */
+static
+void math_INTERLEAVE4_128( 
+        /*OUTx4*/ IRTemp* i0, IRTemp* i1, IRTemp* i2, IRTemp* i3,
+        UInt laneSzBlg2,
+        IRTemp u0, IRTemp u1, IRTemp u2, IRTemp u3 )
+{
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      assign(*i0, ILO64x2(EX(u1), EX(u0)));
+      assign(*i1, ILO64x2(EX(u3), EX(u2)));
+      assign(*i2, IHI64x2(EX(u1), EX(u0)));
+      assign(*i3, IHI64x2(EX(u3), EX(u2)));
+      return;
+   }
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      // First, interleave at the 64-bit lane size.
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p3 = newTempV128();
+      math_INTERLEAVE4_128(&p0, &p1, &p2, &p3, 3, u0, u1, u2, u3);
+      // And interleave (cat) at the 32 bit size.
+      assign(*i0, CEV32x4(EX(p1), EX(p0)));
+      assign(*i1, COD32x4(EX(p1), EX(p0)));
+      assign(*i2, CEV32x4(EX(p3), EX(p2)));
+      assign(*i3, COD32x4(EX(p3), EX(p2)));
+      return;
+   }
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // First, interleave at the 32-bit lane size.
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p3 = newTempV128();
+      math_INTERLEAVE4_128(&p0, &p1, &p2, &p3, 2, u0, u1, u2, u3);
+      // And rearrange within each vector, to get the right 16 bit lanes.
+      assign(*i0, COD16x8(EX(p0), SHL(EX(p0), 2)));
+      assign(*i1, COD16x8(EX(p1), SHL(EX(p1), 2)));
+      assign(*i2, COD16x8(EX(p2), SHL(EX(p2), 2)));
+      assign(*i3, COD16x8(EX(p3), SHL(EX(p3), 2)));
+      return;
+   }
+   if (laneSzBlg2 == 0) {
+      // 8x16
+      // First, interleave at the 16-bit lane size.
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p3 = newTempV128();
+      math_INTERLEAVE4_128(&p0, &p1, &p2, &p3, 1, u0, u1, u2, u3);
+      // And rearrange within each vector, to get the right 8 bit lanes.
+      assign(*i0, IHI32x4(COD8x16(EX(p0),EX(p0)), CEV8x16(EX(p0),EX(p0))));
+      assign(*i1, IHI32x4(COD8x16(EX(p1),EX(p1)), CEV8x16(EX(p1),EX(p1))));
+      assign(*i2, IHI32x4(COD8x16(EX(p2),EX(p2)), CEV8x16(EX(p2),EX(p2))));
+      assign(*i3, IHI32x4(COD8x16(EX(p3),EX(p3)), CEV8x16(EX(p3),EX(p3))));
+      return;
+   }
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Do deinterleaving for 1 128 bit vector, for LD1 insns. */
+static
+void math_DEINTERLEAVE1_128( /*OUTx1*/ IRTemp* u0,
+                             UInt laneSzBlg2, IRTemp i0 )
+{
+   assign(*u0, mkexpr(i0));
+}
+
+
+/* Do deinterleaving for 2 128 bit vectors, for LD2 insns. */
+static
+void math_DEINTERLEAVE2_128( /*OUTx2*/ IRTemp* u0, IRTemp* u1,
+                             UInt laneSzBlg2, IRTemp i0, IRTemp i1 )
+{
+   /* This is pretty easy, since we have primitives directly to
+      hand. */
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      // i1 == B1 A1, i0 == B0 A0
+      // u1 == B1 B0, u0 == A1 A0
+      assign(*u0, binop(Iop_InterleaveLO64x2, mkexpr(i1), mkexpr(i0)));
+      assign(*u1, binop(Iop_InterleaveHI64x2, mkexpr(i1), mkexpr(i0)));
+      return;
+   }
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      // i1 == B3 A3 B2 A2, i0 == B1 A1 B0 A0
+      // u1 == B3 B2 B1 B0, u0 == A3 A2 A1 A0, 
+      assign(*u0, binop(Iop_CatEvenLanes32x4, mkexpr(i1), mkexpr(i0)));
+      assign(*u1, binop(Iop_CatOddLanes32x4, mkexpr(i1), mkexpr(i0)));
+      return;
+   }
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // i0 == B3 A3 B2 A2 B1 A1 B0 A0
+      // i1 == B7 A7 B6 A6 B5 A5 B4 A4
+      // u1 == B{7..0}, u0 == A{7..0}
+      assign(*u0, binop(Iop_CatEvenLanes16x8, mkexpr(i1), mkexpr(i0)));
+      assign(*u1, binop(Iop_CatOddLanes16x8,  mkexpr(i1), mkexpr(i0)));
+      return;
+   }
+   if (laneSzBlg2 == 0) {
+      // 8x16
+      // i0 == B7 A7 B6 A6 B5 A5 B4 A4 B3 A3 B2 A2 B1 A1 B0 A0
+      // i1 == Bf Af Be Ae Bd Ad Bc Ac Bb Ab Ba Aa B9 A9 B8 A8
+      // u1 == B{f..0}, u0 == A{f..0}
+      assign(*u0, binop(Iop_CatEvenLanes8x16, mkexpr(i1), mkexpr(i0)));
+      assign(*u1, binop(Iop_CatOddLanes8x16,  mkexpr(i1), mkexpr(i0)));
+      return;
+   }
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Do deinterleaving for 3 128 bit vectors, for LD3 insns. */
+static
+void math_DEINTERLEAVE3_128( 
+        /*OUTx3*/ IRTemp* u0, IRTemp* u1, IRTemp* u2,
+        UInt laneSzBlg2,
+        IRTemp i0, IRTemp i1, IRTemp i2 )
+{
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      // i2 == C1 B1, i1 == A1 C0, i0 == B0 A0,
+      // u2 == C1 C0, u1 == B1 B0, u0 == A1 A0
+      assign(*u2, ILO64x2( ROL(EX(i2),8), EX(i1)        ));
+      assign(*u1, ILO64x2( EX(i2),        ROL(EX(i0),8) ));
+      assign(*u0, ILO64x2( ROL(EX(i1),8), EX(i0)        ));
+      return;
+   }
+
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      // i2 == C3 B3 A2 C2, i1 == B2 A2 C1 B1, i0 == A1 C0 B0 A0
+      // p2 == C3 C2 B3 B2, p1 == A3 A2 C1 C0, p0 == B1 B0 A1 A0
+      // u2 == C3 C2 C1 C0, u1 == B3 B2 B1 B0, u0 == A3 A2 A1 A0
+      IRTemp t_a1c0b0a0 = newTempV128();
+      IRTemp t_a2c1b1a1 = newTempV128();
+      IRTemp t_a3c2b2a2 = newTempV128();
+      IRTemp t_a0c3b3a3 = newTempV128();
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      // Compute some intermediate values.
+      assign(t_a1c0b0a0, EX(i0));
+      assign(t_a2c1b1a1, SL(EX(i1),EX(i0),3*4));
+      assign(t_a3c2b2a2, SL(EX(i2),EX(i1),2*4));
+      assign(t_a0c3b3a3, SL(EX(i0),EX(i2),1*4));
+      // First deinterleave into lane-pairs
+      assign(p0, ILO32x4(EX(t_a2c1b1a1),EX(t_a1c0b0a0)));
+      assign(p1, ILO64x2(ILO32x4(EX(t_a0c3b3a3), EX(t_a3c2b2a2)),
+                         IHI32x4(EX(t_a2c1b1a1), EX(t_a1c0b0a0))));
+      assign(p2, ILO32x4(ROR(EX(t_a0c3b3a3),1*4), ROR(EX(t_a3c2b2a2),1*4)));
+      // Then deinterleave at 64x2 granularity.
+      math_DEINTERLEAVE3_128(u0, u1, u2, 3, p0, p1, p2);
+      return;
+   }
+
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // u2 == C7 C6 C5 C4 C3 C2 C1 C0
+      // u1 == B7 B6 B5 B4 B3 B2 B1 B0
+      // u0 == A7 A6 A5 A4 A3 A2 A1 A0
+      //
+      // i2 == C7 B7 A7 C6 B6 A6 C5 B5
+      // i1 == A5 C4 B4 A4 C4 B3 A3 C2
+      // i0 == B2 A2 C1 B1 A1 C0 B0 A0
+      //
+      // p2 == C7 C6 B7 B6 A7 A6 C5 C4
+      // p1 == B5 B4 A5 A4 C3 C2 B3 B2
+      // p0 == A3 A2 C1 C0 B1 B0 A1 A0
+
+      IRTemp s0, s1, s2, s3, t0, t1, t2, t3, p0, p1, p2, c00111111;
+      s0 = s1 = s2 = s3
+         = t0 = t1 = t2 = t3 = p0 = p1 = p2 = c00111111 = IRTemp_INVALID;
+      newTempsV128_4(&s0, &s1, &s2, &s3);
+      newTempsV128_4(&t0, &t1, &t2, &t3);
+      newTempsV128_4(&p0, &p1, &p2, &c00111111);
+
+      // s0 == b2a2 c1b1a1 c0b0a0
+      // s1 == b4a4 c3b3c3 c2b2a2
+      // s2 == b6a6 c5b5a5 c4b4a4
+      // s3 == b0a0 c7b7a7 c6b6a6
+      assign(s0, EX(i0));
+      assign(s1, SL(EX(i1),EX(i0),6*2));
+      assign(s2, SL(EX(i2),EX(i1),4*2));
+      assign(s3, SL(EX(i0),EX(i2),2*2));
+
+      // t0 == 0 0 c1c0 b1b0 a1a0
+      // t1 == 0 0 c3c2 b3b2 a3a2
+      // t2 == 0 0 c5c4 b5b4 a5a4
+      // t3 == 0 0 c7c6 b7b6 a7a6
+      assign(c00111111, mkV128(0x0FFF));
+      assign(t0, AND( ILO16x8( ROR(EX(s0),3*2), EX(s0)), EX(c00111111)));
+      assign(t1, AND( ILO16x8( ROR(EX(s1),3*2), EX(s1)), EX(c00111111)));
+      assign(t2, AND( ILO16x8( ROR(EX(s2),3*2), EX(s2)), EX(c00111111)));
+      assign(t3, AND( ILO16x8( ROR(EX(s3),3*2), EX(s3)), EX(c00111111)));
+
+      assign(p0, OR2(EX(t0),          SHL(EX(t1),6*2)));
+      assign(p1, OR2(SHL(EX(t2),4*2), SHR(EX(t1),2*2)));
+      assign(p2, OR2(SHL(EX(t3),2*2), SHR(EX(t2),4*2)));
+
+      // Then deinterleave at 32x4 granularity.
+      math_DEINTERLEAVE3_128(u0, u1, u2, 2, p0, p1, p2);
+      return;
+   }
+
+   if (laneSzBlg2 == 0) {
+      // 8x16.  This is the same scheme as for 16x8, with twice the
+      // number of intermediate values.
+      //
+      // u2 == C{f..0}
+      // u1 == B{f..0}
+      // u0 == A{f..0}
+      //
+      // i2 == CBA{f} CBA{e} CBA{d} CBA{c} CBA{b} C{a}
+      // i1 ==  BA{a} CBA{9} CBA{8} CBA{7} CBA{6} CB{5}
+      // i0 ==   A{5} CBA{4} CBA{3} CBA{2} CBA{1} CBA{0}
+      //
+      // p2 == C{fe} B{fe} A{fe} C{dc} B{dc} A{dc} C{ba} B{ba}
+      // p1 == A{ba} C{98} B{98} A{98} C{76} B{76} A{76} C{54}
+      // p0 == B{54} A{54} C{32} B{32} A{32} C{10} B{10} A{10}
+      //
+      IRTemp s0, s1, s2, s3, s4, s5, s6, s7,
+             t0, t1, t2, t3, t4, t5, t6, t7, p0, p1, p2, cMASK;
+      s0 = s1 = s2 = s3 = s4 = s5 = s6 = s7
+         = t0 = t1 = t2 = t3 = t4 = t5 = t6 = t7 = p0 = p1 = p2 = cMASK
+         = IRTemp_INVALID;
+      newTempsV128_4(&s0, &s1, &s2, &s3);
+      newTempsV128_4(&s4, &s5, &s6, &s7);
+      newTempsV128_4(&t0, &t1, &t2, &t3);
+      newTempsV128_4(&t4, &t5, &t6, &t7);
+      newTempsV128_4(&p0, &p1, &p2, &cMASK);
+
+      // s0 == A{5} CBA{4} CBA{3} CBA{2} CBA{1} CBA{0}
+      // s1 == A{7} CBA{6} CBA{5} CBA{4} CBA{3} CBA{2}
+      // s2 == A{9} CBA{8} CBA{7} CBA{6} CBA{5} CBA{4}
+      // s3 == A{b} CBA{a} CBA{9} CBA{8} CBA{7} CBA{6}
+      // s4 == A{d} CBA{c} CBA{b} CBA{a} CBA{9} CBA{8}
+      // s5 == A{f} CBA{e} CBA{d} CBA{c} CBA{b} CBA{a}
+      // s6 == A{1} CBA{0} CBA{f} CBA{e} CBA{d} CBA{c}
+      // s7 == A{3} CBA{2} CBA{1} CBA{0} CBA{f} CBA{e}
+      assign(s0, SL(EX(i1),EX(i0), 0));
+      assign(s1, SL(EX(i1),EX(i0), 6));
+      assign(s2, SL(EX(i1),EX(i0),12));
+      assign(s3, SL(EX(i2),EX(i1), 2));
+      assign(s4, SL(EX(i2),EX(i1), 8));
+      assign(s5, SL(EX(i2),EX(i1),14));
+      assign(s6, SL(EX(i0),EX(i2), 4));
+      assign(s7, SL(EX(i0),EX(i2),10));
+
+      // t0 == 0--(ten)--0 C1 C0 B1 B0 A1 A0
+      // t1 == 0--(ten)--0 C3 C2 B3 B2 A3 A2
+      // t2 == 0--(ten)--0 C5 C4 B5 B4 A5 A4
+      // t3 == 0--(ten)--0 C7 C6 B7 B6 A7 A6
+      // t4 == 0--(ten)--0 C9 C8 B9 B8 A9 A8
+      // t5 == 0--(ten)--0 Cb Ca Bb Ba Ab Aa
+      // t6 == 0--(ten)--0 Cd Cc Bd Bc Ad Ac
+      // t7 == 0--(ten)--0 Cf Ce Bf Be Af Ae
+      assign(cMASK, mkV128(0x003F));
+      assign(t0, AND( ILO8x16( ROR(EX(s0),3), EX(s0)), EX(cMASK)));
+      assign(t1, AND( ILO8x16( ROR(EX(s1),3), EX(s1)), EX(cMASK)));
+      assign(t2, AND( ILO8x16( ROR(EX(s2),3), EX(s2)), EX(cMASK)));
+      assign(t3, AND( ILO8x16( ROR(EX(s3),3), EX(s3)), EX(cMASK)));
+      assign(t4, AND( ILO8x16( ROR(EX(s4),3), EX(s4)), EX(cMASK)));
+      assign(t5, AND( ILO8x16( ROR(EX(s5),3), EX(s5)), EX(cMASK)));
+      assign(t6, AND( ILO8x16( ROR(EX(s6),3), EX(s6)), EX(cMASK)));
+      assign(t7, AND( ILO8x16( ROR(EX(s7),3), EX(s7)), EX(cMASK)));
+
+      assign(p0, OR3( SHL(EX(t2),12), SHL(EX(t1),6), EX(t0) ));
+      assign(p1, OR4( SHL(EX(t5),14), SHL(EX(t4),8),
+                 SHL(EX(t3),2), SHR(EX(t2),4) ));
+      assign(p2, OR3( SHL(EX(t7),10), SHL(EX(t6),4), SHR(EX(t5),2) ));
+
+      // Then deinterleave at 16x8 granularity.
+      math_DEINTERLEAVE3_128(u0, u1, u2, 1, p0, p1, p2);
+      return;
+   }
+
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Do deinterleaving for 4 128 bit vectors, for LD4 insns. */
+static
+void math_DEINTERLEAVE4_128( 
+        /*OUTx4*/ IRTemp* u0, IRTemp* u1, IRTemp* u2, IRTemp* u3,
+        UInt laneSzBlg2,
+        IRTemp i0, IRTemp i1, IRTemp i2, IRTemp i3 )
+{
+   if (laneSzBlg2 == 3) {
+      // 64x2
+      assign(*u0, ILO64x2(EX(i2), EX(i0)));
+      assign(*u1, IHI64x2(EX(i2), EX(i0)));
+      assign(*u2, ILO64x2(EX(i3), EX(i1)));
+      assign(*u3, IHI64x2(EX(i3), EX(i1)));
+      return;
+   }
+   if (laneSzBlg2 == 2) {
+      // 32x4
+      IRTemp p0 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p3 = newTempV128();
+      assign(p0, ILO32x4(EX(i1), EX(i0)));
+      assign(p1, IHI32x4(EX(i1), EX(i0)));
+      assign(p2, ILO32x4(EX(i3), EX(i2)));
+      assign(p3, IHI32x4(EX(i3), EX(i2)));
+      // And now do what we did for the 64-bit case.
+      math_DEINTERLEAVE4_128(u0, u1, u2, u3, 3, p0, p1, p2, p3);
+      return;
+   }
+   if (laneSzBlg2 == 1) {
+      // 16x8
+      // Deinterleave into 32-bit chunks, then do as the 32-bit case.
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p3 = newTempV128();
+      assign(p0, IHI16x8(EX(i0), SHL(EX(i0), 8)));
+      assign(p1, IHI16x8(EX(i1), SHL(EX(i1), 8)));
+      assign(p2, IHI16x8(EX(i2), SHL(EX(i2), 8)));
+      assign(p3, IHI16x8(EX(i3), SHL(EX(i3), 8)));
+      // From here on is like the 32 bit case.
+      math_DEINTERLEAVE4_128(u0, u1, u2, u3, 2, p0, p1, p2, p3);
+      return;
+   }
+   if (laneSzBlg2 == 0) {
+      // 8x16
+      // Deinterleave into 16-bit chunks, then do as the 16-bit case.
+      IRTemp p0 = newTempV128();
+      IRTemp p1 = newTempV128();
+      IRTemp p2 = newTempV128();
+      IRTemp p3 = newTempV128();
+      assign(p0, IHI64x2( IHI8x16(EX(i0),ROL(EX(i0),4)),
+                          ILO8x16(EX(i0),ROL(EX(i0),4)) ));
+      assign(p1, IHI64x2( IHI8x16(EX(i1),ROL(EX(i1),4)),
+                          ILO8x16(EX(i1),ROL(EX(i1),4)) ));
+      assign(p2, IHI64x2( IHI8x16(EX(i2),ROL(EX(i2),4)),
+                          ILO8x16(EX(i2),ROL(EX(i2),4)) ));
+      assign(p3, IHI64x2( IHI8x16(EX(i3),ROL(EX(i3),4)),
+                          ILO8x16(EX(i3),ROL(EX(i3),4)) ));
+      // From here on is like the 16 bit case.
+      math_DEINTERLEAVE4_128(u0, u1, u2, u3, 1, p0, p1, p2, p3);
+      return;
+   }
+   /*NOTREACHED*/
+   vassert(0);
+}
+
+
+/* Wrappers that use the full-width (de)interleavers to do half-width
+   (de)interleaving.  The scheme is to clone each input lane in the
+   lower half of each incoming value, do a full width (de)interleave
+   at the next lane size up, and remove every other lane of the the
+   result.  The returned values may have any old junk in the upper
+   64 bits -- the caller must ignore that. */
+
+/* Helper function -- get doubling and narrowing operations. */
+static
+void math_get_doubler_and_halver ( /*OUT*/IROp* doubler,
+                                   /*OUT*/IROp* halver,
+                                   UInt laneSzBlg2 )
+{
+   switch (laneSzBlg2) {
+      case 2:
+         *doubler = Iop_InterleaveLO32x4; *halver = Iop_CatEvenLanes32x4;
+         break;
+      case 1:
+         *doubler = Iop_InterleaveLO16x8; *halver = Iop_CatEvenLanes16x8;
+         break;
+      case 0:
+         *doubler = Iop_InterleaveLO8x16; *halver = Iop_CatEvenLanes8x16;
+         break;
+      default:
+         vassert(0);
+   }
+}
+
+/* Do interleaving for 1 64 bit vector, for ST1 insns. */
+static
+void math_INTERLEAVE1_64( /*OUTx1*/ IRTemp* i0,
+                          UInt laneSzBlg2, IRTemp u0 )
+{
+   assign(*i0, mkexpr(u0));
+}
+
+
+/* Do interleaving for 2 64 bit vectors, for ST2 insns. */
+static
+void math_INTERLEAVE2_64( /*OUTx2*/ IRTemp* i0, IRTemp* i1,
+                          UInt laneSzBlg2, IRTemp u0, IRTemp u1 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*i0, EX(u0));
+      assign(*i1, EX(u1));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   assign(du0, binop(doubler, EX(u0), EX(u0)));
+   assign(du1, binop(doubler, EX(u1), EX(u1)));
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   math_INTERLEAVE2_128(&di0, &di1, laneSzBlg2 + 1, du0, du1);
+   assign(*i0, binop(halver, EX(di0), EX(di0)));
+   assign(*i1, binop(halver, EX(di1), EX(di1)));
+}
+
+
+/* Do interleaving for 3 64 bit vectors, for ST3 insns. */
+static
+void math_INTERLEAVE3_64( 
+        /*OUTx3*/ IRTemp* i0, IRTemp* i1, IRTemp* i2,
+        UInt laneSzBlg2,
+        IRTemp u0, IRTemp u1, IRTemp u2 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*i0, EX(u0));
+      assign(*i1, EX(u1));
+      assign(*i2, EX(u2));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   IRTemp du2 = newTempV128();
+   assign(du0, binop(doubler, EX(u0), EX(u0)));
+   assign(du1, binop(doubler, EX(u1), EX(u1)));
+   assign(du2, binop(doubler, EX(u2), EX(u2)));
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   IRTemp di2 = newTempV128();
+   math_INTERLEAVE3_128(&di0, &di1, &di2, laneSzBlg2 + 1, du0, du1, du2);
+   assign(*i0, binop(halver, EX(di0), EX(di0)));
+   assign(*i1, binop(halver, EX(di1), EX(di1)));
+   assign(*i2, binop(halver, EX(di2), EX(di2)));
+}
+
+
+/* Do interleaving for 4 64 bit vectors, for ST4 insns. */
+static
+void math_INTERLEAVE4_64( 
+        /*OUTx4*/ IRTemp* i0, IRTemp* i1, IRTemp* i2, IRTemp* i3,
+        UInt laneSzBlg2,
+        IRTemp u0, IRTemp u1, IRTemp u2, IRTemp u3 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*i0, EX(u0));
+      assign(*i1, EX(u1));
+      assign(*i2, EX(u2));
+      assign(*i3, EX(u3));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   IRTemp du2 = newTempV128();
+   IRTemp du3 = newTempV128();
+   assign(du0, binop(doubler, EX(u0), EX(u0)));
+   assign(du1, binop(doubler, EX(u1), EX(u1)));
+   assign(du2, binop(doubler, EX(u2), EX(u2)));
+   assign(du3, binop(doubler, EX(u3), EX(u3)));
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   IRTemp di2 = newTempV128();
+   IRTemp di3 = newTempV128();
+   math_INTERLEAVE4_128(&di0, &di1, &di2, &di3,
+                        laneSzBlg2 + 1, du0, du1, du2, du3);
+   assign(*i0, binop(halver, EX(di0), EX(di0)));
+   assign(*i1, binop(halver, EX(di1), EX(di1)));
+   assign(*i2, binop(halver, EX(di2), EX(di2)));
+   assign(*i3, binop(halver, EX(di3), EX(di3)));
+}
+
+
+/* Do deinterleaving for 1 64 bit vector, for LD1 insns. */
+static
+void math_DEINTERLEAVE1_64( /*OUTx1*/ IRTemp* u0,
+                            UInt laneSzBlg2, IRTemp i0 )
+{
+   assign(*u0, mkexpr(i0));
+}
+
+
+/* Do deinterleaving for 2 64 bit vectors, for LD2 insns. */
+static
+void math_DEINTERLEAVE2_64( /*OUTx2*/ IRTemp* u0, IRTemp* u1,
+                            UInt laneSzBlg2, IRTemp i0, IRTemp i1 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*u0, EX(i0));
+      assign(*u1, EX(i1));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   assign(di0, binop(doubler, EX(i0), EX(i0)));
+   assign(di1, binop(doubler, EX(i1), EX(i1)));
+
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   math_DEINTERLEAVE2_128(&du0, &du1, laneSzBlg2 + 1, di0, di1);
+   assign(*u0, binop(halver, EX(du0), EX(du0)));
+   assign(*u1, binop(halver, EX(du1), EX(du1)));
+}
+
+
+/* Do deinterleaving for 3 64 bit vectors, for LD3 insns. */
+static
+void math_DEINTERLEAVE3_64( 
+        /*OUTx3*/ IRTemp* u0, IRTemp* u1, IRTemp* u2,
+        UInt laneSzBlg2,
+        IRTemp i0, IRTemp i1, IRTemp i2 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*u0, EX(i0));
+      assign(*u1, EX(i1));
+      assign(*u2, EX(i2));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   IRTemp di2 = newTempV128();
+   assign(di0, binop(doubler, EX(i0), EX(i0)));
+   assign(di1, binop(doubler, EX(i1), EX(i1)));
+   assign(di2, binop(doubler, EX(i2), EX(i2)));
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   IRTemp du2 = newTempV128();
+   math_DEINTERLEAVE3_128(&du0, &du1, &du2, laneSzBlg2 + 1, di0, di1, di2);
+   assign(*u0, binop(halver, EX(du0), EX(du0)));
+   assign(*u1, binop(halver, EX(du1), EX(du1)));
+   assign(*u2, binop(halver, EX(du2), EX(du2)));
+}
+
+
+/* Do deinterleaving for 4 64 bit vectors, for LD4 insns. */
+static
+void math_DEINTERLEAVE4_64( 
+        /*OUTx4*/ IRTemp* u0, IRTemp* u1, IRTemp* u2, IRTemp* u3,
+        UInt laneSzBlg2,
+        IRTemp i0, IRTemp i1, IRTemp i2, IRTemp i3 )
+{
+   if (laneSzBlg2 == 3) {
+      // 1x64, degenerate case
+      assign(*u0, EX(i0));
+      assign(*u1, EX(i1));
+      assign(*u2, EX(i2));
+      assign(*u3, EX(i3));
+      return;
+   }
+
+   vassert(laneSzBlg2 >= 0 && laneSzBlg2 <= 2);
+   IROp doubler = Iop_INVALID, halver = Iop_INVALID;
+   math_get_doubler_and_halver(&doubler, &halver, laneSzBlg2);
+
+   IRTemp di0 = newTempV128();
+   IRTemp di1 = newTempV128();
+   IRTemp di2 = newTempV128();
+   IRTemp di3 = newTempV128();
+   assign(di0, binop(doubler, EX(i0), EX(i0)));
+   assign(di1, binop(doubler, EX(i1), EX(i1)));
+   assign(di2, binop(doubler, EX(i2), EX(i2)));
+   assign(di3, binop(doubler, EX(i3), EX(i3)));
+   IRTemp du0 = newTempV128();
+   IRTemp du1 = newTempV128();
+   IRTemp du2 = newTempV128();
+   IRTemp du3 = newTempV128();
+   math_DEINTERLEAVE4_128(&du0, &du1, &du2, &du3,
+                          laneSzBlg2 + 1, di0, di1, di2, di3);
+   assign(*u0, binop(halver, EX(du0), EX(du0)));
+   assign(*u1, binop(halver, EX(du1), EX(du1)));
+   assign(*u2, binop(halver, EX(du2), EX(du2)));
+   assign(*u3, binop(halver, EX(du3), EX(du3)));
+}
+
+
+#undef EX
+#undef SL
+#undef ROR
+#undef ROL
+#undef SHR
+#undef SHL
+#undef ILO64x2
+#undef IHI64x2
+#undef ILO32x4
+#undef IHI32x4
+#undef ILO16x8
+#undef IHI16x8
+#undef ILO16x8
+#undef IHI16x8
+#undef CEV32x4
+#undef COD32x4
+#undef COD16x8
+#undef COD8x16
+#undef CEV8x16
+#undef AND
+#undef OR2
+#undef OR3
+#undef OR4
+
+
+/*------------------------------------------------------------*/
 /*--- Load and Store instructions                          ---*/
 /*------------------------------------------------------------*/
 
@@ -3526,7 +4499,7 @@ static IRTemp gen_indexed_EA ( /*OUT*/HChar* buf, UInt insn, Bool isInt )
       case BITS3(0,1,0): break; // 32 bit, valid for both int and vec
       case BITS3(0,1,1): break; // 64 bit, valid for both int and vec
       case BITS3(1,0,0): // can only ever be valid for the vector case
-                         if (isInt) goto fail; else goto fail;
+                         if (isInt) goto fail; else break;
       case BITS3(1,0,1): // these sizes are never valid
       case BITS3(1,1,0):
       case BITS3(1,1,1): goto fail;
@@ -4250,21 +5223,21 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
       sz==11  isn't allowed
       simm7 is scaled by the (single-register) transfer size
 
-      31 29       22 21   14 9 4
-      sz 101 1001 L  imm7 t2 n t1   mmP SDQt1, SDQt2, [Xn|SP], #imm
-      (at-Rn-then-Rn=EA)
+      31 29  26   22 21   14 9 4
 
-      sz 101 1011 L  imm7 t2 n t1   mmP SDQt1, SDQt2, [Xn|SP, #imm]!
-      (at-EA-then-Rn=EA)
+      sz 101 1000 L  imm7 t2 n t1   mmNP SDQt1, SDQt2, [Xn|SP, #imm]
+                                    (at-EA, with nontemporal hint)
+
+      sz 101 1001 L  imm7 t2 n t1   mmP SDQt1, SDQt2, [Xn|SP], #imm
+                                    (at-Rn-then-Rn=EA)
 
       sz 101 1010 L  imm7 t2 n t1   mmP SDQt1, SDQt2, [Xn|SP, #imm]
-      (at-EA)
-   */
+                                    (at-EA)
 
-   UInt insn_29_23 = INSN(29,23);
-   if (insn_29_23 == BITS7(1,0,1,1,0,0,1) 
-       || insn_29_23 == BITS7(1,0,1,1,0,1,1)
-       || insn_29_23 == BITS7(1,0,1,1,0,1,0)) {
+      sz 101 1011 L  imm7 t2 n t1   mmP SDQt1, SDQt2, [Xn|SP, #imm]!
+                                    (at-EA-then-Rn=EA)
+   */
+   if (INSN(29,25) == BITS5(1,0,1,1,0)) {
       UInt szSlg2 = INSN(31,30); // log2 of the xfer size in 32-bit units
       Bool isLD   = INSN(22,22) == 1;
       Bool wBack  = INSN(23,23) == 1;
@@ -4293,6 +5266,7 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
             case BITS2(1,1):
                assign(tTA, mkexpr(tEA)); assign(tWA, mkexpr(tEA)); break;
             case BITS2(1,0):
+            case BITS2(0,0):
                assign(tTA, mkexpr(tEA)); /* tWA is unused */ break;
             default:
                vassert(0); /* NOTREACHED */
@@ -4358,6 +5332,9 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
             case BITS2(1,0):
                fmt_str = "%sp %s, %s, [%s, #%lld] (at-Rn)\n";
                break;
+            case BITS2(0,0):
+               fmt_str = "%snp %s, %s, [%s, #%lld] (at-Rn)\n";
+               break;
             default:
                vassert(0);
          }
@@ -4389,7 +5366,7 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
       UInt   szLg2 = (INSN(23,23) << 2) | INSN(31,30);
       Bool   isLD  = INSN(22,22) == 1;
       UInt   tt    = INSN(4,0);
-      if (szLg2 >= 4) goto after_LDR_STR_vector_register;
+      if (szLg2 > 4) goto after_LDR_STR_vector_register;
       IRTemp ea    = gen_indexed_EA(dis_buf, insn, False/*to/from vec regs*/);
       if (ea == IRTemp_INVALID) goto after_LDR_STR_vector_register;
       switch (szLg2) {
@@ -4433,8 +5410,17 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
                DIP("str %s, %s\n", nameQRegLO(tt, Ity_I64), dis_buf);
             }
             break;
-         case 4:  return False; //ATC
-         default: vassert(0);
+         case 4:
+            if (isLD) {
+               putQReg128(tt, loadLE(Ity_V128, mkexpr(ea)));
+               DIP("ldr %s, %s\n", nameQReg128(tt), dis_buf);
+            } else {
+               storeLE(mkexpr(ea), getQReg128(tt));
+               DIP("str %s, %s\n", nameQReg128(tt), dis_buf);
+            }
+            break;
+         default:
+            vassert(0);
       }
       return True;
    }
@@ -4643,408 +5629,666 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
-   /* ---------- LD1/ST1 (single structure, no offset) ---------- */
-   /* 31        23
-      0100 1100 0100 0000 0111 11 N T   LD1 {vT.2d},  [Xn|SP]
-      0100 1100 0000 0000 0111 11 N T   ST1 {vT.2d},  [Xn|SP]
-      0100 1100 0100 0000 0111 10 N T   LD1 {vT.4s},  [Xn|SP]
-      0100 1100 0000 0000 0111 10 N T   ST1 {vT.4s},  [Xn|SP]
-      0100 1100 0100 0000 0111 01 N T   LD1 {vT.8h},  [Xn|SP]
-      0100 1100 0000 0000 0111 01 N T   ST1 {vT.8h},  [Xn|SP]
-      0100 1100 0100 0000 0111 00 N T   LD1 {vT.16b}, [Xn|SP]
-      0100 1100 0000 0000 0111 00 N T   ST1 {vT.16b}, [Xn|SP]
-      FIXME does this assume that the host is little endian?
+   /* ------ LD1/ST1 (multiple 1-elem structs to/from 1 reg  ------ */
+   /* ------ LD2/ST2 (multiple 2-elem structs to/from 2 regs ------ */
+   /* ------ LD3/ST3 (multiple 3-elem structs to/from 3 regs ------ */
+   /* ------ LD4/ST4 (multiple 4-elem structs to/from 4 regs ------ */
+   /* 31 29  26   22 21 20    15   11 9 4    
+
+      0q 001 1000 L  0  00000 0000 sz n t  xx4 {Vt..t+3.T}, [Xn|SP]
+      0q 001 1001 L  0  m     0000 sz n t  xx4 {Vt..t+3.T}, [Xn|SP], step
+
+      0q 001 1000 L  0  00000 0100 sz n t  xx3 {Vt..t+2.T}, [Xn|SP]
+      0q 001 1001 L  0  m     0100 sz n t  xx3 {Vt..t+2.T}, [Xn|SP], step
+
+      0q 001 1000 L  0  00000 1000 sz n t  xx2 {Vt..t+1.T}, [Xn|SP]
+      0q 001 1001 L  0  m     1000 sz n t  xx2 {Vt..t+1.T}, [Xn|SP], step
+
+      0q 001 1000 L  0  00000 0111 sz n t  xx1 {Vt.T},      [Xn|SP]
+      0q 001 1001 L  0  m     0111 sz n t  xx1 {Vt.T},      [Xn|SP], step
+
+      T    = defined by Q and sz in the normal way
+      step = if m == 11111 then transfer-size else Xm
+      xx   = case L of 1 -> LD ; 0 -> ST
    */
-   if (   (insn & 0xFFFFF000) == 0x4C407000 // LD1 cases
-       || (insn & 0xFFFFF000) == 0x4C007000 // ST1 cases
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* names[4] = { "2d", "4s", "8h", "16b" };
-      const HChar* name = names[INSN(11,10)];
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      if (isLD) {
-         putQReg128(vT, loadLE(Ity_V128, mkexpr(tEA)));
-      } else {
-         storeLE(mkexpr(tEA), getQReg128(vT));
+   if (INSN(31,31) == 0 && INSN(29,24) == BITS6(0,0,1,1,0,0)
+       && INSN(21,21) == 0) {
+      Bool bitQ  = INSN(30,30);
+      Bool isPX  = INSN(23,23) == 1;
+      Bool isLD  = INSN(22,22) == 1;
+      UInt mm    = INSN(20,16);
+      UInt opc   = INSN(15,12);
+      UInt sz    = INSN(11,10);
+      UInt nn    = INSN(9,5);
+      UInt tt    = INSN(4,0);
+      Bool isQ   = bitQ == 1;
+      Bool is1d  = sz == BITS2(1,1) && !isQ;
+      UInt nRegs = 0;
+      switch (opc) {
+         case BITS4(0,0,0,0): nRegs = 4; break;
+         case BITS4(0,1,0,0): nRegs = 3; break;
+         case BITS4(1,0,0,0): nRegs = 2; break;
+         case BITS4(0,1,1,1): nRegs = 1; break;
+         default: break;
       }
-      DIP("%s {v%u.%s}, [%s]\n", isLD ? "ld1" : "st1",
-          vT, name, nameIReg64orSP(rN));
-      return True;
+
+      /* The combination insn[23] == 0 && insn[20:16] != 0 is not allowed.
+         If we see it, set nRegs to 0 so as to cause the next conditional
+         to fail. */
+      if (!isPX && mm != 0)
+         nRegs = 0;
+      
+      if (nRegs == 1                             /* .1d is allowed */
+          || (nRegs >= 2 && nRegs <= 4 && !is1d) /* .1d is not allowed */) {
+
+         UInt xferSzB = (isQ ? 16 : 8) * nRegs;
+
+         /* Generate the transfer address (TA) and if necessary the
+            writeback address (WB) */
+         IRTemp tTA = newTemp(Ity_I64);
+         assign(tTA, getIReg64orSP(nn));
+         if (nn == 31) { /* FIXME generate stack alignment check */ }
+         IRTemp tWB = IRTemp_INVALID;
+         if (isPX) {
+            tWB = newTemp(Ity_I64);
+            assign(tWB, binop(Iop_Add64,
+                              mkexpr(tTA), 
+                              mm == BITS5(1,1,1,1,1) ? mkU64(xferSzB)
+                                                     : getIReg64orZR(mm)));
+         }
+
+         /* -- BEGIN generate the transfers -- */
+
+         IRTemp u0, u1, u2, u3, i0, i1, i2, i3;
+         u0 = u1 = u2 = u3 = i0 = i1 = i2 = i3 = IRTemp_INVALID;
+         switch (nRegs) {
+            case 4: u3 = newTempV128(); i3 = newTempV128(); /* fallthru */
+            case 3: u2 = newTempV128(); i2 = newTempV128(); /* fallthru */
+            case 2: u1 = newTempV128(); i1 = newTempV128(); /* fallthru */
+            case 1: u0 = newTempV128(); i0 = newTempV128(); break;
+            default: vassert(0);
+         }
+
+         /* -- Multiple 128 or 64 bit stores -- */
+         if (!isLD) {
+            switch (nRegs) {
+               case 4: assign(u3, getQReg128((tt+3) % 32)); /* fallthru */
+               case 3: assign(u2, getQReg128((tt+2) % 32)); /* fallthru */
+               case 2: assign(u1, getQReg128((tt+1) % 32)); /* fallthru */
+               case 1: assign(u0, getQReg128((tt+0) % 32)); break;
+               default: vassert(0);
+            }
+            switch (nRegs) {
+               case 4:  (isQ ? math_INTERLEAVE4_128 : math_INTERLEAVE4_64)
+                           (&i0, &i1, &i2, &i3, sz, u0, u1, u2, u3);
+                        break;
+               case 3:  (isQ ? math_INTERLEAVE3_128 : math_INTERLEAVE3_64)
+                           (&i0, &i1, &i2, sz, u0, u1, u2);
+                        break;
+               case 2:  (isQ ? math_INTERLEAVE2_128 : math_INTERLEAVE2_64)
+                           (&i0, &i1, sz, u0, u1);
+                        break;
+               case 1:  (isQ ? math_INTERLEAVE1_128 : math_INTERLEAVE1_64)
+                           (&i0, sz, u0);
+                        break;
+               default: vassert(0);
+            }
+#           define MAYBE_NARROW_TO_64(_expr) \
+                      (isQ ? (_expr) : unop(Iop_V128to64,(_expr)))
+            UInt step = isQ ? 16 : 8;
+            switch (nRegs) {
+               case 4:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(3*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(i3)) );
+                        /* fallthru */
+               case 3:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(2*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(i2)) );
+                        /* fallthru */
+               case 2:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(1*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(i1)) );
+                        /* fallthru */
+               case 1:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(0*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(i0)) );
+                        break;
+               default: vassert(0);
+            }
+#           undef MAYBE_NARROW_TO_64
+         }
+
+         /* -- Multiple 128 or 64 bit loads -- */
+         else /* isLD */ {
+            UInt   step   = isQ ? 16 : 8;
+            IRType loadTy = isQ ? Ity_V128 : Ity_I64;
+#           define MAYBE_WIDEN_FROM_64(_expr) \
+                      (isQ ? (_expr) : unop(Iop_64UtoV128,(_expr)))
+            switch (nRegs) {
+               case 4:
+                  assign(i3, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(3 * step)))));
+                  /* fallthru */
+               case 3:
+                  assign(i2, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(2 * step)))));
+                  /* fallthru */
+               case 2:
+                  assign(i1, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(1 * step)))));
+                  /* fallthru */
+               case 1:
+                  assign(i0, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(0 * step)))));
+                  break;
+               default:
+                  vassert(0);
+            }
+#           undef MAYBE_WIDEN_FROM_64
+            switch (nRegs) {
+               case 4:  (isQ ? math_DEINTERLEAVE4_128 : math_DEINTERLEAVE4_64)
+                           (&u0, &u1, &u2, &u3, sz, i0,i1,i2,i3);
+                        break;
+               case 3:  (isQ ? math_DEINTERLEAVE3_128 : math_DEINTERLEAVE3_64)
+                           (&u0, &u1, &u2, sz, i0, i1, i2);
+                        break;
+               case 2:  (isQ ? math_DEINTERLEAVE2_128 : math_DEINTERLEAVE2_64)
+                           (&u0, &u1, sz, i0, i1);
+                        break;
+               case 1:  (isQ ? math_DEINTERLEAVE1_128 : math_DEINTERLEAVE1_64)
+                           (&u0, sz, i0);
+                        break;
+               default: vassert(0);
+            }
+            switch (nRegs) {
+               case 4:  putQReg128( (tt+3) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u3));
+                        /* fallthru */
+               case 3:  putQReg128( (tt+2) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u2));
+                        /* fallthru */
+               case 2:  putQReg128( (tt+1) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u1));
+                        /* fallthru */
+               case 1:  putQReg128( (tt+0) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u0));
+                        break;
+               default: vassert(0);
+            }
+         }
+
+         /* -- END generate the transfers -- */
+
+         /* Do the writeback, if necessary */
+         if (isPX) {
+            putIReg64orSP(nn, mkexpr(tWB));
+         }            
+
+         HChar pxStr[20];
+         pxStr[0] = pxStr[sizeof(pxStr)-1] = 0;
+         if (isPX) {
+            if (mm == BITS5(1,1,1,1,1))
+               vex_sprintf(pxStr, ", #%u", xferSzB);
+            else
+               vex_sprintf(pxStr, ", %s", nameIReg64orZR(mm));
+         }
+         const HChar* arr = nameArr_Q_SZ(bitQ, sz);
+         DIP("%s%u {v%u.%s .. v%u.%s}, [%s]%s\n",
+             isLD ? "ld" : "st", nRegs,
+             (tt+0) % 32, arr, (tt+nRegs-1) % 32, arr, nameIReg64orSP(nn),
+             pxStr);
+
+         return True;
+      }
+      /* else fall through */
    }
 
-   /* 31        23
-      0000 1100 0100 0000 0111 11 N T   LD1 {vT.1d}, [Xn|SP]
-      0000 1100 0000 0000 0111 11 N T   ST1 {vT.1d}, [Xn|SP]
-      0000 1100 0100 0000 0111 10 N T   LD1 {vT.2s}, [Xn|SP]
-      0000 1100 0000 0000 0111 10 N T   ST1 {vT.2s}, [Xn|SP]
-      0000 1100 0100 0000 0111 01 N T   LD1 {vT.4h}, [Xn|SP]
-      0000 1100 0000 0000 0111 01 N T   ST1 {vT.4h}, [Xn|SP]
-      0000 1100 0100 0000 0111 00 N T   LD1 {vT.8b}, [Xn|SP]
-      0000 1100 0000 0000 0111 00 N T   ST1 {vT.8b}, [Xn|SP]
-      FIXME does this assume that the host is little endian?
-   */
-   if (   (insn & 0xFFFFF000) == 0x0C407000 // LD1 cases
-       || (insn & 0xFFFFF000) == 0x0C007000 // ST1 cases
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* names[4] = { "1d", "2s", "4h", "8b" };
-      const HChar* name = names[INSN(11,10)];
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      if (isLD) {
-         putQRegLane(vT, 0, loadLE(Ity_I64, mkexpr(tEA)));
-         putQRegLane(vT, 1, mkU64(0));
-      } else {
-         storeLE(mkexpr(tEA), getQRegLane(vT, 0, Ity_I64));
-      }
-      DIP("%s {v%u.%s}, [%s]\n", isLD ? "ld1" : "st1",
-          vT, name, nameIReg64orSP(rN));
-      return True;
-   }
+   /* ------ LD1/ST1 (multiple 1-elem structs to/from 2 regs  ------ */
+   /* ------ LD1/ST1 (multiple 1-elem structs to/from 3 regs  ------ */
+   /* ------ LD1/ST1 (multiple 1-elem structs to/from 4 regs  ------ */
+   /* 31 29  26   22 21 20    15   11 9 4    
 
-   /* ---------- LD1/ST1 (single structure, post index) ---------- */
-   /* 31        23
-      0100 1100 1001 1111 0111 11 N T  ST1 {vT.2d},  [xN|SP], #16
-      0100 1100 1101 1111 0111 11 N T  LD1 {vT.2d},  [xN|SP], #16
-      0100 1100 1001 1111 0111 10 N T  ST1 {vT.4s},  [xN|SP], #16
-      0100 1100 1101 1111 0111 10 N T  LD1 {vT.4s},  [xN|SP], #16
-      0100 1100 1001 1111 0111 01 N T  ST1 {vT.8h},  [xN|SP], #16
-      0100 1100 1101 1111 0111 01 N T  LD1 {vT.8h},  [xN|SP], #16
-      0100 1100 1001 1111 0111 00 N T  ST1 {vT.16b}, [xN|SP], #16
-      0100 1100 1101 1111 0111 00 N T  LD1 {vT.16b}, [xN|SP], #16
-      Note that #16 is implied and cannot be any other value.
-      FIXME does this assume that the host is little endian?
-   */
-   if (   (insn & 0xFFFFF000) == 0x4CDF7000 // LD1 cases
-       || (insn & 0xFFFFF000) == 0x4C9F7000 // ST1 cases
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* names[4] = { "2d", "4s", "8h", "16b" };
-      const HChar* name = names[INSN(11,10)];
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      if (isLD) {
-         putQReg128(vT, loadLE(Ity_V128, mkexpr(tEA)));
-      } else {
-         storeLE(mkexpr(tEA), getQReg128(vT));
-      }
-      putIReg64orSP(rN, binop(Iop_Add64, mkexpr(tEA), mkU64(16)));
-      DIP("%s {v%u.%s}, [%s], #16\n", isLD ? "ld1" : "st1",
-          vT, name, nameIReg64orSP(rN));
-      return True;
-   }
+      0q 001 1000 L  0  00000 0010 sz n t  xx1 {Vt..t+3.T}, [Xn|SP]
+      0q 001 1001 L  0  m     0010 sz n t  xx1 {Vt..t+3.T}, [Xn|SP], step
 
-   /* 31        23
-      0000 1100 1001 1111 0111 11 N T  ST1 {vT.1d}, [xN|SP], #8
-      0000 1100 1101 1111 0111 11 N T  LD1 {vT.1d}, [xN|SP], #8
-      0000 1100 1001 1111 0111 10 N T  ST1 {vT.2s}, [xN|SP], #8
-      0000 1100 1101 1111 0111 10 N T  LD1 {vT.2s}, [xN|SP], #8
-      0000 1100 1001 1111 0111 01 N T  ST1 {vT.4h}, [xN|SP], #8
-      0000 1100 1101 1111 0111 01 N T  LD1 {vT.4h}, [xN|SP], #8
-      0000 1100 1001 1111 0111 00 N T  ST1 {vT.8b}, [xN|SP], #8
-      0000 1100 1101 1111 0111 00 N T  LD1 {vT.8b}, [xN|SP], #8
-      Note that #8 is implied and cannot be any other value.
-      FIXME does this assume that the host is little endian?
+      0q 001 1000 L  0  00000 0110 sz n t  xx1 {Vt..t+2.T}, [Xn|SP]
+      0q 001 1001 L  0  m     0110 sz n t  xx1 {Vt..t+2.T}, [Xn|SP], step
+
+      0q 001 1000 L  0  00000 1010 sz n t  xx1 {Vt..t+1.T}, [Xn|SP]
+      0q 001 1001 L  0  m     1010 sz n t  xx1 {Vt..t+1.T}, [Xn|SP], step
+
+      T    = defined by Q and sz in the normal way
+      step = if m == 11111 then transfer-size else Xm
+      xx   = case L of 1 -> LD ; 0 -> ST
    */
-   if (   (insn & 0xFFFFF000) == 0x0CDF7000 // LD1 cases
-       || (insn & 0xFFFFF000) == 0x0C9F7000 // ST1 cases
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN  = INSN(9,5);
-      UInt   vT  = INSN(4,0);
-      IRTemp tEA = newTemp(Ity_I64);
-      const HChar* names[4] = { "1d", "2s", "4h", "8b" };
-      const HChar* name = names[INSN(11,10)];
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      if (isLD) {
-         putQRegLane(vT, 0, loadLE(Ity_I64, mkexpr(tEA)));
-         putQRegLane(vT, 1, mkU64(0));
-      } else {
-         storeLE(mkexpr(tEA), getQRegLane(vT, 0, Ity_I64));
+   if (INSN(31,31) == 0 && INSN(29,24) == BITS6(0,0,1,1,0,0)
+       && INSN(21,21) == 0) {
+      Bool bitQ  = INSN(30,30);
+      Bool isPX  = INSN(23,23) == 1;
+      Bool isLD  = INSN(22,22) == 1;
+      UInt mm    = INSN(20,16);
+      UInt opc   = INSN(15,12);
+      UInt sz    = INSN(11,10);
+      UInt nn    = INSN(9,5);
+      UInt tt    = INSN(4,0);
+      Bool isQ   = bitQ == 1;
+      UInt nRegs = 0;
+      switch (opc) {
+         case BITS4(0,0,1,0): nRegs = 4; break;
+         case BITS4(0,1,1,0): nRegs = 3; break;
+         case BITS4(1,0,1,0): nRegs = 2; break;
+         default: break;
       }
-      putIReg64orSP(rN, binop(Iop_Add64, mkexpr(tEA), mkU64(8)));
-      DIP("%s {v%u.%s}, [%s], #8\n",  isLD ? "ld1" : "st1",
-          vT, name, nameIReg64orSP(rN));
-      return True;
+      
+      /* The combination insn[23] == 0 && insn[20:16] != 0 is not allowed.
+         If we see it, set nRegs to 0 so as to cause the next conditional
+         to fail. */
+      if (!isPX && mm != 0)
+         nRegs = 0;
+      
+      if (nRegs >= 2 && nRegs <= 4) {
+
+         UInt xferSzB = (isQ ? 16 : 8) * nRegs;
+
+         /* Generate the transfer address (TA) and if necessary the
+            writeback address (WB) */
+         IRTemp tTA = newTemp(Ity_I64);
+         assign(tTA, getIReg64orSP(nn));
+         if (nn == 31) { /* FIXME generate stack alignment check */ }
+         IRTemp tWB = IRTemp_INVALID;
+         if (isPX) {
+            tWB = newTemp(Ity_I64);
+            assign(tWB, binop(Iop_Add64,
+                              mkexpr(tTA), 
+                              mm == BITS5(1,1,1,1,1) ? mkU64(xferSzB)
+                                                     : getIReg64orZR(mm)));
+         }
+
+         /* -- BEGIN generate the transfers -- */
+
+         IRTemp u0, u1, u2, u3;
+         u0 = u1 = u2 = u3 = IRTemp_INVALID;
+         switch (nRegs) {
+            case 4: u3 = newTempV128(); /* fallthru */
+            case 3: u2 = newTempV128(); /* fallthru */
+            case 2: u1 = newTempV128();
+                    u0 = newTempV128(); break;
+            default: vassert(0);
+         }
+
+         /* -- Multiple 128 or 64 bit stores -- */
+         if (!isLD) {
+            switch (nRegs) {
+               case 4: assign(u3, getQReg128((tt+3) % 32)); /* fallthru */
+               case 3: assign(u2, getQReg128((tt+2) % 32)); /* fallthru */
+               case 2: assign(u1, getQReg128((tt+1) % 32));
+                       assign(u0, getQReg128((tt+0) % 32)); break;
+               default: vassert(0);
+            }
+#           define MAYBE_NARROW_TO_64(_expr) \
+                      (isQ ? (_expr) : unop(Iop_V128to64,(_expr)))
+            UInt step = isQ ? 16 : 8;
+            switch (nRegs) {
+               case 4:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(3*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(u3)) );
+                        /* fallthru */
+               case 3:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(2*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(u2)) );
+                        /* fallthru */
+               case 2:  storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(1*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(u1)) );
+                        storeLE( binop(Iop_Add64, mkexpr(tTA), mkU64(0*step)),
+                                 MAYBE_NARROW_TO_64(mkexpr(u0)) );
+                        break;
+               default: vassert(0);
+            }
+#           undef MAYBE_NARROW_TO_64
+         }
+
+         /* -- Multiple 128 or 64 bit loads -- */
+         else /* isLD */ {
+            UInt   step   = isQ ? 16 : 8;
+            IRType loadTy = isQ ? Ity_V128 : Ity_I64;
+#           define MAYBE_WIDEN_FROM_64(_expr) \
+                      (isQ ? (_expr) : unop(Iop_64UtoV128,(_expr)))
+            switch (nRegs) {
+               case 4:
+                  assign(u3, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(3 * step)))));
+                  /* fallthru */
+               case 3:
+                  assign(u2, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(2 * step)))));
+                  /* fallthru */
+               case 2:
+                  assign(u1, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(1 * step)))));
+                  assign(u0, MAYBE_WIDEN_FROM_64(
+                                loadLE(loadTy,
+                                       binop(Iop_Add64, mkexpr(tTA),
+                                                        mkU64(0 * step)))));
+                  break;
+               default:
+                  vassert(0);
+            }
+#           undef MAYBE_WIDEN_FROM_64
+            switch (nRegs) {
+               case 4:  putQReg128( (tt+3) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u3));
+                        /* fallthru */
+               case 3:  putQReg128( (tt+2) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u2));
+                        /* fallthru */
+               case 2:  putQReg128( (tt+1) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u1));
+                        putQReg128( (tt+0) % 32,
+                                    math_MAYBE_ZERO_HI64(bitQ, u0));
+                        break;
+               default: vassert(0);
+            }
+         }
+
+         /* -- END generate the transfers -- */
+
+         /* Do the writeback, if necessary */
+         if (isPX) {
+            putIReg64orSP(nn, mkexpr(tWB));
+         }            
+
+         HChar pxStr[20];
+         pxStr[0] = pxStr[sizeof(pxStr)-1] = 0;
+         if (isPX) {
+            if (mm == BITS5(1,1,1,1,1))
+               vex_sprintf(pxStr, ", #%u", xferSzB);
+            else
+               vex_sprintf(pxStr, ", %s", nameIReg64orZR(mm));
+         }
+         const HChar* arr = nameArr_Q_SZ(bitQ, sz);
+         DIP("%s1 {v%u.%s .. v%u.%s}, [%s]%s\n",
+             isLD ? "ld" : "st",
+             (tt+0) % 32, arr, (tt+nRegs-1) % 32, arr, nameIReg64orSP(nn),
+             pxStr);
+
+         return True;
+      }
+      /* else fall through */
    }
 
    /* ---------- LD1R (single structure, replicate) ---------- */
+   /* ---------- LD2R (single structure, replicate) ---------- */
+   /* ---------- LD3R (single structure, replicate) ---------- */
+   /* ---------- LD4R (single structure, replicate) ---------- */
    /* 31 29       22 20    15    11 9 4    
-      0q 001 1010 10 00000 110 0 sz n t  LD1R Vt.T, [Xn|SP]
-      0q 001 1011 10 m     110 0 sz n t  LD1R Vt.T, [Xn|SP], #sz (m=11111)
-                                                           , Xm  (m!=11111)
+      0q 001 1010 10 00000 110 0 sz n t  LD1R {Vt.T}, [Xn|SP]
+      0q 001 1011 10 m     110 0 sz n t  LD1R {Vt.T}, [Xn|SP], step
+
+      0q 001 1010 11 00000 110 0 sz n t  LD2R {Vt..t+1.T}, [Xn|SP]
+      0q 001 1011 11 m     110 0 sz n t  LD2R {Vt..t+1.T}, [Xn|SP], step
+
+      0q 001 1010 10 00000 111 0 sz n t  LD3R {Vt..t+2.T}, [Xn|SP]
+      0q 001 1011 10 m     111 0 sz n t  LD3R {Vt..t+2.T}, [Xn|SP], step
+
+      0q 001 1010 11 00000 111 0 sz n t  LD4R {Vt..t+3.T}, [Xn|SP]
+      0q 001 1011 11 m     111 0 sz n t  LD4R {Vt..t+3.T}, [Xn|SP], step
+
+      step = if m == 11111 then transfer-size else Xm
    */
    if (INSN(31,31) == 0 && INSN(29,24) == BITS6(0,0,1,1,0,1)
-       && INSN(22,21) == BITS2(1,0) && INSN(15,12) == BITS4(1,1,0,0)) {
-      UInt   bitQ = INSN(30,30);
-      Bool   isPX = INSN(23,23) == 1;
-      UInt   mm   = INSN(20,16);
-      UInt   sz   = INSN(11,10);
-      UInt   nn   = INSN(9,5);
-      UInt   tt   = INSN(4,0);
-      IRType ty   = integerIRTypeOfSize(1 << sz);
-      IRTemp tEA  = newTemp(Ity_I64);
-      assign(tEA, getIReg64orSP(nn));
-      if (nn == 31) { /* FIXME generate stack alignment check */ }
-      IRTemp loaded = newTemp(ty);
-      assign(loaded, loadLE(ty, mkexpr(tEA)));
-      IRTemp dupd = math_DUP_TO_V128(loaded, ty);
-      putQReg128(tt, math_MAYBE_ZERO_HI64(bitQ, dupd));
-      const HChar* arr = nameArr_Q_SZ(bitQ, sz);
-      /* Deal with the writeback, if any. */
-      if (!isPX && mm == BITS5(0,0,0,0,0)) {
-         /* No writeback. */
-         DIP("ld1r v%u.%s, [%s]\n", tt, arr, nameIReg64orSP(nn));
+       && INSN(22,22) == 1 && INSN(15,14) == BITS2(1,1)
+       && INSN(12,12) == 0) {
+      UInt   bitQ  = INSN(30,30);
+      Bool   isPX  = INSN(23,23) == 1;
+      UInt   nRegs = ((INSN(13,13) << 1) | INSN(21,21)) + 1;
+      UInt   mm    = INSN(20,16);
+      UInt   sz    = INSN(11,10);
+      UInt   nn    = INSN(9,5);
+      UInt   tt    = INSN(4,0);
+
+      /* The combination insn[23] == 0 && insn[20:16] != 0 is not allowed. */
+      if (isPX || mm == 0) {
+
+         IRType ty    = integerIRTypeOfSize(1 << sz);
+
+         UInt laneSzB = 1 << sz;
+         UInt xferSzB = laneSzB * nRegs;
+
+         /* Generate the transfer address (TA) and if necessary the
+            writeback address (WB) */
+         IRTemp tTA = newTemp(Ity_I64);
+         assign(tTA, getIReg64orSP(nn));
+         if (nn == 31) { /* FIXME generate stack alignment check */ }
+         IRTemp tWB = IRTemp_INVALID;
+         if (isPX) {
+            tWB = newTemp(Ity_I64);
+            assign(tWB, binop(Iop_Add64,
+                              mkexpr(tTA), 
+                              mm == BITS5(1,1,1,1,1) ? mkU64(xferSzB)
+                                                     : getIReg64orZR(mm)));
+         }
+
+         /* Do the writeback, if necessary */
+         if (isPX) {
+            putIReg64orSP(nn, mkexpr(tWB));
+         }            
+
+         IRTemp e0, e1, e2, e3, v0, v1, v2, v3;
+         e0 = e1 = e2 = e3 = v0 = v1 = v2 = v3 = IRTemp_INVALID;
+         switch (nRegs) {
+            case 4:
+               e3 = newTemp(ty);
+               assign(e3, loadLE(ty, binop(Iop_Add64, mkexpr(tTA),
+                                                      mkU64(3 * laneSzB))));
+               v3 = math_DUP_TO_V128(e3, ty);
+               putQReg128((tt+3) % 32, math_MAYBE_ZERO_HI64(bitQ, v3));
+               /* fallthrough */
+            case 3:
+               e2 = newTemp(ty);
+               assign(e2, loadLE(ty, binop(Iop_Add64, mkexpr(tTA),
+                                                      mkU64(2 * laneSzB))));
+               v2 = math_DUP_TO_V128(e2, ty);
+               putQReg128((tt+2) % 32, math_MAYBE_ZERO_HI64(bitQ, v2));
+               /* fallthrough */
+            case 2:
+               e1 = newTemp(ty);
+               assign(e1, loadLE(ty, binop(Iop_Add64, mkexpr(tTA),
+                                                      mkU64(1 * laneSzB))));
+               v1 = math_DUP_TO_V128(e1, ty);
+               putQReg128((tt+1) % 32, math_MAYBE_ZERO_HI64(bitQ, v1));
+               /* fallthrough */
+            case 1:
+               e0 = newTemp(ty);
+               assign(e0, loadLE(ty, binop(Iop_Add64, mkexpr(tTA),
+                                                      mkU64(0 * laneSzB))));
+               v0 = math_DUP_TO_V128(e0, ty);
+               putQReg128((tt+0) % 32, math_MAYBE_ZERO_HI64(bitQ, v0));
+               break;
+            default:
+               vassert(0);
+         }
+
+         HChar pxStr[20];
+         pxStr[0] = pxStr[sizeof(pxStr)-1] = 0;
+         if (isPX) {
+            if (mm == BITS5(1,1,1,1,1))
+               vex_sprintf(pxStr, ", #%u", xferSzB);
+            else
+               vex_sprintf(pxStr, ", %s", nameIReg64orZR(mm));
+         }
+         const HChar* arr = nameArr_Q_SZ(bitQ, sz);
+         DIP("ld%ur {v%u.%s .. v%u.%s}, [%s]%s\n",
+             nRegs,
+             (tt+0) % 32, arr, (tt+nRegs-1) % 32, arr, nameIReg64orSP(nn),
+             pxStr);
+
          return True;
       }
-      if (isPX) {
-         putIReg64orSP(nn, binop(Iop_Add64, mkexpr(tEA), 
-                                 mm == BITS5(1,1,1,1,1) ? mkU64(1 << sz)
-                                                        : getIReg64orZR(mm)));
-         if (mm == BITS5(1,1,1,1,1)) {
-            DIP("ld1r v%u.%s, [%s], %s\n", tt, arr,
-                nameIReg64orSP(nn), nameIReg64orZR(mm));
-         } else {
-            DIP("ld1r v%u.%s, [%s], #%u\n", tt, arr,
-                nameIReg64orSP(nn), 1 << sz);
+      /* else fall through */
+   }
+
+   /* ------ LD1/ST1 (single structure, to/from one lane) ------ */
+   /* ------ LD2/ST2 (single structure, to/from one lane) ------ */
+   /* ------ LD3/ST3 (single structure, to/from one lane) ------ */
+   /* ------ LD4/ST4 (single structure, to/from one lane) ------ */
+   /* 31 29       22 21 20    15    11 9 4    
+      0q 001 1010 L  0  00000 xx0 S sz n t  op1 {Vt.T}[ix], [Xn|SP]
+      0q 001 1011 L  0  m     xx0 S sz n t  op1 {Vt.T}[ix], [Xn|SP], step
+
+      0q 001 1010 L  1  00000 xx0 S sz n t  op2 {Vt..t+1.T}[ix], [Xn|SP]
+      0q 001 1011 L  1  m     xx0 S sz n t  op2 {Vt..t+1.T}[ix], [Xn|SP], step
+
+      0q 001 1010 L  0  00000 xx1 S sz n t  op3 {Vt..t+2.T}[ix], [Xn|SP]
+      0q 001 1011 L  0  m     xx1 S sz n t  op3 {Vt..t+2.T}[ix], [Xn|SP], step
+
+      0q 001 1010 L  1  00000 xx1 S sz n t  op4 {Vt..t+3.T}[ix], [Xn|SP]
+      0q 001 1011 L  1  m     xx1 S sz n t  op4 {Vt..t+3.T}[ix], [Xn|SP], step
+
+      step = if m == 11111 then transfer-size else Xm
+      op   = case L of 1 -> LD ; 0 -> ST
+
+      laneszB,ix = case xx:q:S:sz of 00:b:b:bb -> 1, bbbb
+                                     01:b:b:b0 -> 2, bbb
+                                     10:b:b:00 -> 4, bb
+                                     10:b:0:01 -> 8, b
+   */
+   if (INSN(31,31) == 0 && INSN(29,24) == BITS6(0,0,1,1,0,1)) {
+      UInt   bitQ  = INSN(30,30);
+      Bool   isPX  = INSN(23,23) == 1;
+      Bool   isLD  = INSN(22,22) == 1;
+      UInt   nRegs = ((INSN(13,13) << 1) | INSN(21,21)) + 1;
+      UInt   mm    = INSN(20,16);
+      UInt   xx    = INSN(15,14);
+      UInt   bitS  = INSN(12,12);
+      UInt   sz    = INSN(11,10);
+      UInt   nn    = INSN(9,5);
+      UInt   tt    = INSN(4,0);
+
+      Bool valid = True;
+
+      /* The combination insn[23] == 0 && insn[20:16] != 0 is not allowed. */
+      if (!isPX && mm != 0)
+         valid = False;
+
+      UInt laneSzB = 0;  /* invalid */
+      UInt ix      = 16; /* invalid */
+
+      UInt xx_q_S_sz = (xx << 4) | (bitQ << 3) | (bitS << 2) | sz;
+      switch (xx_q_S_sz) {
+         case 0x00: case 0x01: case 0x02: case 0x03:
+         case 0x04: case 0x05: case 0x06: case 0x07:
+         case 0x08: case 0x09: case 0x0A: case 0x0B:
+         case 0x0C: case 0x0D: case 0x0E: case 0x0F:
+            laneSzB = 1; ix = xx_q_S_sz & 0xF;
+            break;
+         case 0x10: case 0x12: case 0x14: case 0x16:
+         case 0x18: case 0x1A: case 0x1C: case 0x1E:
+            laneSzB = 2; ix = (xx_q_S_sz >> 1) & 7;
+            break;
+         case 0x20: case 0x24: case 0x28: case 0x2C:
+            laneSzB = 4; ix = (xx_q_S_sz >> 2) & 3;
+            break;
+         case 0x21: case 0x29:
+            laneSzB = 8; ix = (xx_q_S_sz >> 3) & 1;
+            break;
+         default:
+            break;
+      }
+
+      if (valid && laneSzB != 0) {
+
+         IRType ty      = integerIRTypeOfSize(laneSzB);
+         UInt   xferSzB = laneSzB * nRegs;
+
+         /* Generate the transfer address (TA) and if necessary the
+            writeback address (WB) */
+         IRTemp tTA = newTemp(Ity_I64);
+         assign(tTA, getIReg64orSP(nn));
+         if (nn == 31) { /* FIXME generate stack alignment check */ }
+         IRTemp tWB = IRTemp_INVALID;
+         if (isPX) {
+            tWB = newTemp(Ity_I64);
+            assign(tWB, binop(Iop_Add64,
+                              mkexpr(tTA), 
+                              mm == BITS5(1,1,1,1,1) ? mkU64(xferSzB)
+                                                     : getIReg64orZR(mm)));
          }
+
+         /* Do the writeback, if necessary */
+         if (isPX) {
+            putIReg64orSP(nn, mkexpr(tWB));
+         }            
+
+         switch (nRegs) {
+            case 4: {
+               IRExpr* addr
+                  = binop(Iop_Add64, mkexpr(tTA), mkU64(3 * laneSzB));
+               if (isLD) {
+                  putQRegLane((tt+3) % 32, ix, loadLE(ty, addr));
+               } else {
+                  storeLE(addr, getQRegLane((tt+3) % 32, ix, ty));
+               }
+               /* fallthrough */
+            }
+            case 3: {
+               IRExpr* addr
+                  = binop(Iop_Add64, mkexpr(tTA), mkU64(2 * laneSzB));
+               if (isLD) {
+                  putQRegLane((tt+2) % 32, ix, loadLE(ty, addr));
+               } else {
+                  storeLE(addr, getQRegLane((tt+2) % 32, ix, ty));
+               }
+               /* fallthrough */
+            }
+            case 2: {
+               IRExpr* addr
+                  = binop(Iop_Add64, mkexpr(tTA), mkU64(1 * laneSzB));
+               if (isLD) {
+                  putQRegLane((tt+1) % 32, ix, loadLE(ty, addr));
+               } else {
+                  storeLE(addr, getQRegLane((tt+1) % 32, ix, ty));
+               }
+               /* fallthrough */
+            }
+            case 1: {
+               IRExpr* addr
+                  = binop(Iop_Add64, mkexpr(tTA), mkU64(0 * laneSzB));
+               if (isLD) {
+                  putQRegLane((tt+0) % 32, ix, loadLE(ty, addr));
+               } else {
+                  storeLE(addr, getQRegLane((tt+0) % 32, ix, ty));
+               }
+               break;
+            }
+            default:
+               vassert(0);
+         }
+
+         HChar pxStr[20];
+         pxStr[0] = pxStr[sizeof(pxStr)-1] = 0;
+         if (isPX) {
+            if (mm == BITS5(1,1,1,1,1))
+               vex_sprintf(pxStr, ", #%u", xferSzB);
+            else
+               vex_sprintf(pxStr, ", %s", nameIReg64orZR(mm));
+         }
+         const HChar* arr = nameArr_Q_SZ(bitQ, sz);
+         DIP("%s%u {v%u.%s .. v%u.%s}[%u], [%s]%s\n",
+             isLD ? "ld" : "st", nRegs,
+             (tt+0) % 32, arr, (tt+nRegs-1) % 32, arr, 
+             ix, nameIReg64orSP(nn), pxStr);
+
          return True;
       }
-      return False;
-   }
-
-   /* -------- LD2/ST2 (multi 2-elem structs, 2 regs, post index) -------- */
-   /* Only a very few cases. */
-   /* 31        23             11 9 4
-      0100 1100 1101 1111 1000 11 n t  LD2 {Vt.2d, V(t+1)%32.2d}, [Xn|SP], #32
-      0100 1100 1001 1111 1000 11 n t  ST2 {Vt.2d, V(t+1)%32.2d}, [Xn|SP], #32
-      0100 1100 1101 1111 1000 10 n t  LD2 {Vt.4s, V(t+1)%32.4s}, [Xn|SP], #32
-      0100 1100 1001 1111 1000 10 n t  ST2 {Vt.4s, V(t+1)%32.4s}, [Xn|SP], #32
-   */
-   if (   (insn & 0xFFFFFC00) == 0x4CDF8C00 // LD2 .2d
-       || (insn & 0xFFFFFC00) == 0x4C9F8C00 // ST2 .2d
-       || (insn & 0xFFFFFC00) == 0x4CDF8800 // LD2 .4s
-       || (insn & 0xFFFFFC00) == 0x4C9F8800 // ST2 .4s
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      UInt   sz   = INSN(11,10);
-      const HChar* name = "??";
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      IRExpr* tEA_0  = binop(Iop_Add64, mkexpr(tEA), mkU64(0));
-      IRExpr* tEA_8  = binop(Iop_Add64, mkexpr(tEA), mkU64(8));
-      IRExpr* tEA_16 = binop(Iop_Add64, mkexpr(tEA), mkU64(16));
-      IRExpr* tEA_24 = binop(Iop_Add64, mkexpr(tEA), mkU64(24));
-      if (sz == BITS2(1,1)) {
-         name = "2d";
-         if (isLD) {
-            putQRegLane((vT+0) % 32, 0, loadLE(Ity_I64, tEA_0));
-            putQRegLane((vT+0) % 32, 1, loadLE(Ity_I64, tEA_16));
-            putQRegLane((vT+1) % 32, 0, loadLE(Ity_I64, tEA_8));
-            putQRegLane((vT+1) % 32, 1, loadLE(Ity_I64, tEA_24));
-         } else {
-            storeLE(tEA_0,  getQRegLane((vT+0) % 32, 0, Ity_I64));
-            storeLE(tEA_16, getQRegLane((vT+0) % 32, 1, Ity_I64));
-            storeLE(tEA_8,  getQRegLane((vT+1) % 32, 0, Ity_I64));
-            storeLE(tEA_24, getQRegLane((vT+1) % 32, 1, Ity_I64));
-         }
-      }
-      else if (sz == BITS2(1,0)) {
-         /* Uh, this is ugly.  TODO: better. */
-         name = "4s";
-         IRExpr* tEA_4  = binop(Iop_Add64, mkexpr(tEA), mkU64(4));
-         IRExpr* tEA_12 = binop(Iop_Add64, mkexpr(tEA), mkU64(12));
-         IRExpr* tEA_20 = binop(Iop_Add64, mkexpr(tEA), mkU64(20));
-         IRExpr* tEA_28 = binop(Iop_Add64, mkexpr(tEA), mkU64(28));
-         if (isLD) {
-            putQRegLane((vT+0) % 32, 0, loadLE(Ity_I32, tEA_0));
-            putQRegLane((vT+0) % 32, 1, loadLE(Ity_I32, tEA_8));
-            putQRegLane((vT+0) % 32, 2, loadLE(Ity_I32, tEA_16));
-            putQRegLane((vT+0) % 32, 3, loadLE(Ity_I32, tEA_24));
-            putQRegLane((vT+1) % 32, 0, loadLE(Ity_I32, tEA_4));
-            putQRegLane((vT+1) % 32, 1, loadLE(Ity_I32, tEA_12));
-            putQRegLane((vT+1) % 32, 2, loadLE(Ity_I32, tEA_20));
-            putQRegLane((vT+1) % 32, 3, loadLE(Ity_I32, tEA_28));
-         } else {
-            storeLE(tEA_0,  getQRegLane((vT+0) % 32, 0, Ity_I32));
-            storeLE(tEA_8,  getQRegLane((vT+0) % 32, 1, Ity_I32));
-            storeLE(tEA_16, getQRegLane((vT+0) % 32, 2, Ity_I32));
-            storeLE(tEA_24, getQRegLane((vT+0) % 32, 3, Ity_I32));
-            storeLE(tEA_4,  getQRegLane((vT+1) % 32, 0, Ity_I32));
-            storeLE(tEA_12, getQRegLane((vT+1) % 32, 1, Ity_I32));
-            storeLE(tEA_20, getQRegLane((vT+1) % 32, 2, Ity_I32));
-            storeLE(tEA_28, getQRegLane((vT+1) % 32, 3, Ity_I32));
-         }
-      }
-      else {
-         vassert(0); // Can't happen.
-      }
-      putIReg64orSP(rN, binop(Iop_Add64, mkexpr(tEA), mkU64(32)));
-      DIP("%s {v%u.%s, v%u.%s}, [%s], #32\n", isLD ? "ld2" : "st2",
-          (vT+0) % 32, name, (vT+1) % 32, name, nameIReg64orSP(rN));
-      return True;
-   }
-
-   /* -------- LD1/ST1 (multi 1-elem structs, 2 regs, no offset) -------- */
-   /* Only a very few cases. */
-   /* 31        23
-      0100 1100 0100 0000 1010 00 n t  LD1 {Vt.16b, V(t+1)%32.16b}, [Xn|SP]
-      0100 1100 0000 0000 1010 00 n t  ST1 {Vt.16b, V(t+1)%32.16b}, [Xn|SP]
-   */
-   if (   (insn & 0xFFFFFC00) == 0x4C40A000 // LD1
-       || (insn & 0xFFFFFC00) == 0x4C00A000 // ST1
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* name = "16b";
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      IRExpr* tEA_0  = binop(Iop_Add64, mkexpr(tEA), mkU64(0));
-      IRExpr* tEA_16 = binop(Iop_Add64, mkexpr(tEA), mkU64(16));
-      if (isLD) {
-         putQReg128((vT+0) % 32, loadLE(Ity_V128, tEA_0));
-         putQReg128((vT+1) % 32, loadLE(Ity_V128, tEA_16));
-      } else {
-         storeLE(tEA_0,  getQReg128((vT+0) % 32));
-         storeLE(tEA_16, getQReg128((vT+1) % 32));
-      }
-      DIP("%s {v%u.%s, v%u.%s}, [%s]\n", isLD ? "ld1" : "st1",
-          (vT+0) % 32, name, (vT+1) % 32, name, nameIReg64orSP(rN));
-      return True;
-   }
-
-   /* -------- LD1/ST1 (multi 1-elem structs, 2 regs, post index) -------- */
-   /* Only a very few cases. */
-   /* 31        23
-      0100 1100 1101 1111 1010 00 n t LD1 {Vt.16b, V(t+1)%32.16b}, [Xn|SP], #32
-      0100 1100 1001 1111 1010 00 n t ST1 {Vt.16b, V(t+1)%32.16b}, [Xn|SP], #32
-   */
-   if (   (insn & 0xFFFFFC00) == 0x4CDFA000 // LD1
-       || (insn & 0xFFFFFC00) == 0x4C9FA000 // ST1
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* name = "16b";
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      IRExpr* tEA_0  = binop(Iop_Add64, mkexpr(tEA), mkU64(0));
-      IRExpr* tEA_16 = binop(Iop_Add64, mkexpr(tEA), mkU64(16));
-      if (isLD) {
-         putQReg128((vT+0) % 32, loadLE(Ity_V128, tEA_0));
-         putQReg128((vT+1) % 32, loadLE(Ity_V128, tEA_16));
-      } else {
-         storeLE(tEA_0,  getQReg128((vT+0) % 32));
-         storeLE(tEA_16, getQReg128((vT+1) % 32));
-      }
-      putIReg64orSP(rN, binop(Iop_Add64, mkexpr(tEA), mkU64(32)));
-      DIP("%s {v%u.%s, v%u.%s}, [%s], #32\n", isLD ? "ld1" : "st1",
-          (vT+0) % 32, name, (vT+1) % 32, name, nameIReg64orSP(rN));
-      return True;
-   }
-
-   /* -------- LD1/ST1 (multi 1-elem structs, 3 regs, no offset) -------- */
-   /* Only a very few cases. */
-   /* 31        23
-      0100 1100 0100 0000 0110 00 n t  LD1 {Vt.16b .. V(t+2)%32.16b}, [Xn|SP]
-      0100 1100 0000 0000 0110 00 n t  ST1 {Vt.16b .. V(t+2)%32.16b}, [Xn|SP]
-   */
-   if (   (insn & 0xFFFFFC00) == 0x4C406000 // LD1
-       || (insn & 0xFFFFFC00) == 0x4C006000 // ST1
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      const HChar* name = "16b";
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      IRExpr* tEA_0  = binop(Iop_Add64, mkexpr(tEA), mkU64(0));
-      IRExpr* tEA_16 = binop(Iop_Add64, mkexpr(tEA), mkU64(16));
-      IRExpr* tEA_32 = binop(Iop_Add64, mkexpr(tEA), mkU64(32));
-      if (isLD) {
-         putQReg128((vT+0) % 32, loadLE(Ity_V128, tEA_0));
-         putQReg128((vT+1) % 32, loadLE(Ity_V128, tEA_16));
-         putQReg128((vT+2) % 32, loadLE(Ity_V128, tEA_32));
-      } else {
-         storeLE(tEA_0,  getQReg128((vT+0) % 32));
-         storeLE(tEA_16, getQReg128((vT+1) % 32));
-         storeLE(tEA_32, getQReg128((vT+2) % 32));
-      }
-      DIP("%s {v%u.%s, v%u.%s, v%u.%s}, [%s], #32\n",
-          isLD ? "ld1" : "st1",
-          (vT+0) % 32, name, (vT+1) % 32, name, (vT+2) % 32, name,
-          nameIReg64orSP(rN));
-      return True;
-   }
-
-   /* -------- LD3/ST3 (multi 3-elem structs, 3 regs, post index) -------- */
-   /* Only a very few cases. */
-   /* 31        23             11 9 4
-      0100 1100 1101 1111 0100 11 n t  LD3 {Vt.2d .. V(t+2)%32.2d}, [Xn|SP], #48
-      0100 1100 1001 1111 0100 11 n t  ST3 {Vt.2d .. V(t+2)%32.2d}, [Xn|SP], #48
-   */
-   if (   (insn & 0xFFFFFC00) == 0x4CDF4C00 // LD3 .2d
-       || (insn & 0xFFFFFC00) == 0x4C9F4C00 // ST3 .2d
-      ) {
-      Bool   isLD = INSN(22,22) == 1;
-      UInt   rN   = INSN(9,5);
-      UInt   vT   = INSN(4,0);
-      IRTemp tEA  = newTemp(Ity_I64);
-      UInt   sz   = INSN(11,10);
-      const HChar* name = "??";
-      assign(tEA, getIReg64orSP(rN));
-      if (rN == 31) { /* FIXME generate stack alignment check */ }
-      IRExpr* tEA_0  = binop(Iop_Add64, mkexpr(tEA), mkU64(0));
-      IRExpr* tEA_8  = binop(Iop_Add64, mkexpr(tEA), mkU64(8));
-      IRExpr* tEA_16 = binop(Iop_Add64, mkexpr(tEA), mkU64(16));
-      IRExpr* tEA_24 = binop(Iop_Add64, mkexpr(tEA), mkU64(24));
-      IRExpr* tEA_32 = binop(Iop_Add64, mkexpr(tEA), mkU64(32));
-      IRExpr* tEA_40 = binop(Iop_Add64, mkexpr(tEA), mkU64(40));
-      if (sz == BITS2(1,1)) {
-         name = "2d";
-         if (isLD) {
-            putQRegLane((vT+0) % 32, 0, loadLE(Ity_I64, tEA_0));
-            putQRegLane((vT+0) % 32, 1, loadLE(Ity_I64, tEA_24));
-            putQRegLane((vT+1) % 32, 0, loadLE(Ity_I64, tEA_8));
-            putQRegLane((vT+1) % 32, 1, loadLE(Ity_I64, tEA_32));
-            putQRegLane((vT+2) % 32, 0, loadLE(Ity_I64, tEA_16));
-            putQRegLane((vT+2) % 32, 1, loadLE(Ity_I64, tEA_40));
-         } else {
-            storeLE(tEA_0,  getQRegLane((vT+0) % 32, 0, Ity_I64));
-            storeLE(tEA_24, getQRegLane((vT+0) % 32, 1, Ity_I64));
-            storeLE(tEA_8,  getQRegLane((vT+1) % 32, 0, Ity_I64));
-            storeLE(tEA_32, getQRegLane((vT+1) % 32, 1, Ity_I64));
-            storeLE(tEA_16, getQRegLane((vT+2) % 32, 0, Ity_I64));
-            storeLE(tEA_40, getQRegLane((vT+2) % 32, 1, Ity_I64));
-         }
-      }
-      else {
-         vassert(0); // Can't happen.
-      }
-      putIReg64orSP(rN, binop(Iop_Add64, mkexpr(tEA), mkU64(48)));
-      DIP("%s {v%u.%s, v%u.%s, v%u.%s}, [%s], #32\n",
-          isLD ? "ld3" : "st3",
-          (vT+0) % 32, name, (vT+1) % 32, name, (vT+2) % 32, name,
-          nameIReg64orSP(rN));
-      return True;
+      /* else fall through */
    }
 
    /* ------------------ LD{,A}X{R,RH,RB} ------------------ */
@@ -5143,6 +6387,22 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   /* ------------------ PRFM (immediate) ------------------ */
+   /* 31           21    9 4
+      11 111 00110 imm12 n t   PRFM pfrop=Rt, [Xn|SP, #pimm]
+   */
+   if (INSN(31,22) == BITS10(1,1,1,1,1,0,0,1,1,0)) {
+      UInt imm12 = INSN(21,10);
+      UInt nn    = INSN(9,5);
+      UInt tt    = INSN(4,0);
+      /* Generating any IR here is pointless, except for documentation
+         purposes, as it will get optimised away later. */
+      IRTemp ea = newTemp(Ity_I64);
+      assign(ea, binop(Iop_Add64, getIReg64orSP(nn), mkU64(imm12 * 8)));
+      DIP("prfm prfop=%u, [%s, #%u]\n", tt, nameIReg64orSP(nn), imm12 * 8);
+      return True;
+   }
+
    vex_printf("ARM64 front end: load_store\n");
    return False;
 #  undef INSN
@@ -5155,7 +6415,7 @@ Bool dis_ARM64_load_store(/*MB_OUT*/DisResult* dres, UInt insn)
 
 static
 Bool dis_ARM64_branch_etc(/*MB_OUT*/DisResult* dres, UInt insn,
-                          VexArchInfo* archinfo)
+                          const VexArchInfo* archinfo)
 {
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
 
@@ -5532,30 +6792,46 @@ Bool dis_ARM64_branch_etc(/*MB_OUT*/DisResult* dres, UInt insn,
    }
 
    /* ------------------ ISB, DMB, DSB ------------------ */
-   if (INSN(31,0) == 0xD5033FDF) {
+   /* 31          21            11  7 6  4
+      11010 10100 0 00 011 0011 CRm 1 01 11111  DMB opt
+      11010 10100 0 00 011 0011 CRm 1 00 11111  DSB opt
+      11010 10100 0 00 011 0011 CRm 1 10 11111  ISB opt
+   */
+   if (INSN(31,22) == BITS10(1,1,0,1,0,1,0,1,0,0)
+       && INSN(21,12) == BITS10(0,0,0,0,1,1,0,0,1,1)
+       && INSN(7,7) == 1
+       && INSN(6,5) <= BITS2(1,0) && INSN(4,0) == BITS5(1,1,1,1,1)) {
+      UInt opc = INSN(6,5);
+      UInt CRm = INSN(11,8);
+      vassert(opc <= 2 && CRm <= 15);
       stmt(IRStmt_MBE(Imbe_Fence));
-      DIP("isb\n");
-      return True;
-   }
-   if (INSN(31,0) == 0xD5033BBF) {
-      stmt(IRStmt_MBE(Imbe_Fence));
-      DIP("dmb ish\n");
-      return True;
-   }
-   if (INSN(31,0) == 0xD5033ABF) {
-      stmt(IRStmt_MBE(Imbe_Fence));
-      DIP("dmb ishst\n");
-      return True;
-   }
-   if (INSN(31,0) == 0xD5033B9F) {
-      stmt(IRStmt_MBE(Imbe_Fence));
-      DIP("dsb ish\n");
+      const HChar* opNames[3] 
+         = { "dsb", "dmb", "isb" };
+      const HChar* howNames[16]
+         = { "#0", "oshld", "oshst", "osh", "#4", "nshld", "nshst", "nsh",
+             "#8", "ishld", "ishst", "ish", "#12", "ld", "st", "sy" };
+      DIP("%s %s\n", opNames[opc], howNames[CRm]);
       return True;
    }
 
    /* -------------------- NOP -------------------- */
    if (INSN(31,0) == 0xD503201F) {
       DIP("nop\n");
+      return True;
+   }
+
+   /* -------------------- BRK -------------------- */
+   /* 31        23  20    4
+      1101 0100 001 imm16 00000  BRK #imm16
+   */
+   if (INSN(31,24) == BITS8(1,1,0,1,0,1,0,0)
+       && INSN(23,21) == BITS3(0,0,1) && INSN(4,0) == BITS5(0,0,0,0,0)) {
+      UInt imm16 = INSN(20,5);
+      /* Request SIGTRAP and then restart of this insn. */
+      putPC(mkU64(guest_PC_curr_instr + 0));
+      dres->whatNext    = Dis_StopHere;
+      dres->jk_StopHere = Ijk_SigTRAP;
+      DIP("brk #%u\n", imm16);
       return True;
    }
 
@@ -6807,6 +8083,65 @@ void updateQCFLAGwithDifference ( IRTemp qres, IRTemp nres )
 }
 
 
+/* Generate IR to rearrange two vector values in a way which is useful
+   for doing S/D add-pair etc operations.  There are 3 cases:
+
+   2d:  [m1 m0] [n1 n0]  -->  [m1 n1] [m0 n0]
+
+   4s:  [m3 m2 m1 m0] [n3 n2 n1 n0]  -->  [m3 m1 n3 n1] [m2 m0 n2 n0]
+
+   2s:  [m2 m2 m1 m0] [n3 n2 n1 n0]  -->  [0 0 m1 n1] [0 0 m0 n0]
+
+   The cases are distinguished as follows:
+   isD == True,  bitQ == 1  =>  2d
+   isD == False, bitQ == 1  =>  4s
+   isD == False, bitQ == 0  =>  2s
+*/
+static
+void math_REARRANGE_FOR_FLOATING_PAIRWISE (
+        /*OUT*/IRTemp* rearrL, /*OUT*/IRTemp* rearrR,
+        IRTemp vecM, IRTemp vecN, Bool isD, UInt bitQ
+     )
+{
+   vassert(rearrL && *rearrL == IRTemp_INVALID);
+   vassert(rearrR && *rearrR == IRTemp_INVALID);
+   *rearrL = newTempV128();
+   *rearrR = newTempV128();
+   if (isD) {
+      // 2d case
+      vassert(bitQ == 1);
+      assign(*rearrL, binop(Iop_InterleaveHI64x2, mkexpr(vecM), mkexpr(vecN)));
+      assign(*rearrR, binop(Iop_InterleaveLO64x2, mkexpr(vecM), mkexpr(vecN)));
+   }
+   else if (!isD && bitQ == 1) {
+      // 4s case
+      assign(*rearrL, binop(Iop_CatOddLanes32x4,  mkexpr(vecM), mkexpr(vecN)));
+      assign(*rearrR, binop(Iop_CatEvenLanes32x4, mkexpr(vecM), mkexpr(vecN)));
+   } else {
+      // 2s case
+      vassert(!isD && bitQ == 0);
+      IRTemp m1n1m0n0 = newTempV128();
+      IRTemp m0n0m1n1 = newTempV128();
+      assign(m1n1m0n0, binop(Iop_InterleaveLO32x4,
+                             mkexpr(vecM), mkexpr(vecN)));
+      assign(m0n0m1n1, triop(Iop_SliceV128,
+                             mkexpr(m1n1m0n0), mkexpr(m1n1m0n0), mkU8(8)));
+      assign(*rearrL, unop(Iop_ZeroHI64ofV128, mkexpr(m1n1m0n0)));
+      assign(*rearrR, unop(Iop_ZeroHI64ofV128, mkexpr(m0n0m1n1)));
+   }
+}
+
+
+/* Returns 2.0 ^ (-n) for n in 1 .. 64 */
+static Double two_to_the_minus ( Int n )
+{
+   if (n == 1) return 0.5;
+   vassert(n >= 2 && n <= 64);
+   Int half = n / 2;
+   return two_to_the_minus(half) * two_to_the_minus(n - half);
+}
+
+
 /*------------------------------------------------------------*/
 /*--- SIMD and FP instructions                             ---*/
 /*------------------------------------------------------------*/
@@ -7696,6 +9031,26 @@ Bool dis_AdvSIMD_scalar_pairwise(/*MB_OUT*/DisResult* dres, UInt insn)
       putQReg128(dd, unop(Iop_ZeroHI64ofV128,
                           binop(Iop_Add64x2, mkexpr(xy), mkexpr(xx))));
       DIP("addp d%u, %s.2d\n", dd, nameQReg128(nn));
+      return True;
+   }
+
+   if (bitU == 1 && sz <= X01 && opcode == BITS5(0,1,1,0,1)) {
+      /* -------- 1,00,01101 ADDP s_2s -------- */
+      /* -------- 1,01,01101 ADDP d_2d -------- */
+      Bool   isD   = sz == X01;
+      IROp   opZHI = mkVecZEROHIxxOFV128(isD ? 3 : 2);
+      IROp   opADD = mkVecADDF(isD ? 3 : 2);
+      IRTemp src   = newTempV128();
+      IRTemp argL  = newTempV128();
+      IRTemp argR  = newTempV128();
+      assign(src, getQReg128(nn));
+      assign(argL, unop(opZHI, mkexpr(src)));
+      assign(argR, unop(opZHI, triop(Iop_SliceV128, mkexpr(src), mkexpr(src), 
+                                                    mkU8(isD ? 8 : 4))));
+      putQReg128(dd, unop(opZHI,
+                          triop(opADD, mkexpr(mk_get_IR_rounding_mode()),
+                                              mkexpr(argL), mkexpr(argR))));
+      DIP(isD ? "faddp d%u, v%u.2d\n" : "faddp s%u, v%u.2s\n", dd, nn);
       return True;
    }
 
@@ -9768,6 +11123,30 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   if (bitU == 1 && size <= X01 && opcode == BITS5(1,1,0,1,0)) {
+      /* -------- 1,0x,11010 FADDP 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      Bool isD = size == X01;
+      if (bitQ == 0 && isD) return False; // implied 1d case
+      IRTemp srcN = newTempV128();
+      IRTemp srcM = newTempV128();
+      IRTemp preL = IRTemp_INVALID;
+      IRTemp preR = IRTemp_INVALID;
+      assign(srcN, getQReg128(nn));
+      assign(srcM, getQReg128(mm));
+      math_REARRANGE_FOR_FLOATING_PAIRWISE(&preL, &preR,
+                                           srcM, srcN, isD, bitQ);
+      putQReg128(
+         dd, math_MAYBE_ZERO_HI64_fromE(
+                bitQ,
+                triop(mkVecADDF(isD ? 3 : 2),
+                      mkexpr(mk_get_IR_rounding_mode()),
+                      mkexpr(preL), mkexpr(preR))));
+      const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
+      DIP("%s %s.%s, %s.%s, %s.%s\n", "faddp",
+          nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
+      return True;
+   }
+
    if (bitU == 1 && size <= X01 && opcode == BITS5(1,1,1,1,1)) {
       /* -------- 1,0x,11111 FDIV 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
       Bool isD = (size & 1) == 1;
@@ -10238,6 +11617,41 @@ Bool dis_AdvSIMD_vector_x_indexed_elem(/*MB_OUT*/DisResult* dres, UInt insn)
    vassert(size < 4);
    vassert(bitH < 2 && bitM < 2 && bitL < 2);
 
+   if (bitU == 0 && size >= X10
+       && (opcode == BITS4(0,0,0,1) || opcode == BITS4(0,1,0,1))) {
+      /* -------- 0,1x,0001 FMLA 2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
+      /* -------- 0,1x,0101 FMLS 2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
+      if (bitQ == 0 && size == X11) return False; // implied 1d case
+      Bool isD   = (size & 1) == 1;
+      Bool isSUB = opcode == BITS4(0,1,0,1);
+      UInt index;
+      if      (!isD)             index = (bitH << 1) | bitL;
+      else if (isD && bitL == 0) index = bitH;
+      else return False; // sz:L == x11 => unallocated encoding
+      vassert(index < (isD ? 2 : 4));
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      IRTemp elem  = newTemp(ity);
+      UInt   mm    = (bitM << 4) | mmLO4;
+      assign(elem, getQRegLane(mm, index, ity));
+      IRTemp dupd  = math_DUP_TO_V128(elem, ity);
+      IROp   opADD = isD ? Iop_Add64Fx2 : Iop_Add32Fx4;
+      IROp   opSUB = isD ? Iop_Sub64Fx2 : Iop_Sub32Fx4;
+      IROp   opMUL = isD ? Iop_Mul64Fx2 : Iop_Mul32Fx4;
+      IRTemp rm    = mk_get_IR_rounding_mode();
+      IRTemp t1    = newTempV128();
+      IRTemp t2    = newTempV128();
+      // FIXME: double rounding; use FMA primops instead
+      assign(t1, triop(opMUL, mkexpr(rm), getQReg128(nn), mkexpr(dupd)));
+      assign(t2, triop(isSUB ? opSUB : opADD,
+                       mkexpr(rm), getQReg128(dd), mkexpr(t1)));
+      putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, t2));
+      const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
+      DIP("%s %s.%s, %s.%s, %s.%c[%u]\n", isSUB ? "fmls" : "fmla",
+          nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm),
+          isD ? 'd' : 's', index);
+      return True;
+   }
+
    if (bitU == 0 && size >= X10 && opcode == BITS4(1,0,0,1)) {
       /* -------- 0,1x,1001 FMUL 2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
       if (bitQ == 0 && size == X11) return False; // implied 1d case
@@ -10577,7 +11991,40 @@ Bool dis_AdvSIMD_fp_conditional_compare(/*MB_OUT*/DisResult* dres, UInt insn)
 static
 Bool dis_AdvSIMD_fp_conditional_select(/*MB_OUT*/DisResult* dres, UInt insn)
 {
+   /* 31        23 21 20 15   11 9 5
+      000 11110 ty 1  m  cond 11 n d
+      The first 3 bits are really "M 0 S", but M and S are always zero.
+      Decode fields: ty  
+   */
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+   if (INSN(31,24) != BITS8(0,0,0,1,1,1,1,0) || INSN(21,21) != 1
+       || INSN(11,10) != BITS2(1,1)) {
+      return False;
+   }
+   UInt ty   = INSN(23,22);
+   UInt mm   = INSN(20,16);
+   UInt cond = INSN(15,12);
+   UInt nn   = INSN(9,5);
+   UInt dd   = INSN(4,0);
+   if (ty <= X01) {
+      /* -------- 00: FCSEL s_s -------- */
+      /* -------- 00: FCSEL d_d -------- */
+      IRType ity = ty == X01 ? Ity_F64 : Ity_F32;
+      IRTemp srcT = newTemp(ity);
+      IRTemp srcF = newTemp(ity);
+      IRTemp res  = newTemp(ity);
+      assign(srcT, getQRegLO(nn, ity));
+      assign(srcF, getQRegLO(mm, ity));
+      assign(res, IRExpr_ITE(
+                     unop(Iop_64to1, mk_arm64g_calculate_condition(cond)),
+                     mkexpr(srcT), mkexpr(srcF)));
+      putQReg128(dd, mkV128(0x0000));
+      putQRegLO(dd, mkexpr(res));
+      DIP("fcsel %s, %s, %s, %s\n",
+          nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity),
+          nameCC(cond));
+      return True;
+   }
    return False;
 #  undef INSN
 }
@@ -10701,7 +12148,7 @@ Bool dis_AdvSIMD_fp_data_proc_1_source(/*MB_OUT*/DisResult* dres, UInt insn)
             011 zero      (FRINTZ)
             000 tieeven
             100 tieaway   (FRINTA) -- !! FIXME KLUDGED !!
-            110 per FPCR + "exact = TRUE"
+            110 per FPCR + "exact = TRUE" (FRINTX)
             101 unallocated
       */
       Bool    isD   = (ty & 1) == 1;
@@ -10715,6 +12162,12 @@ Bool dis_AdvSIMD_fp_data_proc_1_source(/*MB_OUT*/DisResult* dres, UInt insn)
          case BITS3(0,0,1): ch = 'p'; irrmE = mkU32(Irrm_PosINF); break;
          // The following is a kludge.  Should be: Irrm_NEAREST_TIE_AWAY_0
          case BITS3(1,0,0): ch = 'a'; irrmE = mkU32(Irrm_NEAREST); break;
+         // I am unsure about the following, due to the "integral exact"
+         // description in the manual.  What does it mean? (frintx, that is)
+         case BITS3(1,1,0):
+            ch = 'x'; irrmE = mkexpr(mk_get_IR_rounding_mode()); break;
+         case BITS3(1,1,1):
+            ch = 'i'; irrmE = mkexpr(mk_get_IR_rounding_mode()); break;
          default: break;
       }
       if (irrmE) {
@@ -10743,6 +12196,7 @@ Bool dis_AdvSIMD_fp_data_proc_2_source(/*MB_OUT*/DisResult* dres, UInt insn)
    /* 31  28    23 21 20 15     11 9 4
       000 11110 ty 1  m  opcode 10 n d
       The first 3 bits are really "M 0 S", but M and S are always zero.
+      Decode fields: ty, opcode
    */
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
    if (INSN(31,24) != BITS8(0,0,0,1,1,1,1,0)
@@ -10755,27 +12209,40 @@ Bool dis_AdvSIMD_fp_data_proc_2_source(/*MB_OUT*/DisResult* dres, UInt insn)
    UInt nn     = INSN(9,5);
    UInt dd     = INSN(4,0);
 
-   if (ty <= X01 && opcode <= BITS4(0,0,1,1)) {
+   if (ty <= X01 && opcode <= BITS4(0,1,1,1)) {
       /* ------- 0x,0000: FMUL d_d, s_s ------- */
       /* ------- 0x,0001: FDIV d_d, s_s ------- */
       /* ------- 0x,0010: FADD d_d, s_s ------- */
       /* ------- 0x,0011: FSUB d_d, s_s ------- */
+      /* ------- 0x,0100: FMAX d_d, s_s ------- */
+      /* ------- 0x,0101: FMIN d_d, s_s ------- */
+      /* ------- 0x,0110: FMAXNM d_d, s_s ------- (FIXME KLUDGED) */
+      /* ------- 0x,0111: FMINNM d_d, s_s ------- (FIXME KLUDGED) */
       IRType ity = ty == X00 ? Ity_F32 : Ity_F64;
       IROp   iop = Iop_INVALID;
       const HChar* nm = "???";
       switch (opcode) {
-         case BITS4(0,0,0,0): nm = "fmul";  iop = mkMULF(ity); break;
-         case BITS4(0,0,0,1): nm = "fdiv";  iop = mkDIVF(ity); break;
-         case BITS4(0,0,1,0): nm = "fadd";  iop = mkADDF(ity); break;
-         case BITS4(0,0,1,1): nm = "fsub";  iop = mkSUBF(ity); break;
+         case BITS4(0,0,0,0): nm = "fmul"; iop = mkMULF(ity); break;
+         case BITS4(0,0,0,1): nm = "fdiv"; iop = mkDIVF(ity); break;
+         case BITS4(0,0,1,0): nm = "fadd"; iop = mkADDF(ity); break;
+         case BITS4(0,0,1,1): nm = "fsub"; iop = mkSUBF(ity); break;
+         case BITS4(0,1,0,0): nm = "fmax"; iop = mkVecMAXF(ty+2); break;
+         case BITS4(0,1,0,1): nm = "fmin"; iop = mkVecMINF(ty+2); break;
+         case BITS4(0,1,1,0): nm = "fmaxnm"; iop = mkVecMAXF(ty+2); break; //!!
+         case BITS4(0,1,1,1): nm = "fminnm"; iop = mkVecMINF(ty+2); break; //!!
          default: vassert(0);
       }
-      IRExpr* resE = triop(iop, mkexpr(mk_get_IR_rounding_mode()),
-                           getQRegLO(nn, ity), getQRegLO(mm, ity));
-      IRTemp  res  = newTemp(ity);
-      assign(res, resE);
-      putQReg128(dd, mkV128(0));
-      putQRegLO(dd, mkexpr(res));
+      if (opcode <= BITS4(0,0,1,1)) {
+         // This is really not good code.  TODO: avoid width-changing
+         IRTemp res = newTemp(ity);
+         assign(res, triop(iop, mkexpr(mk_get_IR_rounding_mode()),
+                                getQRegLO(nn, ity), getQRegLO(mm, ity)));
+         putQReg128(dd, mkV128(0));
+         putQRegLO(dd, mkexpr(res));
+      } else {
+         putQReg128(dd, unop(mkVecZEROHIxxOFV128(ty+2),
+                             binop(iop, getQReg128(nn), getQReg128(mm))));
+      }
       DIP("%s %s, %s, %s\n",
           nm, nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity));
       return True;
@@ -10916,9 +12383,78 @@ Bool dis_AdvSIMD_fp_immediate(/*MB_OUT*/DisResult* dres, UInt insn)
 
 
 static
-Bool dis_AdvSIMD_fp_to_fixedp_conv(/*MB_OUT*/DisResult* dres, UInt insn)
+Bool dis_AdvSIMD_fp_to_from_fixedp_conv(/*MB_OUT*/DisResult* dres, UInt insn)
 {
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+   /* 31 30 29 28    23   21 20    18     15    9 4
+      sf  0  0 11110 type 0  rmode opcode scale n d
+      The first 3 bits are really "sf 0 S", but S is always zero.
+      Decode fields: sf,type,rmode,opcode
+   */
+#  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+   if (INSN(30,29) != BITS2(0,0)
+       || INSN(28,24) != BITS5(1,1,1,1,0)
+       || INSN(21,21) != 0) {
+      return False;
+   }
+   UInt bitSF = INSN(31,31);
+   UInt ty    = INSN(23,22); // type
+   UInt rm    = INSN(20,19); // rmode
+   UInt op    = INSN(18,16); // opcode
+   UInt sc    = INSN(15,10); // scale
+   UInt nn    = INSN(9,5);
+   UInt dd    = INSN(4,0);
+
+   // op = 010, 011
+   /* -------------- {S,U}CVTF (scalar, fixedpt) -------------- */
+   /* (ix) sf  S 28    ty   rm op  15    9 4
+      0    0 0 0 11110 00 0 00 010 scale n d  SCVTF Sd, Wn, #fbits
+      1    0 0 0 11110 01 0 00 010 scale n d  SCVTF Dd, Wn, #fbits
+      2    1 0 0 11110 00 0 00 010 scale n d  SCVTF Sd, Xn, #fbits
+      3    1 0 0 11110 01 0 00 010 scale n d  SCVTF Dd, Xn, #fbits
+
+      4    0 0 0 11110 00 0 00 011 scale n d  UCVTF Sd, Wn, #fbits
+      5    0 0 0 11110 01 0 00 011 scale n d  UCVTF Dd, Wn, #fbits
+      6    1 0 0 11110 00 0 00 011 scale n d  UCVTF Sd, Xn, #fbits
+      7    1 0 0 11110 01 0 00 011 scale n d  UCVTF Dd, Xn, #fbits
+
+      These are signed/unsigned conversion from integer registers to
+      FP registers, all 4 32/64-bit combinations, rounded per FPCR,
+      scaled per |scale|.
+   */
+   if (ty <= X01 && rm == X00 
+       && (op == BITS3(0,1,0) || op == BITS3(0,1,1))
+       && (bitSF == 1 || ((sc >> 5) & 1) == 1)) {
+      Bool isI64 = bitSF == 1;
+      Bool isF64 = (ty & 1) == 1;
+      Bool isU   = (op & 1) == 1;
+      UInt ix    = (isU ? 4 : 0) | (isI64 ? 2 : 0) | (isF64 ? 1 : 0);
+
+      Int fbits = 64 - sc;
+      vassert(fbits >= 1 && fbits <= (isI64 ? 64 : 32));      
+
+      Double  scale  = two_to_the_minus(fbits);
+      IRExpr* scaleE = isF64 ? IRExpr_Const(IRConst_F64(scale))
+                             : IRExpr_Const(IRConst_F32( (Float)scale ));
+      IROp    opMUL  = isF64 ? Iop_MulF64 : Iop_MulF32;
+
+      const IROp ops[8]
+        = { Iop_I32StoF32, Iop_I32StoF64, Iop_I64StoF32, Iop_I64StoF64,
+            Iop_I32UtoF32, Iop_I32UtoF64, Iop_I64UtoF32, Iop_I64UtoF64 };
+      IRExpr* src = getIRegOrZR(isI64, nn);
+      IRExpr* res = (isF64 && !isI64) 
+                       ? unop(ops[ix], src)
+                       : binop(ops[ix],
+                               mkexpr(mk_get_IR_rounding_mode()), src);
+      putQReg128(dd, mkV128(0));
+      putQRegLO(dd, triop(opMUL, mkU32(Irrm_NEAREST), res, scaleE));
+
+      DIP("%ccvtf %s, %s, #%d\n",
+          isU ? 'u' : 's', nameQRegLO(dd, isF64 ? Ity_F64 : Ity_F32), 
+          nameIRegOrZR(isI64, nn), fbits);
+      return True;
+   }
+
    return False;
 #  undef INSN
 }
@@ -10930,6 +12466,7 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
    /* 31 30 29 28    23   21 20    18     15     9 4
       sf  0  0 11110 type 1  rmode opcode 000000 n d
       The first 3 bits are really "sf 0 S", but S is always zero.
+      Decode fields: sf,type,rmode,opcode
    */
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
    if (INSN(30,29) != BITS2(0,0)
@@ -10946,7 +12483,7 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
    UInt dd    = INSN(4,0);
 
    // op = 000, 001
-   /* -------- FCVT{N,P,M,Z}{S,U} (scalar, integer) -------- */
+   /* -------- FCVT{N,P,M,Z,A}{S,U} (scalar, integer) -------- */
    /*    30       23   20 18  15     9 4
       sf 00 11110 0x 1 00 000 000000 n d  FCVTNS Rd, Fn (round to
       sf 00 11110 0x 1 00 001 000000 n d  FCVTNU Rd, Fn  nearest)
@@ -10954,23 +12491,38 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
       ---------------- 10 --------------  FCVTM-------- (round to -inf)
       ---------------- 11 --------------  FCVTZ-------- (round to zero)
 
+      ---------------- 00 100 ----------  FCVTAS------- (nearest, ties away)
+      ---------------- 00 101 ----------  FCVTAU------- (nearest, ties away)
+
       Rd is Xd when sf==1, Wd when sf==0
       Fn is Dn when x==1, Sn when x==0
       20:19 carry the rounding mode, using the same encoding as FPCR
    */
-   if (ty <= X01 && (op == BITS3(0,0,0) || op == BITS3(0,0,1))) {
+   if (ty <= X01
+       && (   ((op == BITS3(0,0,0) || op == BITS3(0,0,1)) && True)
+           || ((op == BITS3(1,0,0) || op == BITS3(1,0,1)) && rm == BITS2(0,0))
+          )
+      ) {
       Bool isI64 = bitSF == 1;
       Bool isF64 = (ty & 1) == 1;
       Bool isU   = (op & 1) == 1;
       /* Decide on the IR rounding mode to use. */
       IRRoundingMode irrm = 8; /*impossible*/
       HChar ch = '?';
-      switch (rm) {
-         case BITS2(0,0): ch = 'n'; irrm = Irrm_NEAREST; break;
-         case BITS2(0,1): ch = 'p'; irrm = Irrm_PosINF; break;
-         case BITS2(1,0): ch = 'm'; irrm = Irrm_NegINF; break;
-         case BITS2(1,1): ch = 'z'; irrm = Irrm_ZERO; break;
-         default: vassert(0);
+      if (op == BITS3(0,0,0) || op == BITS3(0,0,1)) {
+         switch (rm) {
+            case BITS2(0,0): ch = 'n'; irrm = Irrm_NEAREST; break;
+            case BITS2(0,1): ch = 'p'; irrm = Irrm_PosINF; break;
+            case BITS2(1,0): ch = 'm'; irrm = Irrm_NegINF; break;
+            case BITS2(1,1): ch = 'z'; irrm = Irrm_ZERO; break;
+            default: vassert(0);
+         }
+      } else {
+         vassert(op == BITS3(1,0,0) || op == BITS3(1,0,1));
+         switch (rm) {
+            case BITS2(0,0): ch = 'a'; irrm = Irrm_NEAREST; break;
+            default: vassert(0);
+         }
       }
       vassert(irrm != 8);
       /* Decide on the conversion primop, based on the source size,
@@ -10995,11 +12547,15 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
              (iop == Iop_F32toI32S && irrm == Irrm_ZERO)   /* FCVTZS Wd,Sn */
           || (iop == Iop_F32toI32S && irrm == Irrm_NegINF) /* FCVTMS Wd,Sn */
           || (iop == Iop_F32toI32S && irrm == Irrm_PosINF) /* FCVTPS Wd,Sn */
+          || (iop == Iop_F32toI32S && irrm == Irrm_NEAREST)/* FCVT{A,N}S W,S */
           /* F32toI32U */
           || (iop == Iop_F32toI32U && irrm == Irrm_ZERO)   /* FCVTZU Wd,Sn */
           || (iop == Iop_F32toI32U && irrm == Irrm_NegINF) /* FCVTMU Wd,Sn */
+          || (iop == Iop_F32toI32U && irrm == Irrm_PosINF) /* FCVTPU Wd,Sn */
+          || (iop == Iop_F32toI32U && irrm == Irrm_NEAREST)/* FCVT{A,N}U W,S */
           /* F32toI64S */
           || (iop == Iop_F32toI64S && irrm == Irrm_ZERO)   /* FCVTZS Xd,Sn */
+          || (iop == Iop_F32toI64S && irrm == Irrm_NEAREST)/* FCVT{A,N}S X,S */
           /* F32toI64U */
           || (iop == Iop_F32toI64U && irrm == Irrm_ZERO)   /* FCVTZU Xd,Sn */
           || (iop == Iop_F32toI64U && irrm == Irrm_PosINF) /* FCVTPU Xd,Sn */
@@ -11007,6 +12563,7 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
           || (iop == Iop_F64toI32S && irrm == Irrm_ZERO)   /* FCVTZS Wd,Dn */
           || (iop == Iop_F64toI32S && irrm == Irrm_NegINF) /* FCVTMS Wd,Dn */
           || (iop == Iop_F64toI32S && irrm == Irrm_PosINF) /* FCVTPS Wd,Dn */
+          || (iop == Iop_F64toI32S && irrm == Irrm_NEAREST)/* FCVT{A,N}S W,D */
           /* F64toI32U */
           || (iop == Iop_F64toI32U && irrm == Irrm_ZERO)   /* FCVTZU Wd,Dn */
           || (iop == Iop_F64toI32U && irrm == Irrm_NegINF) /* FCVTMU Wd,Dn */
@@ -11015,8 +12572,10 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
           || (iop == Iop_F64toI64S && irrm == Irrm_ZERO)   /* FCVTZS Xd,Dn */
           || (iop == Iop_F64toI64S && irrm == Irrm_NegINF) /* FCVTMS Xd,Dn */
           || (iop == Iop_F64toI64S && irrm == Irrm_PosINF) /* FCVTPS Xd,Dn */
+          || (iop == Iop_F64toI64S && irrm == Irrm_NEAREST)/* FCVT{A,N}S X,D */
           /* F64toI64U */
           || (iop == Iop_F64toI64U && irrm == Irrm_ZERO)   /* FCVTZU Xd,Dn */
+          || (iop == Iop_F64toI64U && irrm == Irrm_NegINF) /* FCVTMU Xd,Dn */
           || (iop == Iop_F64toI64U && irrm == Irrm_PosINF) /* FCVTPU Xd,Dn */
          ) {
         /* validated */
@@ -11062,7 +12621,8 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
       IRExpr* src = getIRegOrZR(isI64, nn);
       IRExpr* res = (isF64 && !isI64) 
                        ? unop(ops[ix], src)
-                       : binop(ops[ix], mkexpr(mk_get_IR_rounding_mode()), src);
+                       : binop(ops[ix],
+                               mkexpr(mk_get_IR_rounding_mode()), src);
       putQReg128(dd, mkV128(0));
       putQRegLO(dd, res);
       DIP("%ccvtf %s, %s\n",
@@ -11205,7 +12765,7 @@ Bool dis_ARM64_simd_and_fp(/*MB_OUT*/DisResult* dres, UInt insn)
    if (UNLIKELY(ok)) return True;
    ok = dis_AdvSIMD_fp_immediate(dres, insn);
    if (UNLIKELY(ok)) return True;
-   ok = dis_AdvSIMD_fp_to_fixedp_conv(dres, insn);
+   ok = dis_AdvSIMD_fp_to_from_fixedp_conv(dres, insn);
    if (UNLIKELY(ok)) return True;
    ok = dis_AdvSIMD_fp_to_from_int_conv(dres, insn);
    if (UNLIKELY(ok)) return True;
@@ -11227,12 +12787,12 @@ Bool dis_ARM64_simd_and_fp(/*MB_OUT*/DisResult* dres, UInt insn)
 static
 Bool disInstr_ARM64_WRK (
         /*MB_OUT*/DisResult* dres,
-        Bool         (*resteerOkFn) ( /*opaque*/void*, Addr64 ),
+        Bool         (*resteerOkFn) ( /*opaque*/void*, Addr ),
         Bool         resteerCisOk,
         void*        callback_opaque,
         const UChar* guest_instr,
-        VexArchInfo* archinfo,
-        VexAbiInfo*  abiinfo
+        const VexArchInfo* archinfo,
+        const VexAbiInfo*  abiinfo
      )
 {
    // A macro to fish bits out of 'insn'.
@@ -11406,15 +12966,15 @@ Bool disInstr_ARM64_WRK (
    is located in host memory at &guest_code[delta]. */
 
 DisResult disInstr_ARM64 ( IRSB*        irsb_IN,
-                           Bool         (*resteerOkFn) ( void*, Addr64 ),
+                           Bool         (*resteerOkFn) ( void*, Addr ),
                            Bool         resteerCisOk,
                            void*        callback_opaque,
                            const UChar* guest_code_IN,
                            Long         delta_IN,
-                           Addr64       guest_IP,
+                           Addr         guest_IP,
                            VexArch      guest_arch,
-                           VexArchInfo* archinfo,
-                           VexAbiInfo*  abiinfo,
+                           const VexArchInfo* archinfo,
+                           const VexAbiInfo*  abiinfo,
                            VexEndness   host_endness_IN,
                            Bool         sigill_diag_IN )
 {
