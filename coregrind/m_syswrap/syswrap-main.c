@@ -49,6 +49,7 @@
 #include "pub_core_signals.h"       // For VG_SIGVGKILL, VG_(poll_signals)
 #include "pub_core_syscall.h"
 #include "pub_core_machine.h"
+#include "pub_core_mallocfree.h"
 #include "pub_core_syswrap.h"
 
 #include "priv_types_n_macros.h"
@@ -1364,13 +1365,13 @@ typedef
    }
    SyscallInfo;
 
-SyscallInfo syscallInfo[VG_N_THREADS];
-
+SyscallInfo *syscallInfo;
 
 /* The scheduler needs to be able to zero out these records after a
    fork, hence this is exported from m_syswrap. */
 void VG_(clear_syscallInfo) ( Int tid )
 {
+   vg_assert(syscallInfo);
    vg_assert(tid >= 0 && tid < VG_N_THREADS);
    VG_(memset)( & syscallInfo[tid], 0, sizeof( syscallInfo[tid] ));
    syscallInfo[tid].status.what = SsIdle;
@@ -1383,6 +1384,9 @@ static void ensure_initialised ( void )
    if (init_done) 
       return;
    init_done = True;
+
+   syscallInfo = VG_(malloc)("scinfo", VG_N_THREADS * sizeof syscallInfo[0]);
+
    for (i = 0; i < VG_N_THREADS; i++) {
       VG_(clear_syscallInfo)( i );
    }
@@ -1460,40 +1464,31 @@ void VG_(client_syscall) ( ThreadId tid, UInt trc )
       possible valid address for stack (sp - redzone), to ensure the
       pages all the way down to that address, are mapped.  Because
       this is a potentially expensive and frequent operation, we
-      filter in two ways:
+      do the following:
 
-      First, only the main thread (tid=1) has a growdown stack.  So
+      Only the main thread (tid=1) has a growdown stack.  So
       ignore all others.  It is conceivable, although highly unlikely,
       that the main thread exits, and later another thread is
       allocated tid=1, but that's harmless, I believe;
       VG_(extend_stack) will do nothing when applied to a non-root
       thread.
 
-      Secondly, first call VG_(am_find_nsegment) directly, to see if
-      the page holding (sp - redzone) is mapped correctly.  If so, do
-      nothing.  This is almost always the case.  VG_(extend_stack)
-      calls VG_(am_find_nsegment) twice, so this optimisation -- and
-      that's all it is -- more or less halves the number of calls to
-      VG_(am_find_nsegment) required.
-
-      TODO: the test "seg->kind == SkAnonC" is really inadequate,
-      because although it tests whether the segment is mapped
-      _somehow_, it doesn't check that it has the right permissions
-      (r,w, maybe x) ?  We could test that here, but it will also be
-      necessary to fix the corresponding test in VG_(extend_stack).
-
       All this guff is of course Linux-specific.  Hence the ifdef.
    */
 #  if defined(VGO_linux)
    if (tid == 1/*ROOT THREAD*/) {
       Addr     stackMin   = VG_(get_SP)(tid) - VG_STACK_REDZONE_SZB;
-      NSegment const* seg = VG_(am_find_nsegment)(stackMin);
-      if (seg && seg->kind == SkAnonC) {
-         /* stackMin is already mapped.  Nothing to do. */
-      } else {
-         (void)VG_(extend_stack)( stackMin,
-                                  tst->client_stack_szB );
-      }
+
+      /* Note, that the stack pointer can be bogus at this point. This is
+         extremely rare. A legitimate testcase that exercises this is 
+         none/tests/s390x/stmg.c:  The stack pointer happens to be in the
+         reservation segment near the end of the addressable memory and
+         there is no SkAnonC segment above.
+
+         We could do slightly better here by not extending the stack for
+         system calls that do not access user space memory. That's busy
+         work with very little gain... */
+      VG_(extend_stack)( tid, stackMin );   // may fail
    }
 #  endif
    /* END ensure root thread's stack is suitably mapped */

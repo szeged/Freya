@@ -1,3 +1,4 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 
 /*--------------------------------------------------------------------*/
 /*--- Wrappers for generic Unix system calls                       ---*/
@@ -435,14 +436,12 @@ SysRes do_mremap( Addr old_addr, SizeT old_len,
       ok = VG_(am_covered_by_single_free_segment) ( needA, needL );
    }
    if (ok && advised == needA) {
-      ok = VG_(am_extend_map_client)( &d, old_seg, needL );
-      if (ok) {
+      const NSegment *new_seg = VG_(am_extend_map_client)( old_addr, needL );
+      if (new_seg) {
          VG_TRACK( new_mem_mmap, needA, needL, 
-                                 old_seg->hasR, 
-                                 old_seg->hasW, old_seg->hasX,
+                                 new_seg->hasR, 
+                                 new_seg->hasW, new_seg->hasX,
                                  0/*di_handle*/ );
-         if (d) 
-            VG_(discard_translations)( needA, needL, "do_remap(3)" );
          return VG_(mk_SysRes_Success)( old_addr );
       }
    }
@@ -490,14 +489,13 @@ SysRes do_mremap( Addr old_addr, SizeT old_len,
    }
    if (!ok || advised != needA)
       goto eNOMEM;
-   ok = VG_(am_extend_map_client)( &d, old_seg, needL );
-   if (!ok)
+   const NSegment *new_seg = VG_(am_extend_map_client)( old_addr, needL );
+   if (!new_seg)
       goto eNOMEM;
    VG_TRACK( new_mem_mmap, needA, needL, 
-                           old_seg->hasR, old_seg->hasW, old_seg->hasX,
+                           new_seg->hasR, new_seg->hasW, new_seg->hasX,
                            0/*di_handle*/ );
-   if (d)
-      VG_(discard_translations)( needA, needL, "do_remap(6)" );
+
    return VG_(mk_SysRes_Success)( old_addr );
    }
    /*NOTREACHED*/ vg_assert(0);
@@ -1190,29 +1188,27 @@ void ML_(buf_and_len_post_check) ( ThreadId tid, SysRes res,
 static Addr do_brk ( Addr newbrk )
 {
    NSegment const* aseg;
-   NSegment const* rseg;
    Addr newbrkP;
    SizeT delta;
-   Bool ok;
    Bool debug = False;
 
    if (debug)
       VG_(printf)("\ndo_brk: brk_base=%#lx brk_limit=%#lx newbrk=%#lx\n",
 		  VG_(brk_base), VG_(brk_limit), newbrk);
 
-#  if 0
-   if (0) show_segments("in_brk");
-#  endif
+   if (0) VG_(am_show_nsegments)(0, "in_brk");
 
    if (newbrk < VG_(brk_base))
       /* Clearly impossible. */
       goto bad;
 
-   if (newbrk >= VG_(brk_base) && newbrk < VG_(brk_limit)) {
+   if (newbrk < VG_(brk_limit)) {
       /* shrinking the data segment.  Be lazy and don't munmap the
          excess area. */
       NSegment const * seg = VG_(am_find_nsegment)(newbrk);
-      if (seg && seg->hasT)
+      vg_assert(seg);
+
+      if (seg->hasT)
          VG_(discard_translations)( newbrk, VG_(brk_limit) - newbrk, 
                                     "do_brk(shrink)" );
       /* Since we're being lazy and not unmapping pages, we have to
@@ -1222,15 +1218,16 @@ static Addr do_brk ( Addr newbrk )
          try hard to ensure we're not going to segfault by doing the
          write - check both ends of the range are in the same segment
          and that segment is writable. */
-      if (seg) {
-         /* pre: newbrk < VG_(brk_limit) 
-              => newbrk <= VG_(brk_limit)-1 */
-         NSegment const * seg2;
-         vg_assert(newbrk < VG_(brk_limit));
+      NSegment const * seg2;
+
+      if (VG_(brk_limit) > VG_(brk_base))
          seg2 = VG_(am_find_nsegment)( VG_(brk_limit)-1 );
-         if (seg2 && seg == seg2 && seg->hasW)
-            VG_(memset)( (void*)newbrk, 0, VG_(brk_limit) - newbrk );
-      }
+      else
+         seg2 = VG_(am_find_nsegment)( VG_(brk_limit) );
+      vg_assert(seg2);
+
+      if (seg == seg2 && seg->hasW)
+         VG_(memset)( (void*)newbrk, 0, VG_(brk_limit) - newbrk );
 
       VG_(brk_limit) = newbrk;
       return newbrk;
@@ -1241,36 +1238,26 @@ static Addr do_brk ( Addr newbrk )
       aseg = VG_(am_find_nsegment)( VG_(brk_limit)-1 );
    else
       aseg = VG_(am_find_nsegment)( VG_(brk_limit) );
-   rseg = VG_(am_next_nsegment)( aseg, True/*forwards*/ );
 
    /* These should be assured by setup_client_dataseg in m_main. */
    vg_assert(aseg);
-   vg_assert(rseg);
    vg_assert(aseg->kind == SkAnonC);
-   vg_assert(rseg->kind == SkResvn);
-   vg_assert(aseg->end+1 == rseg->start);
 
-   vg_assert(newbrk >= VG_(brk_base));
-   if (newbrk <= rseg->start) {
+   if (newbrk <= aseg->end + 1) {
       /* still fits within the anon segment. */
       VG_(brk_limit) = newbrk;
       return newbrk;
    }
 
-   if (newbrk > rseg->end+1 - VKI_PAGE_SIZE) {
-      /* request is too large -- the resvn would fall below 1 page,
-         which isn't allowed. */
-      goto bad;
-   }
-
    newbrkP = VG_PGROUNDUP(newbrk);
-   vg_assert(newbrkP > rseg->start && newbrkP <= rseg->end+1 - VKI_PAGE_SIZE);
-   delta = newbrkP - rseg->start;
+   delta = newbrkP - (aseg->end + 1);
    vg_assert(delta > 0);
    vg_assert(VG_IS_PAGE_ALIGNED(delta));
    
-   ok = VG_(am_extend_into_adjacent_reservation_client)( aseg, delta );
-   if (!ok) goto bad;
+   Bool overflow;  // ignored here
+   if (! VG_(am_extend_into_adjacent_reservation_client)( aseg->start, delta,
+                                                          &overflow))
+      goto bad;
 
    VG_(brk_limit) = newbrk;
    return newbrk;

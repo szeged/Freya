@@ -92,19 +92,22 @@ typedef
 
       /* Note that for code generation reasons, we require that the
          guest state area, its two shadows, and the spill area, are
-         16-aligned and have 16-aligned sizes, and there are no holes
-         in between.  This is checked by do_pre_run_checks() in
-         scheduler.c. */
+         aligned on LibVEX_GUEST_STATE_ALIGN and have sizes, such that
+         there are no holes in between. This is checked by do_pre_run_checks()
+         in scheduler.c. */
 
       /* Saved machine context. */
-      VexGuestArchState vex __attribute__((aligned(16)));
+      VexGuestArchState vex __attribute__((aligned(LibVEX_GUEST_STATE_ALIGN)));
 
       /* Saved shadow context (2 copies). */
-      VexGuestArchState vex_shadow1 __attribute__((aligned(16)));
-      VexGuestArchState vex_shadow2 __attribute__((aligned(16)));
+      VexGuestArchState vex_shadow1
+                        __attribute__((aligned(LibVEX_GUEST_STATE_ALIGN)));
+      VexGuestArchState vex_shadow2 
+                        __attribute__((aligned(LibVEX_GUEST_STATE_ALIGN)));
 
       /* Spill area. */
-      UChar vex_spill[LibVEX_N_SPILL_BYTES] __attribute__((aligned(16)));
+      UChar vex_spill[LibVEX_N_SPILL_BYTES]
+            __attribute__((aligned(LibVEX_GUEST_STATE_ALIGN)));
 
       /* --- END vex-mandated guest state --- */
    } 
@@ -359,7 +362,7 @@ ThreadState;
 /* A statically allocated array of threads.  NOTE: [0] is
    never used, to simplify the simulation of initialisers for
    LinuxThreads. */
-extern ThreadState VG_(threads)[VG_N_THREADS];
+extern ThreadState *VG_(threads);
 
 // The running thread.  m_scheduler should be the only other module
 // to write to this.

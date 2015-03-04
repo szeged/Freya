@@ -43,7 +43,10 @@
 
 
 /* Define, and set defaults. */
+
 VexControl VG_(clo_vex_control);
+VexRegisterUpdates VG_(clo_px_file_backed) = VexRegUpd_INVALID;
+
 Bool   VG_(clo_error_limit)    = True;
 Int    VG_(clo_error_exitcode) = 0;
 HChar *VG_(clo_error_markers)[2] = {NULL, NULL};
@@ -123,6 +126,7 @@ Bool   VG_(clo_track_fds)      = False;
 Bool   VG_(clo_show_below_main)= False;
 Bool   VG_(clo_show_emwarns)   = False;
 Word   VG_(clo_max_stackframe) = 2000000;
+UInt   VG_(clo_max_threads)    = MAX_THREADS_DEFAULT;
 Word   VG_(clo_main_stacksize) = 0; /* use client's rlimit.stack */
 Bool   VG_(clo_wait_for_gdb)   = False;
 VgSmc  VG_(clo_smc_check)      = Vg_SmcStack;

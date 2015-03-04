@@ -1,5 +1,5 @@
 # discarded allocations
--                   valgrind
+-                   coregrind
 Test                freya_test
 
 # group for total consumption

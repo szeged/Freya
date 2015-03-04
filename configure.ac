@@ -325,20 +325,14 @@ case "${host_os}" in
         kernel=`uname -r`
 
         case "${kernel}" in
-             2.6.*|3.*) 
-        	    AC_MSG_RESULT([2.6.x/3.x family (${kernel})])
-        	    AC_DEFINE([KERNEL_2_6], 1, [Define to 1 if you're using Linux 2.6.x or Linux 3.x])
-        	    ;;
-
-             2.4.*) 
-        	    AC_MSG_RESULT([2.4 family (${kernel})])
-        	    AC_DEFINE([KERNEL_2_4], 1, [Define to 1 if you're using Linux 2.4.x])
-        	    ;;
-
-             *) 
+             0.*|1.*|2.0.*|2.1.*|2.2.*|2.3.*|2.4.*|2.5.*) 
         	    AC_MSG_RESULT([unsupported (${kernel})])
-        	    AC_MSG_ERROR([Valgrind works on kernels 2.4, 2.6])
+        	    AC_MSG_ERROR([Valgrind needs a Linux kernel >= 2.6])
         	    ;;
+
+             *)
+        	    AC_MSG_RESULT([2.6 or later (${kernel})])
+                    ;;
         esac
 
         ;;
@@ -1084,6 +1078,7 @@ AM_CONDITIONAL([HAVE_GNU_STPNCPY], [test x$ac_have_gnu_stpncpy = xyes])
 
 AC_MSG_CHECKING([for PTRACE_GETREGS])
 AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <stdlib.h>
 #include <stddef.h>
 #include <sys/ptrace.h>
 #include <sys/user.h>

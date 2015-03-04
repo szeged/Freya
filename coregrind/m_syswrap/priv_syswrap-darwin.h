@@ -558,10 +558,10 @@ DECL_TEMPLATE(darwin, bsdthread_ctl);            // 478
 // NYI sendmsg_x       // 481
 // NYI thread_selfusage  // 482
 // NYI csrctl          // 483
-// NYI guarded_open_dprotected_np  // 484
-// NYI guarded_write_np  // 485
-// NYI guarded_pwrite_np  // 486
-// NYI guarded_writev_np  // 487
+DECL_TEMPLATE(darwin, guarded_open_dprotected_np);  // 484
+DECL_TEMPLATE(darwin, guarded_write_np);            // 485
+DECL_TEMPLATE(darwin, guarded_pwrite_np);           // 486
+DECL_TEMPLATE(darwin, guarded_writev_np);           // 487
 // NYI rename_ext      // 488
 // NYI mremap_encrypted  // 489
 #endif /* DARWIN_VERS == DARWIN_10_10 */
@@ -593,6 +593,7 @@ DECL_TEMPLATE(darwin, task_get_exception_ports);
 DECL_TEMPLATE(darwin, semaphore_create);
 DECL_TEMPLATE(darwin, semaphore_destroy);
 DECL_TEMPLATE(darwin, task_policy_set);
+DECL_TEMPLATE(darwin, mach_ports_register);
 DECL_TEMPLATE(darwin, mach_ports_lookup);
 DECL_TEMPLATE(darwin, task_threads);
 DECL_TEMPLATE(darwin, task_suspend);
