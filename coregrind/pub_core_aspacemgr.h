@@ -254,9 +254,9 @@ extern Bool VG_(am_change_ownership_v_to_c)( Addr start, SizeT len );
 extern void VG_(am_set_segment_isCH_if_SkAnonC)( const NSegment* seg );
 
 /* Same idea as VG_(am_set_segment_isCH_if_SkAnonC), except set the
-   segment's hasT bit (has-cached-code) if this is SkFileC or SkAnonC
-   segment. */
-extern void VG_(am_set_segment_hasT_if_SkFileC_or_SkAnonC)( const NSegment* );
+   segment's hasT bit (has-cached-code) if this is a client segment,
+   i.e. SkFileC, SkAnonC, or SkShmC. */
+extern void VG_(am_set_segment_hasT_if_client_segment)( const NSegment* );
 
 /* --- --- --- reservations --- --- --- */
 
@@ -271,8 +271,8 @@ extern void VG_(am_set_segment_hasT_if_SkFileC_or_SkAnonC)( const NSegment* );
 extern Bool VG_(am_create_reservation) 
    ( Addr start, SizeT length, ShrinkMode smode, SSizeT extra );
 
-/* Let SEG be an anonymous client mapping.  This fn extends the
-   mapping by DELTA bytes, taking the space from a reservation section
+/* ADDR is the start address of an anonymous client mapping.  This fn extends
+   the mapping by DELTA bytes, taking the space from a reservation section
    which must be adjacent.  If DELTA is positive, the segment is
    extended forwards in the address space, and the reservation must be
    the next one along.  If DELTA is negative, the segment is extended
@@ -280,21 +280,17 @@ extern Bool VG_(am_create_reservation)
    previous one.  DELTA must be page aligned.  abs(DELTA) must not
    exceed the size of the reservation segment minus one page, that is,
    the reservation segment after the operation must be at least one
-   page long. */
-extern Bool VG_(am_extend_into_adjacent_reservation_client) 
-   ( const NSegment* seg, SSizeT delta );
+   page long. The function returns a pointer to the resized segment. */
+extern const NSegment *VG_(am_extend_into_adjacent_reservation_client) 
+   ( Addr addr, SSizeT delta, /*OUT*/Bool *overflow );
 
 /* --- --- --- resizing/move a mapping --- --- --- */
 
-/* Let SEG be a client mapping (anonymous or file).  This fn extends
-   the mapping forwards only by DELTA bytes, and trashes whatever was
-   in the new area.  Fails if SEG is not a single client mapping or if
-   the new area is not accessible to the client.  Fails if DELTA is
-   not page aligned.  *seg is invalid after a successful return.  If
-   *need_discard is True after a successful return, the caller should
-   immediately discard translations from the new area. */
-extern Bool VG_(am_extend_map_client)( /*OUT*/Bool* need_discard,
-                                       const NSegment* seg, SizeT delta );
+/* This function grows a client mapping in place into an adjacent free segment.
+   ADDR is the client mapping's start address and DELTA, which must be page
+   aligned, is the growth amount. The function returns a pointer to the
+   resized segment. The function is used in support of mremap. */
+extern const NSegment *VG_(am_extend_map_client)( Addr addr, SizeT delta );
 
 /* Remap the old address range to the new address range.  Fails if any
    parameter is not page aligned, if the either size is zero, if any

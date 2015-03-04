@@ -1612,7 +1612,8 @@ static void scan_memory_root_set(Addr searched, SizeT szB)
 {
    Int   i;
    Int   n_seg_starts;
-   Addr* seg_starts = VG_(get_segment_starts)( &n_seg_starts );
+   Addr* seg_starts = VG_(get_segment_starts)( SkFileC | SkAnonC | SkShmC,
+                                               &n_seg_starts );
 
    tl_assert(seg_starts && n_seg_starts > 0);
 
@@ -1624,13 +1625,14 @@ static void scan_memory_root_set(Addr searched, SizeT szB)
       SizeT seg_size;
       NSegment const* seg = VG_(am_find_nsegment)( seg_starts[i] );
       tl_assert(seg);
+      tl_assert(seg->kind == SkFileC || seg->kind == SkAnonC ||
+                seg->kind == SkShmC);
 
-      if (seg->kind != SkFileC && seg->kind != SkAnonC) continue;
       if (!(seg->hasR && seg->hasW))                    continue;
       if (seg->isCH)                                    continue;
 
       // Don't poke around in device segments as this may cause
-      // hangs.  Exclude /dev/zero just in case someone allocated
+      // hangs.  Include /dev/zero just in case someone allocated
       // memory by explicitly mapping /dev/zero.
       if (seg->kind == SkFileC 
           && (VKI_S_ISCHR(seg->mode) || VKI_S_ISBLK(seg->mode))) {

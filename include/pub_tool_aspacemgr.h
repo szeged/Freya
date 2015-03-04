@@ -36,16 +36,17 @@
 //--------------------------------------------------------------
 // Definition of address-space segments
 
-/* Describes segment kinds. */
+/* Describes segment kinds. Enumerators are one-hot encoded so they
+   can be or'ed together. */
 typedef
    enum {
-      SkFree,   // unmapped space
-      SkAnonC,  // anonymous mapping belonging to the client
-      SkAnonV,  // anonymous mapping belonging to valgrind
-      SkFileC,  // file mapping belonging to the client
-      SkFileV,  // file mapping belonging to valgrind
-      SkShmC,   // shared memory segment belonging to the client
-      SkResvn   // reservation
+      SkFree  = 0x01,  // unmapped space
+      SkAnonC = 0x02,  // anonymous mapping belonging to the client
+      SkAnonV = 0x04,  // anonymous mapping belonging to valgrind
+      SkFileC = 0x08,  // file mapping belonging to the client
+      SkFileV = 0x10,  // file mapping belonging to valgrind
+      SkShmC  = 0x20,  // shared memory segment belonging to the client
+      SkResvn = 0x40   // reservation
    }
    SegKind;
 
@@ -71,7 +72,6 @@ typedef
 
      kind == SkFile{C,V}:
         // smode==SmFixed
-        moveLo == moveHi == NotMovable, maxlen == 0
         // there is an associated file
         // segment may have permissions
 
@@ -86,9 +86,9 @@ typedef
         // there's no associated file:
         dev==ino==foff = 0, fnidx == -1
         // segment has no permissions
-        hasR==hasW==hasX==anyTranslated == False
+        hasR==hasW==hasX == False
 
-     Also: anyTranslated==True is only allowed in SkFileV and SkAnonV
+     Also: hasT==True is only allowed in SkFileC, SkAnonC, and SkShmC
            (viz, not allowed to make translations from non-client areas)
 */
 typedef
@@ -116,7 +116,8 @@ typedef
    NSegment;
 
 
-/* Collect up the start addresses of all non-free, non-resvn segments.
+/* Collect up the start addresses of segments whose kind matches one of
+   the kinds specified in kind_mask.
    The interface is a bit strange in order to avoid potential
    segment-creation races caused by dynamic allocation of the result
    buffer *starts.
@@ -129,7 +130,8 @@ typedef
 
    Correct use of this function may mean calling it multiple times in
    order to establish a suitably-sized buffer. */
-extern Int VG_(am_get_segment_starts)( Addr* starts, Int nStarts );
+extern Int VG_(am_get_segment_starts)( UInt kind_mask, Addr* starts,
+                                       Int nStarts );
 
 /* Finds the segment containing 'a'.  Only returns file/anon/resvn
    segments.  This returns a 'NSegment const *' - a pointer to
@@ -137,11 +139,7 @@ extern Int VG_(am_get_segment_starts)( Addr* starts, Int nStarts );
 extern NSegment const * VG_(am_find_nsegment) ( Addr a ); 
 
 /* Get the filename corresponding to this segment, if known and if it
-   has one.  The returned name's storage cannot be assumed to be
-   persistent, so the caller should immediately copy the name
-   elsewhere.  This may return NULL if the file name is not known or
-   for arbitrary other implementation-dependent reasons, so callers
-   need to be able to handle a NULL return value. */
+   has one. The function may return NULL if the file name is not known. */
 extern const HChar* VG_(am_get_filename)( NSegment const * );
 
 /* Is the area [start .. start+len-1] validly accessible by the 

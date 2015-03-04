@@ -1486,6 +1486,15 @@ PRE(fcntl)
       if (ARG2 == VKI_F_SETLKW) 
          *flags |= SfMayBlock;
       break;
+#  if DARWIN_VERS >= DARWIN_10_10
+   case VKI_F_SETLKWTIMEOUT:
+      PRINT("fcntl[ARG3=='locktimeout'] ( %ld, %ld, %#lx )", ARG1,ARG2,ARG3);
+      PRE_REG_READ3(long, "fcntl",
+                    unsigned int, fd, unsigned int, cmd,
+                    struct flocktimeout *, lock);
+      *flags |= SfMayBlock;
+      break;
+#  endif
 
        // none
    case VKI_F_CHKCLEAN:
@@ -1650,7 +1659,10 @@ POST(fcntl)
    case VKI_F_GETLK:
    case VKI_F_SETLK:
    case VKI_F_SETLKW:
+#  if DARWIN_VERS >= DARWIN_10_10
+   case VKI_F_SETLKWTIMEOUT:
        break;
+#  endif
 
    case VKI_F_PREALLOCATE:
       {
@@ -1832,7 +1844,7 @@ POST(kqueue)
 
 PRE(fileport_makeport)
 {
-    PRINT("guarded_open_np(fd:%#lx, portnamep:%#lx) FIXME",
+    PRINT("fileport_makeport(fd:%#lx, portnamep:%#lx) FIXME",
       ARG1, ARG2);
 }
 
@@ -5769,6 +5781,46 @@ POST(task_policy_set)
    }
 }
 
+
+PRE(mach_ports_register)
+{
+#pragma pack(4)
+    typedef struct {
+       mach_msg_header_t Head;
+       /* start of the kernel processed data */
+       mach_msg_body_t msgh_body;
+       mach_msg_ool_ports_descriptor_t init_port_set;
+       /* end of the kernel processed data */
+       NDR_record_t NDR;
+       mach_msg_type_number_t init_port_setCnt;
+    } Request;
+#pragma pack()
+    
+    // Request *req = (Request *)ARG1;
+    
+    PRINT("mach_ports_register(%s)", name_for_port(MACH_REMOTE));
+    
+    AFTER = POST_FN(mach_ports_register);
+}
+
+POST(mach_ports_register)
+{
+#pragma pack(4)
+    typedef struct {
+       mach_msg_header_t Head;
+       NDR_record_t NDR;
+       kern_return_t RetCode;
+    } Reply;
+#pragma pack()
+    
+    Reply *reply = (Reply *)ARG1;
+    if (!reply->RetCode) {
+    } else {
+        PRINT("mig return %d", reply->RetCode);
+    }
+}
+
+
 PRE(mach_ports_lookup)
 {
 #pragma pack(4)
@@ -7684,6 +7736,9 @@ PRE(mach_msg_task)
    case 3402:
       CALL_PRE(task_threads);
       return;
+   case 3403:
+      CALL_PRE(mach_ports_register);
+      return;
    case 3404:
       CALL_PRE(mach_ports_lookup);
       return;
@@ -9182,6 +9237,32 @@ PRE(bsdthread_ctl)
                  void*, cmd, void*, arg1, void*, arg2, void*, arg3);
 }
 
+PRE(guarded_open_dprotected_np)
+{
+    PRINT("guarded_open_dprotected_np("
+        "path:%#lx(%s), guard:%#lx, guardflags:%#lx, flags:%#lx, "
+        "dpclass:%#lx, dpflags: %#lx) FIXME",
+        ARG1, (char*)ARG1, ARG2, ARG3, ARG4, ARG5, ARG6);
+}
+
+PRE(guarded_write_np)
+{
+    PRINT("guarded_write_np(fd:%ld, guard:%#lx, cbuf:%#lx, nbyte:%llu) FIXME",
+        ARG1, ARG2, ARG3, (ULong)ARG4);
+}
+
+PRE(guarded_pwrite_np)
+{
+    PRINT("guarded_pwrite_np(fd:%ld, guard:%#lx, buf:%#lx, nbyte:%llu, offset:%lld) FIXME",
+        ARG1, ARG2, ARG3, (ULong)ARG4, (Long)ARG5);
+}
+
+PRE(guarded_writev_np)
+{
+    PRINT("guarded_writev_np(fd:%ld, guard:%#lx, iovp:%#lx, iovcnt:%llu) FIXME",
+        ARG1, ARG2, ARG3, (ULong)ARG4);
+}
+
 #endif /* DARWIN_VERS >= DARWIN_10_10 */
 
 
@@ -9699,6 +9780,10 @@ const SyscallTableEntry ML_(syscall_table)[] = {
    MACXY(__NR_necp_match_policy,   necp_match_policy),  // 460
    MACXY(__NR_getattrlistbulk,     getattrlistbulk),    // 461
    MACX_(__NR_bsdthread_ctl,       bsdthread_ctl),      // 478
+   MACX_(__NR_guarded_open_dprotected_np, guarded_open_dprotected_np),
+   MACX_(__NR_guarded_write_np, guarded_write_np),
+   MACX_(__NR_guarded_pwrite_np, guarded_pwrite_np),
+   MACX_(__NR_guarded_writev_np, guarded_writev_np),
 #endif
 // _____(__NR_MAXSYSCALL)
    MACX_(__NR_DARWIN_FAKE_SIGRETURN, FAKE_SIGRETURN)

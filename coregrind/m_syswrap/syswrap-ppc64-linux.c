@@ -1152,7 +1152,12 @@ static SyscallTableEntry syscall_table[] = {
    LINX_(__NR_pwritev,           sys_pwritev),          // 321
    LINXY(__NR_rt_tgsigqueueinfo, sys_rt_tgsigqueueinfo),// 322
 
+   LINXY(__NR_recvmmsg,          sys_recvmmsg),         // 343
+   LINXY(__NR_accept4,           sys_accept4),          // 344
+
    LINXY(__NR_clock_adjtime,     sys_clock_adjtime),    // 347
+
+   LINXY(__NR_sendmmsg,          sys_sendmmsg),         // 349
 
    LINXY(__NR_process_vm_readv,  sys_process_vm_readv), // 351
    LINX_(__NR_process_vm_writev, sys_process_vm_writev),// 352

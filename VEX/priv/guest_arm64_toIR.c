@@ -39,10 +39,15 @@
      Both should be fixed.  They behave incorrectly in the presence of
      NaNs.
 
+     FMULX is treated the same as FMUL.  That's also not correct.
+
    * Floating multiply-add (etc) insns.  Are split into a multiply and 
      an add, and so suffer double rounding and hence sometimes the
      least significant mantissa bit is incorrect.  Fix: use the IR
      multiply-add IROps instead.
+
+   * FRINTA, FRINTN are kludged .. they just round to nearest.  No special
+     handling for the "ties" case.  FRINTX might be dubious too.
 */
 
 /* "Special" instructions.
@@ -7292,6 +7297,7 @@ static IRTemp math_FOLDV ( IRTemp src, IROp op )
          assign(res, unop(Iop_ZeroHI112ofV128, mkexpr(max76543210)));
          return res;
       }
+      case Iop_Max32Fx4: case Iop_Min32Fx4:
       case Iop_Min32Sx4: case Iop_Min32Ux4:
       case Iop_Max32Sx4: case Iop_Max32Ux4: case Iop_Add32x4: {
          IRTemp x3210 = src;
@@ -8480,7 +8486,7 @@ Bool dis_AdvSIMD_across_lanes(/*MB_OUT*/DisResult* dres, UInt insn)
                      : mkexpr(tN1));
       IRTemp res = math_FOLDV(tN2, op);
       if (res == IRTemp_INVALID)
-         return False; /* means math_MINMAXV
+         return False; /* means math_FOLDV
                           doesn't handle this case yet */
       putQReg128(dd, mkexpr(res));
       const IRType tys[3] = { Ity_I8, Ity_I16, Ity_I32 };
@@ -8488,6 +8494,26 @@ Bool dis_AdvSIMD_across_lanes(/*MB_OUT*/DisResult* dres, UInt insn)
       const HChar* arr = nameArr_Q_SZ(bitQ, size);
       DIP("%s %s, %s.%s\n", nm,
           nameQRegLO(dd, laneTy), nameQReg128(nn), arr);
+      return True;
+   }
+
+   if ((size == X00 || size == X10)
+       && (opcode == BITS5(0,1,1,0,0) || opcode == BITS5(0,1,1,1,1))) {
+      /* -------- 0,00,01100: FMAXMNV s_4s -------- */
+      /* -------- 0,10,01100: FMINMNV s_4s -------- */
+      /* -------- 1,00,01111: FMAXV   s_4s -------- */
+      /* -------- 1,10,01111: FMINV   s_4s -------- */
+      /* FMAXNM, FMINNM: FIXME -- KLUDGED */
+      if (bitQ == 0) return False; // Only 4s is allowed
+      Bool   isMIN = (size & 2) == 2;
+      Bool   isNM  = opcode == BITS5(0,1,1,0,0);
+      IROp   opMXX = (isMIN ? mkVecMINF : mkVecMAXF)(2);
+      IRTemp src = newTempV128();
+      assign(src, getQReg128(nn));
+      IRTemp res = math_FOLDV(src, opMXX);
+      putQReg128(dd, mkexpr(res));
+      DIP("%s%sv s%u, %u.4s\n",
+          isMIN ? "fmin" : "fmax", isNM ? "nm" : "", dd, nn);
       return True;
    }
 
@@ -8849,7 +8875,9 @@ Bool dis_AdvSIMD_modified_immediate(/*MB_OUT*/DisResult* dres, UInt insn)
       case BITS5(0,1,1,1,0):
          ok = True; isMOV = True; break;
 
-      /* FMOV (vector, immediate, single precision) */
+      /* -------- x,0,1111 FMOV (vector, immediate, F32) -------- */
+      case BITS5(0,1,1,1,1): // 0:1111
+         ok = True; isFMOV = True; break;
 
       /* -------- x,1,0000 MVNI 32-bit shifted imm -------- */
       /* -------- x,1,0010 MVNI 32-bit shifted imm  -------- */
@@ -8887,7 +8915,7 @@ Bool dis_AdvSIMD_modified_immediate(/*MB_OUT*/DisResult* dres, UInt insn)
       case BITS5(1,1,1,1,0):
          ok = True; isMOV = True; break;
 
-      /* -------- 1,1,1111 FMOV (vector, immediate) -------- */
+      /* -------- 1,1,1111 FMOV (vector, immediate, F64) -------- */
       case BITS5(1,1,1,1,1): // 1:1111
          ok = bitQ == 1; isFMOV = True; break;
 
@@ -9051,6 +9079,33 @@ Bool dis_AdvSIMD_scalar_pairwise(/*MB_OUT*/DisResult* dres, UInt insn)
                           triop(opADD, mkexpr(mk_get_IR_rounding_mode()),
                                               mkexpr(argL), mkexpr(argR))));
       DIP(isD ? "faddp d%u, v%u.2d\n" : "faddp s%u, v%u.2s\n", dd, nn);
+      return True;
+   }
+
+   if (bitU == 1
+       && (opcode == BITS5(0,1,1,0,0) || opcode == BITS5(0,1,1,1,1))) {
+      /* -------- 1,0x,01100 FMAXNMP d_2d, s_2s -------- */
+      /* -------- 1,1x,01100 FMINNMP d_2d, s_2s -------- */
+      /* -------- 1,0x,01111 FMAXP   d_2d, s_2s -------- */
+      /* -------- 1,1x,01111 FMINP   d_2d, s_2s -------- */
+      /* FMAXNM, FMINNM: FIXME -- KLUDGED */
+      Bool   isD   = (sz & 1) == 1;
+      Bool   isMIN = (sz & 2) == 2;
+      Bool   isNM  = opcode == BITS5(0,1,1,0,0);
+      IROp   opZHI = mkVecZEROHIxxOFV128(isD ? 3 : 2);
+      IROp   opMXX = (isMIN ? mkVecMINF : mkVecMAXF)(isD ? 3 : 2);
+      IRTemp src   = newTempV128();
+      IRTemp argL  = newTempV128();
+      IRTemp argR  = newTempV128();
+      assign(src, getQReg128(nn));
+      assign(argL, unop(opZHI, mkexpr(src)));
+      assign(argR, unop(opZHI, triop(Iop_SliceV128, mkexpr(src), mkexpr(src), 
+                                                    mkU8(isD ? 8 : 4))));
+      putQReg128(dd, unop(opZHI,
+                          binop(opMXX, mkexpr(argL), mkexpr(argR))));
+      HChar c = isD ? 'd' : 's';
+      DIP("%s%sp %c%u, v%u.2%c\n",
+           isMIN ? "fmin" : "fmax", isNM ? "nm" : "", c, dd, nn, c);
       return True;
    }
 
@@ -9579,6 +9634,89 @@ Bool dis_AdvSIMD_scalar_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   if (bitU == 0 && size <= X01 && opcode == BITS5(1,1,0,1,1)) {
+      /* -------- 0,0x,11011 FMULX d_d_d, s_s_s -------- */
+      // KLUDGE: FMULX is treated the same way as FMUL.  That can't be right.
+      IRType ity = size == X01 ? Ity_F64 : Ity_F32;
+      IRTemp res = newTemp(ity);
+      assign(res, triop(mkMULF(ity),
+                        mkexpr(mk_get_IR_rounding_mode()),
+                        getQRegLO(nn,ity), getQRegLO(mm,ity)));
+      putQReg128(dd, mkV128(0x0000));
+      putQRegLO(dd, mkexpr(res));
+      DIP("fmulx %s, %s, %s\n",
+          nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity));
+      return True;
+   }
+
+   if (size <= X01 && opcode == BITS5(1,1,1,0,0)) {
+      /* -------- 0,0x,11100 FCMEQ d_d_d, s_s_s -------- */
+      /* -------- 1,0x,11100 FCMGE d_d_d, s_s_s -------- */
+      Bool   isD   = size == X01;
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      Bool   isGE  = bitU == 1;
+      IROp   opCMP = isGE ? (isD ? Iop_CmpLE64Fx2 : Iop_CmpLE32Fx4)
+                          : (isD ? Iop_CmpEQ64Fx2 : Iop_CmpEQ32Fx4);
+      IRTemp res   = newTempV128();
+      assign(res, isGE ? binop(opCMP, getQReg128(mm), getQReg128(nn)) // swapd
+                       : binop(opCMP, getQReg128(nn), getQReg128(mm)));
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(res))));
+      DIP("%s %s, %s, %s\n", isGE ? "fcmge" : "fcmeq",
+          nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity));
+      return True;
+   }
+
+   if (bitU == 1 && size >= X10 && opcode == BITS5(1,1,1,0,0)) {
+      /* -------- 1,1x,11100 FCMGT d_d_d, s_s_s -------- */
+      Bool   isD   = size == X11;
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      IROp   opCMP = isD ? Iop_CmpLT64Fx2 : Iop_CmpLT32Fx4;
+      IRTemp res   = newTempV128();
+      assign(res, binop(opCMP, getQReg128(mm), getQReg128(nn))); // swapd
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(res))));
+      DIP("%s %s, %s, %s\n", "fcmgt",
+          nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity));
+      return True;
+   }
+
+   if (bitU == 1 && opcode == BITS5(1,1,1,0,1)) {
+      /* -------- 1,0x,11101 FACGE d_d_d, s_s_s -------- */
+      /* -------- 1,1x,11101 FACGT d_d_d, s_s_s -------- */
+      Bool   isD   = (size & 1) == 1;
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      Bool   isGT  = (size & 2) == 2;
+      IROp   opCMP = isGT ? (isD ? Iop_CmpLT64Fx2 : Iop_CmpLT32Fx4)
+                          : (isD ? Iop_CmpLE64Fx2 : Iop_CmpLE32Fx4);
+      IROp   opABS = isD ? Iop_Abs64Fx2 : Iop_Abs32Fx4;
+      IRTemp res   = newTempV128();
+      assign(res, binop(opCMP, unop(opABS, getQReg128(mm)),
+                               unop(opABS, getQReg128(nn)))); // swapd
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(res))));
+      DIP("%s %s, %s, %s\n", isGT ? "facgt" : "facge",
+          nameQRegLO(dd, ity), nameQRegLO(nn, ity), nameQRegLO(mm, ity));
+      return True;
+   }
+
+   if (bitU == 0 && opcode == BITS5(1,1,1,1,1)) {
+      /* -------- 0,0x,11111: FRECPS  d_d_d, s_s_s -------- */
+      /* -------- 0,1x,11111: FRSQRTS d_d_d, s_s_s -------- */
+      Bool isSQRT = (size & 2) == 2;
+      Bool isD    = (size & 1) == 1;
+      IROp op     = isSQRT ? (isD ? Iop_RSqrtStep64Fx2 : Iop_RSqrtStep32Fx4)
+                           : (isD ? Iop_RecipStep64Fx2 : Iop_RecipStep32Fx4);
+      IRTemp res = newTempV128();
+      assign(res, binop(op, getQReg128(nn), getQReg128(mm)));
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(res))));
+      HChar c = isD ? 'd' : 's';
+      DIP("%s %c%u, %c%u, %c%u\n", isSQRT ? "frsqrts" : "frecps",
+          c, dd, c, nn, c, mm);
+      return True;
+   }
+
    return False;
 #  undef INSN
 }
@@ -9700,6 +9838,48 @@ Bool dis_AdvSIMD_scalar_two_reg_misc(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   UInt ix = 0; /*INVALID*/
+   if (size >= X10) {
+      switch (opcode) {
+         case BITS5(0,1,1,0,0): ix = (bitU == 1) ? 4 : 1; break;
+         case BITS5(0,1,1,0,1): ix = (bitU == 1) ? 5 : 2; break;
+         case BITS5(0,1,1,1,0): if (bitU == 0) ix = 3; break;
+         default: break;
+      }
+   }
+   if (ix > 0) {
+      /* -------- 0,1x,01100 FCMGT d_d_#0.0, s_s_#0.0 (ix 1) -------- */
+      /* -------- 0,1x,01101 FCMEQ d_d_#0.0, s_s_#0.0 (ix 2) -------- */
+      /* -------- 0,1x,01110 FCMLT d_d_#0.0, s_s_#0.0 (ix 3) -------- */
+      /* -------- 1,1x,01100 FCMGE d_d_#0.0, s_s_#0.0 (ix 4) -------- */
+      /* -------- 1,1x,01101 FCMLE d_d_#0.0, s_s_#0.0 (ix 5) -------- */
+      Bool   isD     = size == X11;
+      IRType ity     = isD ? Ity_F64 : Ity_F32;
+      IROp   opCmpEQ = isD ? Iop_CmpEQ64Fx2 : Iop_CmpEQ32Fx4;
+      IROp   opCmpLE = isD ? Iop_CmpLE64Fx2 : Iop_CmpLE32Fx4;
+      IROp   opCmpLT = isD ? Iop_CmpLT64Fx2 : Iop_CmpLT32Fx4;
+      IROp   opCmp   = Iop_INVALID;
+      Bool   swap    = False;
+      const HChar* nm = "??";
+      switch (ix) {
+         case 1: nm = "fcmgt"; opCmp = opCmpLT; swap = True; break;
+         case 2: nm = "fcmeq"; opCmp = opCmpEQ; break;
+         case 3: nm = "fcmlt"; opCmp = opCmpLT; break;
+         case 4: nm = "fcmge"; opCmp = opCmpLE; swap = True; break;
+         case 5: nm = "fcmle"; opCmp = opCmpLE; break;
+         default: vassert(0);
+      }
+      IRExpr* zero = mkV128(0x0000);
+      IRTemp res = newTempV128();
+      assign(res, swap ? binop(opCmp, zero, getQReg128(nn))
+                       : binop(opCmp, getQReg128(nn), zero));
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(res))));
+
+      DIP("%s %s, %s, #0.0\n", nm, nameQRegLO(dd, ity), nameQRegLO(nn, ity));
+      return True;
+   }
+
    if (opcode == BITS5(1,0,1,0,0)
        || (bitU == 1 && opcode == BITS5(1,0,0,1,0))) {
       /* -------- 0,xx,10100: SQXTN -------- */
@@ -9737,7 +9917,37 @@ Bool dis_AdvSIMD_scalar_two_reg_misc(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
-#  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+   if (size >= X10 && opcode == BITS5(1,1,1,0,1)) {
+      /* -------- 0,1x,11101: FRECPE  d_d, s_s -------- */
+      /* -------- 1,1x,11101: FRSQRTE d_d, s_s -------- */
+      Bool isSQRT = bitU == 1;
+      Bool isD    = (size & 1) == 1;
+      IROp op     = isSQRT ? (isD ? Iop_RSqrtEst64Fx2 : Iop_RSqrtEst32Fx4)
+                           : (isD ? Iop_RecipEst64Fx2 : Iop_RecipEst32Fx4);
+      IRTemp resV = newTempV128();
+      assign(resV, unop(op, getQReg128(nn)));
+      putQReg128(dd, mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? X11 : X10,
+                                                             mkexpr(resV))));
+      HChar c = isD ? 'd' : 's';
+      DIP("%s %c%u, %c%u\n", isSQRT ? "frsqrte" : "frecpe", c, dd, c, nn);
+      return True;
+   }
+
+   if (bitU == 0 && size >= X10 && opcode == BITS5(1,1,1,1,1)) {
+      /* -------- 0,1x,11111: FRECPX  d_d, s_s -------- */
+      Bool   isD = (size & 1) == 1;
+      IRType ty  = isD ? Ity_F64 : Ity_F32;
+      IROp   op  = isD ? Iop_RecpExpF64 : Iop_RecpExpF32;
+      IRTemp res = newTemp(ty);
+      IRTemp rm  = mk_get_IR_rounding_mode();
+      assign(res, binop(op, mkexpr(rm), getQRegLane(nn, 0, ty)));
+      putQReg128(dd, mkV128(0x0000));
+      putQRegLane(dd, 0, mkexpr(res));
+      HChar c = isD ? 'd' : 's';
+      DIP("%s %c%u, %c%u\n", "frecpx", c, dd, c, nn);
+      return True;
+   }
+
    return False;
 #  undef INSN
 }
@@ -9768,6 +9978,70 @@ Bool dis_AdvSIMD_scalar_x_indexed_element(/*MB_OUT*/DisResult* dres, UInt insn)
    UInt dd     = INSN(4,0);
    vassert(size < 4);
    vassert(bitH < 2 && bitM < 2 && bitL < 2);
+
+   if (bitU == 0 && size >= X10
+       && (opcode == BITS4(0,0,0,1) || opcode == BITS4(0,1,0,1))) {
+      /* -------- 0,1x,0001 FMLA d_d_d[], s_s_s[] -------- */
+      /* -------- 0,1x,0101 FMLS d_d_d[], s_s_s[] -------- */
+      Bool isD   = (size & 1) == 1;
+      Bool isSUB = opcode == BITS4(0,1,0,1);
+      UInt index;
+      if      (!isD)             index = (bitH << 1) | bitL;
+      else if (isD && bitL == 0) index = bitH;
+      else return False; // sz:L == x11 => unallocated encoding
+      vassert(index < (isD ? 2 : 4));
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      IRTemp elem  = newTemp(ity);
+      UInt   mm    = (bitM << 4) | mmLO4;
+      assign(elem, getQRegLane(mm, index, ity));
+      IRTemp dupd  = math_DUP_TO_V128(elem, ity);
+      IROp   opADD = isD ? Iop_Add64Fx2 : Iop_Add32Fx4;
+      IROp   opSUB = isD ? Iop_Sub64Fx2 : Iop_Sub32Fx4;
+      IROp   opMUL = isD ? Iop_Mul64Fx2 : Iop_Mul32Fx4;
+      IRTemp rm    = mk_get_IR_rounding_mode();
+      IRTemp t1    = newTempV128();
+      IRTemp t2    = newTempV128();
+      // FIXME: double rounding; use FMA primops instead
+      assign(t1, triop(opMUL, mkexpr(rm), getQReg128(nn), mkexpr(dupd)));
+      assign(t2, triop(isSUB ? opSUB : opADD,
+                       mkexpr(rm), getQReg128(dd), mkexpr(t1)));
+      putQReg128(dd,
+                 mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? 3 : 2,
+                                                         mkexpr(t2))));
+      const HChar c = isD ? 'd' : 's';
+      DIP("%s %c%u, %c%u, %s.%c[%u]\n", isSUB ? "fmls" : "fmla",
+          c, dd, c, nn, nameQReg128(mm), c, index);
+      return True;
+   }
+
+   if (size >= X10 && opcode == BITS4(1,0,0,1)) {
+      /* -------- 0,1x,1001 FMUL  d_d_d[], s_s_s[] -------- */
+      /* -------- 1,1x,1001 FMULX d_d_d[], s_s_s[] -------- */
+      Bool isD    = (size & 1) == 1;
+      Bool isMULX = bitU == 1;
+      UInt index;
+      if      (!isD)             index = (bitH << 1) | bitL;
+      else if (isD && bitL == 0) index = bitH;
+      else return False; // sz:L == x11 => unallocated encoding
+      vassert(index < (isD ? 2 : 4));
+      IRType ity   = isD ? Ity_F64 : Ity_F32;
+      IRTemp elem  = newTemp(ity);
+      UInt   mm    = (bitM << 4) | mmLO4;
+      assign(elem, getQRegLane(mm, index, ity));
+      IRTemp dupd  = math_DUP_TO_V128(elem, ity);
+      IROp   opMUL = isD ? Iop_Mul64Fx2 : Iop_Mul32Fx4;
+      IRTemp rm    = mk_get_IR_rounding_mode();
+      IRTemp t1    = newTempV128();
+      // KLUDGE: FMULX is treated the same way as FMUL.  That can't be right.
+      assign(t1, triop(opMUL, mkexpr(rm), getQReg128(nn), mkexpr(dupd)));
+      putQReg128(dd,
+                 mkexpr(math_ZERO_ALL_EXCEPT_LOWEST_LANE(isD ? 3 : 2,
+                                                         mkexpr(t1))));
+      const HChar c = isD ? 'd' : 's';
+      DIP("%s %c%u, %c%u, %s.%c[%u]\n", isMULX ? "fmulx" : "fmul",
+          c, dd, c, nn, nameQReg128(mm), c, index);
+      return True;
+   }
 
    if (bitU == 0 
        && (opcode == BITS4(1,0,1,1)
@@ -10993,6 +11267,28 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   if (bitU == 0
+       && (opcode == BITS5(1,1,0,0,0) || opcode == BITS5(1,1,1,1,0))) {
+      /* -------- 0,0x,11000 FMAXNM 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 0,1x,11000 FMINNM 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 0,0x,11110 FMAX   2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 0,1x,11110 FMIN   2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* FMAXNM, FMINNM: FIXME -- KLUDGED */
+      Bool   isD   = (size & 1) == 1;
+      if (bitQ == 0 && isD) return False; // implied 1d case
+      Bool   isMIN = (size & 2) == 2;
+      Bool   isNM  = opcode == BITS5(1,1,0,0,0);
+      IROp   opMXX = (isMIN ? mkVecMINF : mkVecMAXF)(isD ? X11 : X10);
+      IRTemp res   = newTempV128();
+      assign(res, binop(opMXX, getQReg128(nn), getQReg128(mm)));
+      putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, res));
+      const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
+      DIP("%s%s %s.%s, %s.%s, %s.%s\n",
+          isMIN ? "fmin" : "fmax", isNM ? "nm" : "",
+          nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
+      return True;
+   }
+
    if (bitU == 0 && opcode == BITS5(1,1,0,0,1)) {
       /* -------- 0,0x,11001 FMLA 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
       /* -------- 0,1x,11001 FMLS 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
@@ -11057,9 +11353,12 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
-   if (bitU == 1 && size <= X01 && opcode == BITS5(1,1,0,1,1)) {
-      /* -------- 1,0x,11011 FMUL 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
-      Bool isD = (size & 1) == 1;
+   if (size <= X01 && opcode == BITS5(1,1,0,1,1)) {
+      /* -------- 0,0x,11011 FMULX 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 1,0x,11011 FMUL  2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      // KLUDGE: FMULX is treated the same way as FMUL.  That can't be right.
+      Bool isD    = (size & 1) == 1;
+      Bool isMULX = bitU == 0;
       if (bitQ == 0 && isD) return False; // implied 1d case
       IRTemp rm = mk_get_IR_rounding_mode();
       IRTemp t1 = newTempV128();
@@ -11067,7 +11366,7 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
                        mkexpr(rm), getQReg128(nn), getQReg128(mm)));
       putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, t1));
       const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
-      DIP("fmul %s.%s, %s.%s, %s.%s\n",
+      DIP("%s %s.%s, %s.%s, %s.%s\n", isMULX ? "fmulx" : "fmul",
           nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
       return True;
    }
@@ -11123,6 +11422,37 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   if (bitU == 1
+       && (opcode == BITS5(1,1,0,0,0) || opcode == BITS5(1,1,1,1,0))) {
+      /* -------- 1,0x,11000 FMAXNMP 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 1,1x,11000 FMINNMP 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 1,0x,11110 FMAXP   2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 1,1x,11110 FMINP   2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* FMAXNM, FMINNM: FIXME -- KLUDGED */
+      Bool isD = (size & 1) == 1;
+      if (bitQ == 0 && isD) return False; // implied 1d case
+      Bool   isMIN = (size & 2) == 2;
+      Bool   isNM  = opcode == BITS5(1,1,0,0,0);
+      IROp   opMXX = (isMIN ? mkVecMINF : mkVecMAXF)(isD ? 3 : 2);
+      IRTemp srcN  = newTempV128();
+      IRTemp srcM  = newTempV128();
+      IRTemp preL  = IRTemp_INVALID;
+      IRTemp preR  = IRTemp_INVALID;
+      assign(srcN, getQReg128(nn));
+      assign(srcM, getQReg128(mm));
+      math_REARRANGE_FOR_FLOATING_PAIRWISE(&preL, &preR,
+                                           srcM, srcN, isD, bitQ);
+      putQReg128(
+         dd, math_MAYBE_ZERO_HI64_fromE(
+                bitQ,
+                binop(opMXX, mkexpr(preL), mkexpr(preR))));
+      const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
+      DIP("%s%sp %s.%s, %s.%s, %s.%s\n", 
+          isMIN ? "fmin" : "fmax", isNM ? "nm" : "",
+          nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
+      return True;
+   }
+
    if (bitU == 1 && size <= X01 && opcode == BITS5(1,1,0,1,0)) {
       /* -------- 1,0x,11010 FADDP 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
       Bool isD = size == X01;
@@ -11162,6 +11492,23 @@ Bool dis_AdvSIMD_three_same(/*MB_OUT*/DisResult* dres, UInt insn)
       putQReg128(dd, mkexpr(t2));
       const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
       DIP("%s %s.%s, %s.%s, %s.%s\n", "fdiv",
+          nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
+      return True;
+   }
+
+   if (bitU == 0 && opcode == BITS5(1,1,1,1,1)) {
+      /* -------- 0,0x,11111: FRECPS  2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      /* -------- 0,1x,11111: FRSQRTS 2d_2d_2d, 4s_4s_4s, 2s_2s_2s -------- */
+      Bool isSQRT = (size & 2) == 2;
+      Bool isD    = (size & 1) == 1;
+      if (bitQ == 0 && isD) return False; // implied 1d case
+      IROp op     = isSQRT ? (isD ? Iop_RSqrtStep64Fx2 : Iop_RSqrtStep32Fx4)
+                           : (isD ? Iop_RecipStep64Fx2 : Iop_RecipStep32Fx4);
+      IRTemp res = newTempV128();
+      assign(res, binop(op, getQReg128(nn), getQReg128(mm)));
+      putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, res));
+      const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
+      DIP("%s %s.%s, %s.%s, %s.%s\n", isSQRT ? "frsqrts" : "frecps",
           nameQReg128(dd), arr, nameQReg128(nn), arr, nameQReg128(mm), arr);
       return True;
    }
@@ -11428,6 +11775,48 @@ Bool dis_AdvSIMD_two_reg_misc(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   UInt ix = 0; /*INVALID*/
+   if (size >= X10) {
+      switch (opcode) {
+         case BITS5(0,1,1,0,0): ix = (bitU == 1) ? 4 : 1; break;
+         case BITS5(0,1,1,0,1): ix = (bitU == 1) ? 5 : 2; break;
+         case BITS5(0,1,1,1,0): if (bitU == 0) ix = 3; break;
+         default: break;
+      }
+   }
+   if (ix > 0) {
+      /* -------- 0,1x,01100 FCMGT 2d_2d,4s_4s,2s_2s _#0.0 (ix 1) -------- */
+      /* -------- 0,1x,01101 FCMEQ 2d_2d,4s_4s,2s_2s _#0.0 (ix 2) -------- */
+      /* -------- 0,1x,01110 FCMLT 2d_2d,4s_4s,2s_2s _#0.0 (ix 3) -------- */
+      /* -------- 1,1x,01100 FCMGE 2d_2d,4s_4s,2s_2s _#0.0 (ix 4) -------- */
+      /* -------- 1,1x,01101 FCMLE 2d_2d,4s_4s,2s_2s _#0.0 (ix 5) -------- */
+      if (bitQ == 0 && size == X11) return False; // implied 1d case
+      Bool   isD     = size == X11;
+      IROp   opCmpEQ = isD ? Iop_CmpEQ64Fx2 : Iop_CmpEQ32Fx4;
+      IROp   opCmpLE = isD ? Iop_CmpLE64Fx2 : Iop_CmpLE32Fx4;
+      IROp   opCmpLT = isD ? Iop_CmpLT64Fx2 : Iop_CmpLT32Fx4;
+      IROp   opCmp   = Iop_INVALID;
+      Bool   swap    = False;
+      const HChar* nm = "??";
+      switch (ix) {
+         case 1: nm = "fcmgt"; opCmp = opCmpLT; swap = True; break;
+         case 2: nm = "fcmeq"; opCmp = opCmpEQ; break;
+         case 3: nm = "fcmlt"; opCmp = opCmpLT; break;
+         case 4: nm = "fcmge"; opCmp = opCmpLE; swap = True; break;
+         case 5: nm = "fcmle"; opCmp = opCmpLE; break;
+         default: vassert(0);
+      }
+      IRExpr* zero = mkV128(0x0000);
+      IRTemp res = newTempV128();
+      assign(res, swap ? binop(opCmp, zero, getQReg128(nn))
+                       : binop(opCmp, getQReg128(nn), zero));
+      putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, res));
+      const HChar* arr = bitQ == 0 ? "2s" : (size == X11 ? "2d" : "4s");
+      DIP("%s %s.%s, %s.%s, #0.0\n", nm,
+          nameQReg128(dd), arr, nameQReg128(nn), arr);
+      return True;
+   }
+
    if (size >= X10 && opcode == BITS5(0,1,1,1,1)) {
       /* -------- 0,1x,01111: FABS 2d_2d, 4s_4s, 2s_2s -------- */
       /* -------- 1,1x,01111: FNEG 2d_2d, 4s_4s, 2s_2s -------- */
@@ -11532,6 +11921,76 @@ Bool dis_AdvSIMD_two_reg_misc(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
+   ix = 0;
+   if (opcode == BITS5(1,1,0,0,0) || opcode == BITS5(1,1,0,0,1)) {
+      ix = 1 + ((((bitU & 1) << 2) | ((size & 2) << 0)) | ((opcode & 1) << 0));
+      // = 1 + bitU[0]:size[1]:opcode[0]
+      vassert(ix >= 1 && ix <= 8);
+      if (ix == 7) ix = 0;
+   }
+   if (ix > 0) {
+      /* -------- 0,0x,11000 FRINTN 2d_2d, 4s_4s, 2s_2s (1) -------- */
+      /* -------- 0,0x,11001 FRINTM 2d_2d, 4s_4s, 2s_2s (2) -------- */
+      /* -------- 0,1x,11000 FRINTP 2d_2d, 4s_4s, 2s_2s (3) -------- */
+      /* -------- 0,1x,11001 FRINTZ 2d_2d, 4s_4s, 2s_2s (4) -------- */
+      /* -------- 1,0x,11000 FRINTA 2d_2d, 4s_4s, 2s_2s (5) -------- */
+      /* -------- 1,0x,11001 FRINTX 2d_2d, 4s_4s, 2s_2s (6) -------- */
+      /* -------- 1,1x,11000 (apparently unassigned)    (7) -------- */
+      /* -------- 1,1x,11001 FRINTI 2d_2d, 4s_4s, 2s_2s (8) -------- */
+      /* rm plan:
+         FRINTN: tieeven -- !! FIXME KLUDGED !!
+         FRINTM: -inf
+         FRINTP: +inf
+         FRINTZ: zero
+         FRINTA: tieaway -- !! FIXME KLUDGED !!
+         FRINTX: per FPCR + "exact = TRUE"
+         FRINTI: per FPCR
+      */
+      Bool isD = (size & 1) == 1;
+      if (bitQ == 0 && isD) return False; // implied 1d case
+
+      IRTemp irrmRM = mk_get_IR_rounding_mode();
+
+      UChar ch = '?';
+      IRTemp irrm = newTemp(Ity_I32);
+      switch (ix) {
+         case 1: ch = 'n'; assign(irrm, mkU32(Irrm_NEAREST)); break;
+         case 2: ch = 'm'; assign(irrm, mkU32(Irrm_NegINF)); break;
+         case 3: ch = 'p'; assign(irrm, mkU32(Irrm_PosINF)); break;
+         case 4: ch = 'z'; assign(irrm, mkU32(Irrm_ZERO)); break; 
+         // The following is a kludge.  Should be: Irrm_NEAREST_TIE_AWAY_0
+         case 5: ch = 'a'; assign(irrm, mkU32(Irrm_NEAREST)); break;
+         // I am unsure about the following, due to the "integral exact"
+         // description in the manual.  What does it mean? (frintx, that is)
+         case 6: ch = 'x'; assign(irrm, mkexpr(irrmRM)); break;
+         case 8: ch = 'i'; assign(irrm, mkexpr(irrmRM)); break; 
+         default: vassert(0);
+      }
+
+      IRTemp src = newTempV128();
+      assign(src, getQReg128(nn));
+
+      IROp opRND = isD ? Iop_RoundF64toInt : Iop_RoundF32toInt;
+      if (isD) {
+         for (UInt i = 0; i < 2; i++) {
+            putQRegLane(dd, i, binop(opRND, mkexpr(irrm),
+                                            getQRegLane(nn, i, Ity_F64)));
+         }
+      } else {
+         UInt n = bitQ==1 ? 4 : 2;
+         for (UInt i = 0; i < n; i++) {
+            putQRegLane(dd, i, binop(opRND, mkexpr(irrm),
+                                            getQRegLane(nn, i, Ity_F32)));
+         }
+         if (bitQ == 0)
+            putQRegLane(dd, 1, mkU64(0)); // zero out lanes 2 and 3
+      }
+      const HChar* arr = nameArr_Q_SZ(bitQ, size);
+      DIP("frint%c %s.%s, %s.%s\n", ch,
+          nameQReg128(dd), arr, nameQReg128(nn), arr);
+      return True;
+   }
+
    if (size == X10 && opcode == BITS5(1,1,1,0,0)) {
       /* -------- 0,10,11100: URECPE  4s_4s, 2s_2s -------- */
       /* -------- 1,10,11100: URSQRTE 4s_4s, 2s_2s -------- */
@@ -11583,6 +12042,23 @@ Bool dis_AdvSIMD_two_reg_misc(/*MB_OUT*/DisResult* dres, UInt insn)
          return True;
       }
       /* else fall through */
+   }
+
+   if (size >= X10 && opcode == BITS5(1,1,1,0,1)) {
+      /* -------- 0,1x,11101: FRECPE  2d_2d, 4s_4s, 2s_2s -------- */
+      /* -------- 1,1x,11101: FRSQRTE 2d_2d, 4s_4s, 2s_2s -------- */
+      Bool isSQRT = bitU == 1;
+      Bool isD    = (size & 1) == 1;
+      IROp op     = isSQRT ? (isD ? Iop_RSqrtEst64Fx2 : Iop_RSqrtEst32Fx4)
+                           : (isD ? Iop_RecipEst64Fx2 : Iop_RecipEst32Fx4);
+      if (bitQ == 0 && isD) return False; // implied 1d case
+      IRTemp resV = newTempV128();
+      assign(resV, unop(op, getQReg128(nn)));
+      putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, resV));
+      const HChar* arr = bitQ == 0 ? "2s" : (size == X11 ? "2d" : "4s");
+      DIP("%s %s.%s, %s.%s\n", isSQRT ? "frsqrte" : "frecpe",
+          nameQReg128(dd), arr, nameQReg128(nn), arr);
+      return True;
    }
 
    return False;
@@ -11652,10 +12128,12 @@ Bool dis_AdvSIMD_vector_x_indexed_elem(/*MB_OUT*/DisResult* dres, UInt insn)
       return True;
    }
 
-   if (bitU == 0 && size >= X10 && opcode == BITS4(1,0,0,1)) {
-      /* -------- 0,1x,1001 FMUL 2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
+   if (size >= X10 && opcode == BITS4(1,0,0,1)) {
+      /* -------- 0,1x,1001 FMUL  2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
+      /* -------- 1,1x,1001 FMULX 2d_2d_d[], 4s_4s_s[], 2s_2s_s[] -------- */
       if (bitQ == 0 && size == X11) return False; // implied 1d case
-      Bool isD = (size & 1) == 1;
+      Bool isD    = (size & 1) == 1;
+      Bool isMULX = bitU == 1;
       UInt index;
       if      (!isD)             index = (bitH << 1) | bitL;
       else if (isD && bitL == 0) index = bitH;
@@ -11666,13 +12144,15 @@ Bool dis_AdvSIMD_vector_x_indexed_elem(/*MB_OUT*/DisResult* dres, UInt insn)
       UInt   mm   = (bitM << 4) | mmLO4;
       assign(elem, getQRegLane(mm, index, ity));
       IRTemp dupd = math_DUP_TO_V128(elem, ity);
+      // KLUDGE: FMULX is treated the same way as FMUL.  That can't be right.
       IRTemp res  = newTempV128();
       assign(res, triop(isD ? Iop_Mul64Fx2 : Iop_Mul32Fx4,
                         mkexpr(mk_get_IR_rounding_mode()),
                         getQReg128(nn), mkexpr(dupd)));
       putQReg128(dd, math_MAYBE_ZERO_HI64(bitQ, res));
       const HChar* arr = bitQ == 0 ? "2s" : (isD ? "2d" : "4s");
-      DIP("fmul %s.%s, %s.%s, %s.%c[%u]\n", nameQReg128(dd), arr,
+      DIP("%s %s.%s, %s.%s, %s.%c[%u]\n", 
+          isMULX ? "fmulx" : "fmul", nameQReg128(dd), arr,
           nameQReg128(nn), arr, nameQReg128(mm), isD ? 'd' : 's', index);
       return True;
    }
@@ -11982,7 +12462,63 @@ Bool dis_AdvSIMD_fp_compare(/*MB_OUT*/DisResult* dres, UInt insn)
 static
 Bool dis_AdvSIMD_fp_conditional_compare(/*MB_OUT*/DisResult* dres, UInt insn)
 {
+   /* 31  28    23 21 20 15   11 9 4  3
+      000 11110 ty 1  m  cond 01 n op nzcv
+      The first 3 bits are really "M 0 S", but M and S are always zero.
+      Decode fields are: ty,op
+   */
 #  define INSN(_bMax,_bMin)  SLICE_UInt(insn, (_bMax), (_bMin))
+   if (INSN(31,24) != BITS8(0,0,0,1,1,1,1,0)
+       || INSN(21,21) != 1 || INSN(11,10) != BITS2(0,1)) {
+      return False;
+   }
+   UInt ty   = INSN(23,22);
+   UInt mm   = INSN(20,16);
+   UInt cond = INSN(15,12);
+   UInt nn   = INSN(9,5);
+   UInt op   = INSN(4,4);
+   UInt nzcv = INSN(3,0);
+   vassert(ty < 4 && op <= 1);
+
+   if (ty <= BITS2(0,1)) {
+      /* -------- 00,0 FCCMP  s_s -------- */
+      /* -------- 00,1 FCCMPE s_s -------- */
+      /* -------- 01,0 FCCMP  d_d -------- */
+      /* -------- 01,1 FCCMPE d_d -------- */
+
+      /* FCCMPE generates Invalid Operation exn if either arg is any kind
+         of NaN.  FCCMP generates Invalid Operation exn if either arg is a
+         signalling NaN.  We ignore this detail here and produce the same
+         IR for both.
+      */
+      Bool   isD    = (ty & 1) == 1;
+      Bool   isCMPE = op == 1;
+      IRType ity    = isD ? Ity_F64 : Ity_F32;
+      IRTemp argL   = newTemp(ity);
+      IRTemp argR   = newTemp(ity);
+      IRTemp irRes  = newTemp(Ity_I32);
+      assign(argL,  getQRegLO(nn, ity));
+      assign(argR,  getQRegLO(mm, ity));
+      assign(irRes, binop(isD ? Iop_CmpF64 : Iop_CmpF32,
+                          mkexpr(argL), mkexpr(argR)));
+      IRTemp condT = newTemp(Ity_I1);
+      assign(condT, unop(Iop_64to1, mk_arm64g_calculate_condition(cond)));
+      IRTemp nzcvT = mk_convert_IRCmpF64Result_to_NZCV(irRes);
+
+      IRTemp nzcvT_28x0 = newTemp(Ity_I64);
+      assign(nzcvT_28x0, binop(Iop_Shl64, mkexpr(nzcvT), mkU8(28)));
+
+      IRExpr* nzcvF_28x0 = mkU64(((ULong)nzcv) << 28);
+
+      IRTemp nzcv_28x0 = newTemp(Ity_I64);
+      assign(nzcv_28x0, IRExpr_ITE(mkexpr(condT),
+                                   mkexpr(nzcvT_28x0), nzcvF_28x0));
+      setFlags_COPY(nzcv_28x0);
+      DIP("fccmp%s %s, %s, #%u, %s\n", isCMPE ? "e" : "",
+          nameQRegLO(nn, ity), nameQRegLO(mm, ity), nzcv, nameCC(cond));
+      return True;
+   }
+
    return False;
 #  undef INSN
 }
@@ -12146,7 +12682,7 @@ Bool dis_AdvSIMD_fp_data_proc_1_source(/*MB_OUT*/DisResult* dres, UInt insn)
             001 +inf      (FRINTP)
             010 -inf      (FRINTM)
             011 zero      (FRINTZ)
-            000 tieeven
+            000 tieeven   (FRINTN) -- !! FIXME KLUDGED !!
             100 tieaway   (FRINTA) -- !! FIXME KLUDGED !!
             110 per FPCR + "exact = TRUE" (FRINTX)
             101 unallocated
@@ -12168,6 +12704,9 @@ Bool dis_AdvSIMD_fp_data_proc_1_source(/*MB_OUT*/DisResult* dres, UInt insn)
             ch = 'x'; irrmE = mkexpr(mk_get_IR_rounding_mode()); break;
          case BITS3(1,1,1):
             ch = 'i'; irrmE = mkexpr(mk_get_IR_rounding_mode()); break;
+         // The following is a kludge.  There's no Irrm_ value to represent
+         // this ("to nearest, with ties to even")
+         case BITS3(0,0,0): ch = 'n'; irrmE = mkU32(Irrm_NEAREST); break;
          default: break;
       }
       if (irrmE) {
@@ -12555,10 +13094,14 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
           || (iop == Iop_F32toI32U && irrm == Irrm_NEAREST)/* FCVT{A,N}U W,S */
           /* F32toI64S */
           || (iop == Iop_F32toI64S && irrm == Irrm_ZERO)   /* FCVTZS Xd,Sn */
+          || (iop == Iop_F32toI64S && irrm == Irrm_NegINF) /* FCVTMS Xd,Sn */
+          || (iop == Iop_F32toI64S && irrm == Irrm_PosINF) /* FCVTPS Xd,Sn */
           || (iop == Iop_F32toI64S && irrm == Irrm_NEAREST)/* FCVT{A,N}S X,S */
           /* F32toI64U */
           || (iop == Iop_F32toI64U && irrm == Irrm_ZERO)   /* FCVTZU Xd,Sn */
+          || (iop == Iop_F32toI64U && irrm == Irrm_NegINF) /* FCVTMU Xd,Sn */
           || (iop == Iop_F32toI64U && irrm == Irrm_PosINF) /* FCVTPU Xd,Sn */
+          || (iop == Iop_F32toI64U && irrm == Irrm_NEAREST)/* FCVT{A,N}U X,S */
           /* F64toI32S */
           || (iop == Iop_F64toI32S && irrm == Irrm_ZERO)   /* FCVTZS Wd,Dn */
           || (iop == Iop_F64toI32S && irrm == Irrm_NegINF) /* FCVTMS Wd,Dn */
@@ -12568,6 +13111,7 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
           || (iop == Iop_F64toI32U && irrm == Irrm_ZERO)   /* FCVTZU Wd,Dn */
           || (iop == Iop_F64toI32U && irrm == Irrm_NegINF) /* FCVTMU Wd,Dn */
           || (iop == Iop_F64toI32U && irrm == Irrm_PosINF) /* FCVTPU Wd,Dn */
+          || (iop == Iop_F64toI32U && irrm == Irrm_NEAREST)/* FCVT{A,N}U W,D */
           /* F64toI64S */
           || (iop == Iop_F64toI64S && irrm == Irrm_ZERO)   /* FCVTZS Xd,Dn */
           || (iop == Iop_F64toI64S && irrm == Irrm_NegINF) /* FCVTMS Xd,Dn */
@@ -12577,6 +13121,7 @@ Bool dis_AdvSIMD_fp_to_from_int_conv(/*MB_OUT*/DisResult* dres, UInt insn)
           || (iop == Iop_F64toI64U && irrm == Irrm_ZERO)   /* FCVTZU Xd,Dn */
           || (iop == Iop_F64toI64U && irrm == Irrm_NegINF) /* FCVTMU Xd,Dn */
           || (iop == Iop_F64toI64U && irrm == Irrm_PosINF) /* FCVTPU Xd,Dn */
+          || (iop == Iop_F64toI64U && irrm == Irrm_NEAREST)/* FCVT{A,N}U X,D */
          ) {
         /* validated */
       } else {
