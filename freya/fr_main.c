@@ -46,6 +46,8 @@
 #include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
 
+#include "valgrind.h"
+
 static Bool clo_fr_verb        = False;
 static const HChar* clo_config = NULL;
 static Bool clo_mmap           = True;
@@ -491,25 +493,10 @@ typedef
 
 static VgHashTable *malloc_list  = NULL;   // HP_Chunks
 
-static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
-                  Bool is_zeroed )
+static void register_block (ThreadId tid, void *p, SizeT req_szB, SizeT slop_szB )
 {
-   void* p;
    HP_Chunk* hc;
-   SizeT actual_szB, slop_szB;
    Trace_Block* block;
-
-   if ((SSizeT)req_szB < 0) return NULL;
-
-   // Allocate and zero if necessary
-   p = VG_(cli_malloc)( req_alignB, req_szB );
-   if (!p) {
-      return NULL;
-   }
-   if (is_zeroed) VG_(memset)(p, 0, req_szB);
-   actual_szB = VG_(cli_malloc_usable_size)(p);
-   tl_assert(actual_szB >= req_szB);
-   slop_szB = actual_szB - req_szB;
 
    // Make new HP_Chunk node, add to malloc_list
    hc           = VG_(malloc)("freya.malloc", sizeof(HP_Chunk));
@@ -530,6 +517,27 @@ static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
    }
 
    VG_(HT_add_node)(malloc_list, hc);
+}
+
+static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
+                  Bool is_zeroed )
+{
+   void* p;
+   SizeT actual_szB, slop_szB;
+
+   if ((SSizeT)req_szB < 0) return NULL;
+
+   // Allocate and zero if necessary
+   p = VG_(cli_malloc)( req_alignB, req_szB );
+   if (!p) {
+      return NULL;
+   }
+   if (is_zeroed) VG_(memset)(p, 0, req_szB);
+   actual_szB = VG_(malloc_usable_size)(p);
+   tl_assert(actual_szB >= req_szB);
+   slop_szB = actual_szB - req_szB;
+
+   register_block(tid, p, req_szB, slop_szB);
    return p;
 }
 
@@ -580,7 +588,7 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    VG_(printf)("=== End ===\n");
 }
 
-static void free_block ( ThreadId tid, void* p )
+static void unregister_block ( ThreadId tid, void* p )
 {
    // Remove HP_Chunk from malloc_list
    HP_Chunk* hc = VG_(HT_remove)(malloc_list, (UWord)p);
@@ -601,8 +609,13 @@ static void free_block ( ThreadId tid, void* p )
    }
 
    // Actually free the chunk, and the heap block (if necessary)
-   VG_(free)( hc );
-   VG_(cli_free)( p );
+   VG_(free)(hc);
+}
+
+static void free_block ( ThreadId tid, void* p )
+{
+   unregister_block(tid, p);
+   VG_(cli_free)(p);
 }
 
 // Nb: --ignore-fn is tricky for realloc.  If the block's original alloc was
@@ -924,6 +937,41 @@ static void fr_munmap(Addr a, SizeT len)
 }
 
 // ---------------------------------------------------------------
+//  Client request
+// ---------------------------------------------------------------
+
+static Bool fr_handle_client_request ( ThreadId tid, UWord* argv, UWord* ret )
+{
+   switch (argv[0]) {
+   case VG_USERREQ__MALLOCLIKE_BLOCK: {
+      void* p   = (void*)argv[1];
+      SizeT szB =        argv[2];
+      register_block(tid, p, szB, 0);
+      *ret = 0;
+      return True;
+   }
+#if 0
+   case VG_USERREQ__RESIZEINPLACE_BLOCK: {
+      void* p        = (void*)argv[1];
+      SizeT newSizeB =       argv[3];
+      return True;
+   }
+#endif
+   case VG_USERREQ__FREELIKE_BLOCK: {
+      void* p = (void*)argv[1];
+      unregister_block( tid, p );
+      *ret = 0;
+      return True;
+   }
+
+   default:
+      *ret = 0;
+      return False;
+   }
+}
+
+
+// ---------------------------------------------------------------
 //  Generator
 // ---------------------------------------------------------------
 
@@ -1019,7 +1067,7 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
             addStmtToIRSB( sbOut, st );
             break;
 
-         case Ist_StoreG: 
+         case Ist_StoreG:
             dataTy = typeOfIRExpr(tyenv, st->Ist.StoreG.details->data);
             argv   = mkIRExprVec_2( st->Ist.StoreG.details->addr, mkIRExpr_HWord( sizeofIRType( dataTy ) ) );
             di     = unsafeIRDirty_0_N(/*regparms*/2, "trace_store", VG_(fnptr_to_fnentry)( trace_store ), argv);
@@ -1411,6 +1459,8 @@ static void fr_pre_clo_init(void)
    VG_(needs_command_line_options)(fr_process_cmd_line_option,
                                    fr_print_usage,
                                    fr_print_debug_usage);
+
+   VG_(needs_client_requests)     (fr_handle_client_request);
 
    VG_(needs_malloc_replacement)  (fr_malloc,
                                    fr___builtin_new,
