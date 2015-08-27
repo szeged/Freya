@@ -55,6 +55,7 @@ static Bool clo_cross_free     = False;
 static Int clo_trace           = 10;
 static Int clo_report          = 5;
 static Int clo_min             = 0;
+static Int clo_max_trace       = 65536;
 
 // ---------------------------------------------------------------
 //  Common types
@@ -112,8 +113,6 @@ static const HChar* default_rule = "[total]+\n";
 #define DIR_BUFFER_SIZE 2048
 static const HChar* fnname_buffer;
 static HChar dir_buffer[DIR_BUFFER_SIZE];
-
-#define MAX_TRACE       64
 
 // Head of the trace
 static Trace_Block* trace_head = NULL;
@@ -179,6 +178,7 @@ static void fr_sort_and_dump(Trace_Block* block, Int indent)
 
       for (i = 0; i < indent; ++i)
          VG_(printf)("  ");
+      VG_(printf)("[%d] ", indent);
       fr_print_block(block);
 
       if (block->first)
@@ -272,7 +272,10 @@ typedef
    }
    Trace_Hash;
 
-static VgHashTable *trace_hash   = NULL;
+static Bool all_skipped = False;
+static Addr *trace_ips;
+static Trace_Hash **trace_hash_entries;
+static VgHashTable *trace_hash = NULL;
 
 static void check_address(Addr ips, Trace_Hash* hash_entry)
 {
@@ -377,8 +380,6 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
 
 static Trace_Block* alloc_trace(ThreadId tid)
 {
-   static Addr ips[MAX_TRACE];
-   static Trace_Hash* hash_entries[MAX_TRACE];
    Addr* ips_ptr;
    UInt n_ips, n_ips_count;
    Trace_Hash* hash_entry;
@@ -387,12 +388,12 @@ static Trace_Block* alloc_trace(ThreadId tid)
    Trace_Block* parent;
    Trace_Block* block;
 
-   n_ips = VG_(get_StackTrace)(tid, ips, clo_trace, NULL, NULL, 0);
+   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace, NULL, NULL, 0);
    tl_assert(n_ips > 0);
 
    // Get first non-skiped block
-   ips_ptr = ips;
-   hash_entry_ptr = hash_entries;
+   ips_ptr = trace_ips;
+   hash_entry_ptr = trace_hash_entries;
    max_skip = NULL;
    n_ips_count = n_ips;
    do {
@@ -414,14 +415,16 @@ static Trace_Block* alloc_trace(ThreadId tid)
       ips_ptr++;
    } while (n_ips_count > 0);
 
-   ips_ptr = ips;
-   hash_entry_ptr = hash_entries;
+   ips_ptr = trace_ips;
+   hash_entry_ptr = trace_hash_entries;
    if (max_skip) {
-      if (max_skip - hash_entries == n_ips)
+      if (max_skip - trace_hash_entries == n_ips) {
+         all_skipped = True;
          max_skip--; // At least one should always remain
-      n_ips -= max_skip - hash_entries;
-      ips_ptr += max_skip - hash_entries;
-      hash_entry_ptr += max_skip - hash_entries;
+      }
+      n_ips -= max_skip - trace_hash_entries;
+      ips_ptr += max_skip - trace_hash_entries;
+      hash_entry_ptr += max_skip - trace_hash_entries;
    }
 
    if (n_ips > clo_report)
@@ -533,7 +536,7 @@ static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
       return NULL;
    }
    if (is_zeroed) VG_(memset)(p, 0, req_szB);
-   actual_szB = VG_(malloc_usable_size)(p);
+   actual_szB = VG_(cli_malloc_usable_size)(p);
    tl_assert(actual_szB >= req_szB);
    slop_szB = actual_szB - req_szB;
 
@@ -543,7 +546,6 @@ static void* new_block ( ThreadId tid, SizeT req_szB, SizeT req_alignB,
 
 static void cross_thread_free ( ThreadId tid, Trace_Block* block )
 {
-   static Addr ips[MAX_TRACE];
    Addr* ips_ptr;
    int n_ips;
    UInt linenum;
@@ -567,11 +569,11 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    }
 
    VG_(printf)("=== Current free or realloc ===\n");
-   n_ips = VG_(get_StackTrace)(tid, ips, clo_trace, NULL, NULL, 0);
+   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace, NULL, NULL, 0);
    tl_assert(n_ips > 0);
    if (n_ips > clo_trace)
        n_ips = clo_trace;
-   ips_ptr = ips;
+   ips_ptr = trace_ips;
 
    while (n_ips > 0) {
       if (VG_(get_filename_linenum)( *ips_ptr, &file_ptr, &dir_ptr, &linenum )) {
@@ -977,13 +979,13 @@ static Bool fr_handle_client_request ( ThreadId tid, UWord* argv, UWord* ret )
 
 static Bool fr_process_cmd_line_option(const HChar* arg)
 {
-         if (VG_BOOL_CLO(arg, "--frverb", clo_fr_verb))             {}
-    else if (VG_STR_CLO(arg, "--config", clo_config))               {}
-    else if (VG_BOOL_CLO(arg, "--mmap", clo_mmap))                  {}
-    else if (VG_BOOL_CLO(arg, "--crossfree", clo_cross_free))       {}
-    else if (VG_BINT_CLO(arg, "--trace", clo_trace, 10, MAX_TRACE))  {}
-    else if (VG_BINT_CLO(arg, "--report", clo_report, 5, MAX_TRACE))  {}
-    else if (VG_BINT_CLO(arg, "--min", clo_min, 0, 1024*1024*1024)) {}
+         if (VG_BOOL_CLO(arg, "--frverb", clo_fr_verb))                  {}
+    else if (VG_STR_CLO(arg,  "--config", clo_config))                   {}
+    else if (VG_BOOL_CLO(arg, "--mmap", clo_mmap))                       {}
+    else if (VG_BOOL_CLO(arg, "--crossfree", clo_cross_free))            {}
+    else if (VG_BINT_CLO(arg, "--trace", clo_trace, 10, clo_max_trace))  {}
+    else if (VG_BINT_CLO(arg, "--report", clo_report, 5, clo_max_trace)) {}
+    else if (VG_BINT_CLO(arg, "--min", clo_min, 0, 1024*1024*1024))      {}
     else
         return VG_(replacement_malloc_process_cmd_line_option)(arg);
 
@@ -1120,6 +1122,10 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
 
 static void fr_fini(Int exitcode)
 {
+   if (all_skipped) {
+     VG_(printf)("Warning: --trace should be increased, because the last item of\n"
+                 "         the stack trace sometimes matches a skip rule\n\n");
+   }
    fr_sort_and_dump(trace_head, 0);
 }
 
@@ -1288,6 +1294,9 @@ static void fr_post_clo_init(void)
    SysRes sres;
    Int fd;
    OffT file_size;
+
+   trace_ips = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace, sizeof(Addr));
+   trace_hash_entries = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace, sizeof(Trace_Hash*));
 
    if (clo_mmap) {
 #if VG_WORDSIZE == 4
