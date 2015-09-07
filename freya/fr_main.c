@@ -52,8 +52,8 @@ static Bool clo_fr_verb        = False;
 static const HChar* clo_config = NULL;
 static Bool clo_mmap           = True;
 static Bool clo_cross_free     = False;
-static Int clo_trace           = 10;
-static Int clo_report          = 5;
+static Int clo_trace_len       = 10;
+static Int clo_report_len      = 5;
 static Int clo_min             = 0;
 static Int clo_max_trace       = 65536;
 
@@ -64,20 +64,21 @@ static Int clo_max_trace       = 65536;
 // Contain an item
 typedef
    struct _Trace_Block {
-      struct _Trace_Block* parent;    // Parent block
-      struct _Trace_Block* next;      // Next in the list
-      struct _Trace_Block* first;     // First child
+      struct _Trace_Block* parent;      // Parent block
+      struct _Trace_Block* next;        // Next in the list
+      struct _Trace_Block* first;       // First child
 
-      struct _Trace_Block* hash_next; // Next item, who has the same ips
+      struct _Trace_Block* hash_next;   // Next item, who has the same ips
 
-      Int                  allocs;   // Number of allocs
-      Int                  reallocs; // Number of reallocs
-      Long                 total;    // Total allocated memory
-      Int                  current;  // Current memory allocation
-      Int                  peak;     // Peak memory consumption
+      Int                  allocs;      // Number of allocs
+      Int                  reallocs;    // Number of reallocs
+      Long                 total;       // Total allocated memory
+      Int                  current;     // Current memory allocation
+      Int                  peak;        // Peak memory consumption
 
-      Addr                 ips;      // Stack trace instruction
-      HChar*               name;     // Name of a tree node. Valid only if ips == 0
+      Addr                 ips;         // Stack trace instruction
+      Int                  report_len;  // Report depth. Valid only if ips == 0
+      HChar*               name;        // Name of a tree node. Valid only if ips == 0
    }
    Trace_Block;
 
@@ -388,10 +389,10 @@ static Trace_Block* alloc_trace(ThreadId tid)
    Trace_Block* parent;
    Trace_Block* block;
 
-   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace, NULL, NULL, 0);
+   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace_len, NULL, NULL, 0);
    tl_assert(n_ips > 0);
 
-   // Get first non-skiped block
+   // Get first non-skipped block
    ips_ptr = trace_ips;
    hash_entry_ptr = trace_hash_entries;
    max_skip = NULL;
@@ -427,13 +428,17 @@ static Trace_Block* alloc_trace(ThreadId tid)
       hash_entry_ptr += max_skip - trace_hash_entries;
    }
 
-   if (n_ips > clo_report)
-      n_ips = clo_report;
+   parent = (*hash_entry_ptr)->parent;
+
+   if (parent) {
+      if (n_ips > parent->report_len)
+         n_ips = parent->report_len;
+   } else if (n_ips > clo_report_len)
+      n_ips = clo_report_len;
 
    tl_assert(n_ips > 0);
 
    // Insert to the chain
-   parent = (*hash_entry_ptr)->parent;
    do {
       hash_entry = *hash_entry_ptr++;
       block = hash_entry->block;
@@ -569,10 +574,10 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    }
 
    VG_(printf)("=== Current free or realloc ===\n");
-   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace, NULL, NULL, 0);
+   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace_len, NULL, NULL, 0);
    tl_assert(n_ips > 0);
-   if (n_ips > clo_trace)
-       n_ips = clo_trace;
+   if (n_ips > clo_trace_len)
+       n_ips = clo_trace_len;
    ips_ptr = trace_ips;
 
    while (n_ips > 0) {
@@ -979,13 +984,13 @@ static Bool fr_handle_client_request ( ThreadId tid, UWord* argv, UWord* ret )
 
 static Bool fr_process_cmd_line_option(const HChar* arg)
 {
-         if (VG_BOOL_CLO(arg, "--frverb", clo_fr_verb))                  {}
-    else if (VG_STR_CLO(arg,  "--config", clo_config))                   {}
-    else if (VG_BOOL_CLO(arg, "--mmap", clo_mmap))                       {}
-    else if (VG_BOOL_CLO(arg, "--crossfree", clo_cross_free))            {}
-    else if (VG_BINT_CLO(arg, "--trace", clo_trace, 10, clo_max_trace))  {}
-    else if (VG_BINT_CLO(arg, "--report", clo_report, 5, clo_max_trace)) {}
-    else if (VG_BINT_CLO(arg, "--min", clo_min, 0, 1024*1024*1024))      {}
+         if (VG_BOOL_CLO(arg, "--frverb", clo_fr_verb))                      {}
+    else if (VG_STR_CLO(arg,  "--config", clo_config))                       {}
+    else if (VG_BOOL_CLO(arg, "--mmap", clo_mmap))                           {}
+    else if (VG_BOOL_CLO(arg, "--crossfree", clo_cross_free))                {}
+    else if (VG_BINT_CLO(arg, "--trace", clo_trace_len, 10, clo_max_trace))  {}
+    else if (VG_BINT_CLO(arg, "--report", clo_report_len, 1, clo_max_trace)) {}
+    else if (VG_BINT_CLO(arg, "--min", clo_min, 0, 1024*1024*1024))          {}
     else
         return VG_(replacement_malloc_process_cmd_line_option)(arg);
 
@@ -1129,7 +1134,7 @@ static void fr_fini(Int exitcode)
    fr_sort_and_dump(trace_head, 0);
 }
 
-static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
+static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr, Int line)
 {
    Rule_List* rule;
    Rule_List* rule_ptr;
@@ -1142,7 +1147,10 @@ static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
    if (*read_ptr != '-') {
       rule->name = read_ptr;
       while (*read_ptr != ' ') {
-         tl_assert2(*read_ptr && *read_ptr != '\n' && *read_ptr != '\r' && *read_ptr != ')', "Rule must start with hypen or a name followed by a space");
+         if (*read_ptr == '\0' || *read_ptr == '\r' || *read_ptr == '\n' || *read_ptr == ')' || *read_ptr == '}') {
+            VG_(printf)("Invalid rule name at line %d (must start with hypen or a name followed by a space)\n", line);
+            tl_assert(0);
+         }
          read_ptr++;
       }
       rule->name_len = read_ptr - rule->name;
@@ -1152,7 +1160,7 @@ static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
       rule_ptr = rule_head;
       while (rule_ptr) {
          if (rule_ptr->name_len == rule->name_len && VG_(memcmp)(rule->name, rule_ptr->name, rule->name_len * sizeof(HChar)) == 0) {
-            VG_(printf)("Redefined rule %s. Rule names must be unique!\n", rule->name);
+            VG_(printf)("Redefined rule %s at line %d. Rule names must be unique!\n", rule->name, line);
             tl_assert(0);
          }
          rule_ptr = rule_ptr->next;
@@ -1179,11 +1187,17 @@ static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
 
       rule->func_name = read_ptr;
       while (!(!rule->is_namespace && *read_ptr == ')') && !(rule->is_namespace && *read_ptr == '}')) {
-         tl_assert2(*read_ptr && *read_ptr != '\n' && *read_ptr != '\r', "unterminated ( or {");
+         if (*read_ptr == '\r' || *read_ptr == '\n' || *read_ptr == '\0') {
+            VG_(printf)("Unterminated ( or { at line %d\n", line);
+            tl_assert(0);
+         }
          read_ptr++;
       }
       rule->func_name_len = read_ptr - rule->func_name;
-      tl_assert2(rule->func_name_len > 0, "missing function or namespace name");
+      if (rule->func_name_len == 0) {
+         VG_(printf)("Function or namespace name is empty at line %d\n", line);
+         tl_assert(0);
+      }
       *read_ptr = '\0';
       read_ptr++;
 
@@ -1196,14 +1210,22 @@ static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
    }
 
    rule->path = read_ptr;
-   while (*read_ptr && *read_ptr != '\n' && *read_ptr != '\r')
+   while (read_ptr != '\0' && *read_ptr != '\n' && *read_ptr != '\r')
       read_ptr++;
+
    rule->path_len = read_ptr - rule->path;
    if (rule->path_len == 0)
       rule->path = NULL;
-   else if (*read_ptr) {
-      *read_ptr = '\0';
-      read_ptr++;
+
+   // Unlike other lines, newline is parsed here
+   if (*read_ptr) {
+      if (read_ptr[0] == '\r' && read_ptr[1] == '\n') {
+         *read_ptr = '\0';
+         read_ptr += 2;
+      } else {
+         *read_ptr = '\0';
+         read_ptr++;
+      }
    }
 
    if (clo_fr_verb)
@@ -1214,7 +1236,7 @@ static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr)
    return read_ptr;
 }
 
-static void search_rule(Trace_Block* block, HChar* name, SizeT name_len)
+static void search_rule(Trace_Block* block, HChar* name, SizeT name_len, Int line)
 {
    Rule_List* rule_ptr;
 
@@ -1222,13 +1244,16 @@ static void search_rule(Trace_Block* block, HChar* name, SizeT name_len)
    while (rule_ptr) {
       if (rule_ptr->name_len == name_len && rule_ptr->name[0] == name[0]
             && VG_(memcmp)(rule_ptr->name, name, name_len * sizeof(HChar)) == 0) {
-         tl_assert2(!rule_ptr->parent, "Rule is already assigned");
+         if (rule_ptr->parent != NULL) {
+            VG_(printf)("Rule '%s' has been assigned at line %d\n", name, line);
+            tl_assert(0);
+         }
          rule_ptr->parent = block;
          return;
       }
       rule_ptr = rule_ptr->next;
    }
-   VG_(printf)("Rule '%s' not found\n", name);
+   VG_(printf)("Rule '%s' not found at line %d\n", name, line);
    tl_assert(0);
 }
 
@@ -1257,27 +1282,39 @@ static void remove_unused_rules(void)
    }
 }
 
-static HChar* parse_extra_rule(HChar* read_ptr, Trace_Block* block)
+static HChar* parse_extra_rule(HChar* read_ptr, Trace_Block* block, Int line)
 {
    HChar* name;
 
-   tl_assert2(block, "the first group cannot be started by {");
+   if (block == NULL) {
+      VG_(printf)("The first group at line %d cannot be started with {\n", line);
+      tl_assert(0);
+   }
+
    read_ptr++;
    name = read_ptr;
-
    while (*read_ptr != '}') {
-      tl_assert2(*read_ptr && *read_ptr != '\n' && *read_ptr != '\r', "unterminated {");
+      if (*read_ptr == '\r' || *read_ptr == '\n' || *read_ptr == '\0') {
+         VG_(printf)("Unterminated { at line %d\n", line);
+         tl_assert(0);
+      }
       read_ptr++;
    }
-   tl_assert2(name != read_ptr, "node has no name");
+   if (name == read_ptr) {
+      VG_(printf)("The node at line %d has empty name\n", line);
+      tl_assert(0);
+   }
 
    *read_ptr = '\0';
-   search_rule(block, name, read_ptr - name);
+   search_rule(block, name, read_ptr - name, line);
    read_ptr++;
 
    while (*read_ptr == ' ')
       read_ptr++;
-   tl_assert2(*read_ptr == '\n' || *read_ptr == '\r' || !*read_ptr, "Garbage at the end of the line");
+   if (*read_ptr != '\n' && *read_ptr != '\r' && *read_ptr != '\0') {
+      VG_(printf)("Garbage at the end of line %d\n", line);
+      tl_assert(0);
+   }
    return read_ptr;
 }
 
@@ -1290,13 +1327,15 @@ static void fr_post_clo_init(void)
    Int* indents = (int*)dir_buffer;
    Int indent;
    Int depth = -1;
+   Int report_len;
+   Int line = 1;
    Bool is_group;
    SysRes sres;
    Int fd;
    OffT file_size;
 
-   trace_ips = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace, sizeof(Addr));
-   trace_hash_entries = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace, sizeof(Trace_Hash*));
+   trace_ips = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace_len, sizeof(Addr));
+   trace_hash_entries = VG_(calloc)("freya.fr_post_clo_init.1", clo_trace_len, sizeof(Trace_Hash*));
 
    if (clo_mmap) {
 #if VG_WORDSIZE == 4
@@ -1352,22 +1391,29 @@ static void fr_post_clo_init(void)
          read_ptr++;
       }
 
-      // Skip comments and empty lines
-      if (*read_ptr == '#' || *read_ptr == '\r' || *read_ptr == '\n') {
+      // All newlines are parsed here
+      if (*read_ptr == '\r' || *read_ptr == '\n') {
+         line++;
+         if (read_ptr[0] == '\r' && read_ptr[1] == '\n')
+            read_ptr++;
+         read_ptr++;
+         continue;
+      }
+
+      // Skip comments
+      if (*read_ptr == '#') {
          while (*read_ptr != '\0' && *read_ptr != '\r' && *read_ptr != '\n')
             read_ptr++;
 
-         if (*read_ptr) {
-            read_ptr++;
-            continue;
-         }
+         continue;
       }
 
       if (*read_ptr == '{') {
-         read_ptr = parse_extra_rule(read_ptr, block);
+         read_ptr = parse_extra_rule(read_ptr, block, line);
          continue;
       } else if (*read_ptr != '[' && *read_ptr != '(') {
-         read_ptr = parse_rule(read_ptr, &last_rule_ptr);
+         read_ptr = parse_rule(read_ptr, &last_rule_ptr, line);
+         line++;
          continue;
       }
 
@@ -1378,15 +1424,40 @@ static void fr_post_clo_init(void)
       block->name = read_ptr;
 
       while (!(!is_group && *read_ptr == ')') && !(is_group && *read_ptr == ']')) {
-         tl_assert2(*read_ptr && *read_ptr != '\n' && *read_ptr != '\r', "unterminated ( or [");
+         if (*read_ptr == '\r' || *read_ptr == '\n' || *read_ptr == '\0') {
+            VG_(printf)("Unterminated ( or [ at line %d\n", line);
+            tl_assert(0);
+         }
          read_ptr++;
       }
-      tl_assert2(block->name != read_ptr, "node has no name");
+      if (block->name == read_ptr) {
+         VG_(printf)("The node at line %d has empty name\n", line);
+         tl_assert(0);
+      }
 
       *read_ptr = '\0';
       if (!is_group)
-         search_rule(block, block->name, read_ptr - block->name);
+         search_rule(block, block->name, read_ptr - block->name, line);
       read_ptr++;
+
+      report_len = -1;
+      while (*read_ptr == ' ')
+         read_ptr++;
+
+      if (*read_ptr >= '1' && *read_ptr <= '9') {
+         report_len = 0;
+         do {
+            report_len = report_len * 10 + (*read_ptr - '0');
+            tl_assert2(report_len < clo_max_trace, "Report length must be less than max trace length");
+            read_ptr++;
+         } while (*read_ptr >= '0' && *read_ptr <= '9');
+
+         if (report_len > clo_report_len)
+            report_len = clo_report_len;
+
+         while (*read_ptr == ' ')
+            read_ptr++;
+      }
 
       if (*read_ptr == '+') {
          tl_assert2(default_parent == NULL, "Only one default node is allowed");
@@ -1396,7 +1467,11 @@ static void fr_post_clo_init(void)
 
       while (*read_ptr == ' ')
          read_ptr++;
-      tl_assert2(*read_ptr == '\n' || *read_ptr == '\r' || !*read_ptr, "Garbage at the end of the line");
+
+      if (*read_ptr != '\n' && *read_ptr != '\r' && *read_ptr != '\0') {
+         VG_(printf)("Garbage at the end of line %d\n", line);
+         tl_assert(0);
+      }
 
       if (clo_fr_verb)
          VG_(printf)("%s '%s' %s\n", is_group ? "Group:" : "Group & Attach:", block->name, default_parent == block ? "(Default)" : "");
@@ -1413,7 +1488,10 @@ static void fr_post_clo_init(void)
                   parent = trace_head;
             } else {
                do {
-                  tl_assert2(depth != 0, "Wrong tree indentation");
+                  if (depth == 0) {
+                     VG_(printf)("Wrong tree indentation at line %d\n", line);
+                     tl_assert(0);
+                  }
                   depth--;
                   tl_assert(parent);
                   parent = parent->parent;
@@ -1432,8 +1510,16 @@ static void fr_post_clo_init(void)
       if (parent) {
          block->next = parent->first;
          parent->first = block;
+         if (report_len == -1 || report_len > parent->report_len)
+            block->report_len = parent->report_len;
+         else
+            block->report_len = report_len;
       } else {
          block->next = trace_head;
+         if (report_len == -1)
+            block->report_len = clo_report_len;
+         else
+            block->report_len = report_len;
          trace_head = block;
       }
       block->first = NULL;
