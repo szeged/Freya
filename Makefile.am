@@ -11,7 +11,8 @@ TOOLS =		memcheck \
 		none \
 		helgrind \
 		drd \
-		freya
+		freya \
+		heimdall
 
 EXP_TOOLS = 	exp-sgcheck \
 		exp-bbv \

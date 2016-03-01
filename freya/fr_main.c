@@ -4,7 +4,7 @@
 /*--------------------------------------------------------------------*/
 
 /*
-   Copyright (C) 2009 Zoltan Herczeg (University of Szeged)
+   Copyright (C) 2009-2016 Zoltan Herczeg (University of Szeged)
          zherczeg@inf.u-szeged.hu
 
    This program is free software; you can redistribute it and/or
@@ -1457,7 +1457,7 @@ static void fr_pre_clo_init(void)
    VG_(details_version)         ("0.5");
    VG_(details_description)     ("Memory access logger");
    VG_(details_copyright_author)(
-      "Copyright (C) 2009, and GNU GPL'd, by Zoltan Herczeg (University of Szeged).");
+      "Copyright (C) 2009-2016, and GNU GPL'd, by Zoltan Herczeg (University of Szeged).");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
 
    VG_(basic_tool_funcs)        (fr_post_clo_init,
@@ -1486,7 +1486,7 @@ static void fr_pre_clo_init(void)
    VG_(track_new_mem_mmap)        (fr_mmap);
    VG_(track_die_mem_munmap)      (fr_munmap);
 
-   // HP_Chunks.
+   // Memory allocation.
    trace_hash = VG_(HT_construct)( "fr.main.1" );
    malloc_list = VG_(HT_construct)( "fr.main.2" );
 }

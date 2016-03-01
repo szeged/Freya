@@ -2959,6 +2959,8 @@ AC_CONFIG_FILES([
    callgrind/tests/Makefile
    freya/Makefile
    freya/tests/Makefile
+   heimdall/Makefile
+   heimdall/tests/Makefile
    helgrind/Makefile
    helgrind/tests/Makefile
    massif/Makefile
