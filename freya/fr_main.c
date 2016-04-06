@@ -43,10 +43,20 @@
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_libcproc.h"
 #include "pub_tool_vki.h"
 #include "pub_tool_libcfile.h"
+#include "pub_tool_clientstate.h"
 
 #include "valgrind.h"
+
+static const HChar* TOOL_NAME    = "Freya";
+static const HChar* TOOL_VERSION = "0.5.1";
+static const HChar* TOOL_DESC    = "Memory access logger";
+static const HChar* TOOL_AUTHOR  =
+ "Copyright (C) 2009-2016, and GNU GPL'd, by Zoltan Herczeg (University of Szeged).";
+
+static const HChar* DEFAULT_FORMAT = "freya.dump.%p";
 
 static Bool clo_fr_verb        = False;
 static const HChar* clo_config = NULL;
@@ -56,6 +66,7 @@ static Int clo_trace_len       = 10;
 static Int clo_report_len      = 5;
 static Int clo_min             = 0;
 static Int clo_max_trace       = 65536;
+static const HChar* clo_output = NULL;
 
 // ---------------------------------------------------------------
 //  Common types
@@ -118,7 +129,7 @@ static HChar dir_buffer[DIR_BUFFER_SIZE];
 // Head of the trace
 static Trace_Block* trace_head = NULL;
 
-static void fr_print_block(Trace_Block* block)
+static void fr_print_block(VgFile* fp, Trace_Block* block)
 {
    UInt linenum;
    Bool dirname_available = False;
@@ -127,40 +138,40 @@ static void fr_print_block(Trace_Block* block)
 
    if (block->ips) {
       if (VG_(get_fnname)( block->ips, &fnname_buffer ))
-         VG_(printf)("%s ", fnname_buffer);
+         VG_(fprintf)(fp, "%s ", fnname_buffer);
 
       if (VG_(get_filename_linenum)( block->ips, &file_ptr, &dir_ptr, &linenum)) {
          dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
-            VG_(printf)("(%s:%d)\n", file_ptr, linenum);
+            VG_(fprintf)(fp, "(%s:%d)\n", file_ptr, linenum);
          else
-            VG_(printf)("(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
+            VG_(fprintf)(fp, "(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
          return;
       }
 
       if (VG_(get_objname)( block->ips, &dir_ptr))
-         VG_(printf)("(%s)\n", dir_ptr);
+         VG_(fprintf)(fp, "(%s)\n", dir_ptr);
       else
-         VG_(printf)("(Unknown file)\n");
+         VG_(fprintf)(fp, "(Unknown file)\n");
    } else
-      VG_(printf)("Group: %s\n", block->name);
+      VG_(fprintf)(fp, "Group: %s\n", block->name);
 }
 
-static void fr_print_bytes(const HChar* name, Long value)
+static void fr_print_bytes(VgFile* fp, const HChar* name, Long value)
 {
-    VG_(printf)("%s", name);
+    VG_(fprintf)(fp, "%s", name);
     if (value > 1024 * 1024)
-        VG_(printf)("%lld.%lldMb ", value / (1024 * 1024), (value * 10 / (1024 * 1024)) % 10);
+        VG_(fprintf)(fp, "%lld.%lldMb ", value / (1024 * 1024), (value * 10 / (1024 * 1024)) % 10);
     else if (value > 1024)
-        VG_(printf)("%lld.%lldKb ", value / 1024, (value * 10 / 1024) % 10);
+        VG_(fprintf)(fp, "%lld.%lldKb ", value / 1024, (value * 10 / 1024) % 10);
     else {
-        VG_(printf)("%lldb ", value);
+        VG_(fprintf)(fp, "%lldb ", value);
         return;
     }
-    VG_(printf)("(%lldb) ", value);
+    VG_(fprintf)(fp, "(%lldb) ", value);
 }
 
-static void fr_sort_and_dump(Trace_Block* block, Int indent)
+static void fr_sort_and_dump(VgFile* fp, Trace_Block* block, Int indent)
 {
    Int i;
    Trace_Block* from;
@@ -178,12 +189,12 @@ static void fr_sort_and_dump(Trace_Block* block, Int indent)
          return;
 
       for (i = 0; i < indent; ++i)
-         VG_(printf)("  ");
-      VG_(printf)("[%d] ", indent);
-      fr_print_block(block);
+         VG_(fprintf)(fp, "  ");
+      VG_(fprintf)(fp, "[%d] ", indent);
+      fr_print_block(fp, block);
 
       if (block->first)
-         fr_sort_and_dump(block->first, indent + 1);
+         fr_sort_and_dump(fp, block->first, indent + 1);
       return;
    }
 
@@ -236,23 +247,23 @@ static void fr_sort_and_dump(Trace_Block* block, Int indent)
          return;
 
       for (i = 0; i < indent; ++i)
-         VG_(printf)("  ");
+         VG_(fprintf)(fp, "  ");
 
-      VG_(printf)("[%d] ", indent);
-      fr_print_bytes("Peak: ", block->peak);
-      VG_(printf)("Allocs: %d ", block->allocs);
-      VG_(printf)("Reallocs: %d ", block->reallocs);
-      fr_print_bytes("Total: ", block->total);
+      VG_(fprintf)(fp, "[%d] ", indent);
+      fr_print_bytes(fp, "Peak: ", block->peak);
+      VG_(fprintf)(fp, "Allocs: %d ", block->allocs);
+      VG_(fprintf)(fp, "Reallocs: %d ", block->reallocs);
+      fr_print_bytes(fp, "Total: ", block->total);
       if (block->current > 0)
-         fr_print_bytes("Leak: ", block->current);
-      VG_(printf)("\n");
+         fr_print_bytes(fp, "Leak: ", block->current);
+      VG_(fprintf)(fp, "\n");
 
       for (i = 0; i < indent; ++i)
-         VG_(printf)("  ");
-      fr_print_block(block);
+         VG_(fprintf)(fp, "  ");
+      fr_print_block(fp, block);
 
       if (block->first)
-         fr_sort_and_dump(block->first, indent + 1);
+         fr_sort_and_dump(fp, block->first, indent + 1);
 
       block = block->next;
    }
@@ -991,6 +1002,7 @@ static Bool fr_process_cmd_line_option(const HChar* arg)
     else if (VG_BINT_CLO(arg, "--trace", clo_trace_len, 10, clo_max_trace))  {}
     else if (VG_BINT_CLO(arg, "--report", clo_report_len, 1, clo_max_trace)) {}
     else if (VG_BINT_CLO(arg, "--min", clo_min, 0, 1024*1024*1024))          {}
+    else if (VG_STR_CLO(arg, "--freya-out-file", clo_output))                {}
     else
         return VG_(replacement_malloc_process_cmd_line_option)(arg);
 
@@ -1007,6 +1019,8 @@ static void fr_print_usage(void)
 "    --trace=<number>          maximum depth of stack trace [10]\n"
 "    --report=<number>         report depth of stack trace [5]\n"
 "    --min=<number>            do not report allocations below this size (in bytes) [0]\n"
+"    --freya-out-file=<str>    output filename to report results [%s]\n"
+    , DEFAULT_FORMAT
    );
 }
 
@@ -1131,7 +1145,29 @@ static void fr_fini(Int exitcode)
      VG_(printf)("Warning: --trace should be increased, because the last item of\n"
                  "         the stack trace sometimes matches a skip rule\n\n");
    }
-   fr_sort_and_dump(trace_head, 0);
+
+   if (clo_output == NULL)
+      clo_output = DEFAULT_FORMAT;
+
+   HChar* filename = VG_(expand_file_name)("--freya-out-file", clo_output);
+   VgFile* fp = VG_(fopen)(filename, VKI_O_CREAT|VKI_O_WRONLY|VKI_O_TRUNC, VKI_S_IRUSR|VKI_S_IWUSR);
+
+   if (fp == NULL) {
+      VG_(message)(Vg_UserMsg, "Error: can not open output file '%s'\n", filename);
+      VG_(exit)(1);
+   } else
+      VG_(message)(Vg_UserMsg, "Writing %s trace into file: '%s'\n", TOOL_NAME, filename);
+
+   VG_(fprintf)(fp, "%s %s - %s\n", TOOL_NAME, TOOL_VERSION, TOOL_DESC);
+   VG_(fprintf)(fp, "Command: %s\n", VG_(args_the_exename));
+   VG_(fprintf)(fp, "Parent PID: %d\n", VG_(getppid)());
+   VG_(fprintf)(fp, "Current PID: %d\n", VG_(getpid)());
+   VG_(fprintf)(fp, "\nTrace: \n\n");
+
+   fr_sort_and_dump(fp, trace_head, 0);
+
+   VG_(fclose)(fp);
+   VG_(free)(filename);
 }
 
 static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr, Int line)
@@ -1539,11 +1575,10 @@ static void fr_post_clo_init(void)
 
 static void fr_pre_clo_init(void)
 {
-   VG_(details_name)            ("Freya");
-   VG_(details_version)         ("0.5");
-   VG_(details_description)     ("Memory access logger");
-   VG_(details_copyright_author)(
-      "Copyright (C) 2009-2016, and GNU GPL'd, by Zoltan Herczeg (University of Szeged).");
+   VG_(details_name)            (TOOL_NAME);
+   VG_(details_version)         (TOOL_VERSION);
+   VG_(details_description)     (TOOL_DESC);
+   VG_(details_copyright_author)(TOOL_AUTHOR);
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
 
    VG_(basic_tool_funcs)        (fr_post_clo_init,
