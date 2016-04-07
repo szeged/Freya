@@ -1016,10 +1016,13 @@ static void fr_print_usage(void)
 "    --config=<str>            configuration file\n"
 "    --mmap=no                 do not trace mmap allocations\n"
 "    --crossfree=yes           report cross thread free operations\n"
-"    --trace=<number>          maximum depth of stack trace [10]\n"
-"    --report=<number>         report depth of stack trace [5]\n"
-"    --min=<number>            do not report allocations below this size (in bytes) [0]\n"
+"    --trace=<number>          maximum depth of stack trace [%d]\n"
+"    --report=<number>         report depth of stack trace [%d]\n"
+"    --min=<number>            do not report allocations below this size (in bytes) [%d]\n"
 "    --freya-out-file=<str>    output filename to report results [%s]\n"
+    , clo_trace_len
+    , clo_report_len
+    , clo_min
     , DEFAULT_FORMAT
    );
 }
