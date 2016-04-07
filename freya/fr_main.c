@@ -269,6 +269,42 @@ static void fr_sort_and_dump(VgFile* fp, Trace_Block* block, Int indent)
    }
 }
 
+static VgFile* fr_output_open(void)
+{
+   if (clo_output == NULL)
+      clo_output = DEFAULT_FORMAT;
+
+   HChar* filename = VG_(expand_file_name)("--freya-out-file", clo_output);
+   VgFile* fp = VG_(fopen)(filename, VKI_O_CREAT|VKI_O_WRONLY|VKI_O_TRUNC, VKI_S_IRUSR|VKI_S_IWUSR);
+
+   if (fp == NULL) {
+      VG_(free)(filename);
+      VG_(message)(Vg_UserMsg, "Error: can not open output file '%s'\n", filename);
+      VG_(exit)(1);
+   } else
+      VG_(message)(Vg_UserMsg, "Writing %s trace into file: '%s'\n", TOOL_NAME, filename);
+
+   VG_(free)(filename);
+
+   return fp;
+}
+
+static void fr_output_header(VgFile* fp)
+{
+   VG_(fprintf)(fp, "%s %s - %s\n", TOOL_NAME, TOOL_VERSION, TOOL_DESC);
+   VG_(fprintf)(fp, "Command: %s", VG_(args_the_exename));
+
+   for (Int i = 0; i < VG_(sizeXA)(VG_(args_for_client)); i++) {
+      const HChar *arg = *(HChar**)VG_(indexXA)(VG_(args_for_client), i);
+      VG_(fprintf)(fp, " %s", arg);
+   }
+   VG_(fprintf)(fp, "\n");
+
+   VG_(fprintf)(fp, "Parent PID: %d\n", VG_(getppid)());
+   VG_(fprintf)(fp, "Current PID: %d\n", VG_(getpid)());
+   VG_(fprintf)(fp, "\nTrace: \n\n");
+}
+
 // ---------------------------------------------------------------
 //  Stack tracing
 // ---------------------------------------------------------------
@@ -1149,28 +1185,12 @@ static void fr_fini(Int exitcode)
                  "         the stack trace sometimes matches a skip rule\n\n");
    }
 
-   if (clo_output == NULL)
-      clo_output = DEFAULT_FORMAT;
-
-   HChar* filename = VG_(expand_file_name)("--freya-out-file", clo_output);
-   VgFile* fp = VG_(fopen)(filename, VKI_O_CREAT|VKI_O_WRONLY|VKI_O_TRUNC, VKI_S_IRUSR|VKI_S_IWUSR);
-
-   if (fp == NULL) {
-      VG_(message)(Vg_UserMsg, "Error: can not open output file '%s'\n", filename);
-      VG_(exit)(1);
-   } else
-      VG_(message)(Vg_UserMsg, "Writing %s trace into file: '%s'\n", TOOL_NAME, filename);
-
-   VG_(fprintf)(fp, "%s %s - %s\n", TOOL_NAME, TOOL_VERSION, TOOL_DESC);
-   VG_(fprintf)(fp, "Command: %s\n", VG_(args_the_exename));
-   VG_(fprintf)(fp, "Parent PID: %d\n", VG_(getppid)());
-   VG_(fprintf)(fp, "Current PID: %d\n", VG_(getpid)());
-   VG_(fprintf)(fp, "\nTrace: \n\n");
+   VgFile* fp = fr_output_open();
+   fr_output_header(fp);
 
    fr_sort_and_dump(fp, trace_head, 0);
 
    VG_(fclose)(fp);
-   VG_(free)(filename);
 }
 
 static HChar* parse_rule(HChar* read_ptr, Rule_List** last_rule_ptr, Int line)
