@@ -210,12 +210,14 @@ static void heim_fini(Int exitcode)
     if (!current_page_ptr->ordered_next
         || current_page_ptr->ordered_next->start_addr > current_page_ptr->start_addr + clo_page_size)
     {
-      long size = (long)(current_page_ptr->start_addr + clo_page_size - first_page_ptr->start_addr) / 1024;
+      long size = (long)(current_page_ptr->start_addr + clo_page_size - first_page_ptr->start_addr);
 
-      VG_(printf)("  Modified pages: 0x%lx - 0x%lx [size: %ld Kb]\n",
+      VG_(printf)("  Modified area: 0x%lx - 0x%lx size: %ld bytes [%ld.%ld Kb]\n",
                   (long)first_page_ptr->start_addr,
                   (long)(current_page_ptr->start_addr + clo_page_size),
-                  size);
+                  size,
+                  size / 1024,
+                  ((size % 1024) * 10) / 1024);
 
       total_size += size;
       first_page_ptr = current_page_ptr->ordered_next;
@@ -224,12 +226,15 @@ static void heim_fini(Int exitcode)
     current_page_ptr = current_page_ptr->ordered_next;
   }
 
-  VG_(printf)("Total modified pages: %ld Kb\n", total_size);
+  VG_(printf)("Total modified memory area: %ld bytes [%ld.%ld Kb]\n",
+              total_size,
+              total_size / 1024,
+              ((total_size % 1024) * 10) / 1024);
 }
 
 static Bool heim_process_cmd_line_option(const HChar* arg)
 {
-         if (VG_BINT_CLO(arg, "--page_size", clo_page_size, 1024, 65536))  {}
+         if (VG_BINT_CLO(arg, "--page_size", clo_page_size, 16, 65536))  {}
     else
         return VG_(replacement_malloc_process_cmd_line_option)(arg);
 
@@ -244,7 +249,8 @@ static Bool heim_process_cmd_line_option(const HChar* arg)
 static void heim_print_usage(void)
 {
    VG_(printf) (
-"    --page_size=<number>            page size [4096]\n"
+"    --page_size=<number>            page size [%d]\n",
+                clo_page_size
    );
 }
 
