@@ -27,10 +27,6 @@
 
 #include "pub_tool_basics.h"
 
-#include "pub_tool_mallocfree.h"
-#include "pub_tool_debuginfo.h"
-#include "pub_tool_stacktrace.h"
-
 #include "pub_tool_tooliface.h"
 #include "pub_tool_threadstate.h"
 #include "pub_tool_options.h"
@@ -40,7 +36,6 @@
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcprint.h"
-#include "pub_tool_libcfile.h"
 
 SizeT clo_page_size = 4096;
 
@@ -263,7 +258,7 @@ static void heim_print_debug_usage(void)
 
 static void heim_pre_clo_init(void)
 {
-   VG_(details_name)            ("Heaimdall");
+   VG_(details_name)            ("Heimdall");
    VG_(details_version)         ("0.5");
    VG_(details_description)     ("Raw memory access logger");
    VG_(details_copyright_author)(
