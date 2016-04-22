@@ -50,7 +50,7 @@ typedef
    }
    Page;
 
-static VgHashTable *page_list = NULL;    // Page list
+static VgHashTable *page_list = NULL;   // Page list
 static Page* ordered_page_list = NULL;  // Ordered page list
 
 static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
@@ -63,6 +63,7 @@ static VG_REGPARM(2) void trace_store(Addr addr, SizeT size)
   addr &= ~(clo_page_size - 1);
 
   page_ptr = VG_(HT_lookup)(page_list, addr);
+
   if (!page_ptr) {
     page_ptr = VG_(malloc)("freya.trace_store.1", sizeof(Page));
 
@@ -142,6 +143,7 @@ IRSB* heim_instrument(VgCallbackClosure* closure,
             dataTy = typeOfIRExpr(tyenv, st->Ist.StoreG.details->data);
             argv   = mkIRExprVec_2( st->Ist.StoreG.details->addr, mkIRExpr_HWord( sizeofIRType( dataTy ) ) );
             di     = unsafeIRDirty_0_N(/*regparms*/2, "trace_store", VG_(fnptr_to_fnentry)( trace_store ), argv);
+            di->guard = st->Ist.StoreG.details->guard;
             addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
             addStmtToIRSB( sbOut, st );
             break;

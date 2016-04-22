@@ -1131,6 +1131,7 @@ IRSB* fr_instrument(VgCallbackClosure* closure,
             dataTy = typeOfIRExpr(tyenv, st->Ist.StoreG.details->data);
             argv   = mkIRExprVec_2( st->Ist.StoreG.details->addr, mkIRExpr_HWord( sizeofIRType( dataTy ) ) );
             di     = unsafeIRDirty_0_N(/*regparms*/2, "trace_store", VG_(fnptr_to_fnentry)( trace_store ), argv);
+            di->guard = st->Ist.StoreG.details->guard;
             addStmtToIRSB( sbOut, IRStmt_Dirty(di) );
             addStmtToIRSB( sbOut, st );
             break;
