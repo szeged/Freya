@@ -31,7 +31,9 @@
 #include "pub_tool_threadstate.h"
 #include "pub_tool_options.h"
 #include "pub_tool_machine.h"
+#include "pub_tool_mallocfree.h"
 #include "pub_tool_hashtable.h"
+#include "pub_tool_replacemalloc.h"
 
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
@@ -244,7 +246,7 @@ static Bool heim_process_cmd_line_option(const HChar* arg)
 static void heim_print_usage(void)
 {
    VG_(printf) (
-"    --page_size=<number>            page size [%d]\n",
+"    --page_size=<number>            page size [%ld]\n",
                 clo_page_size
    );
 }
