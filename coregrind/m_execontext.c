@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -36,8 +36,6 @@
 #include "pub_core_options.h"
 #include "pub_core_stacktrace.h"
 #include "pub_core_machine.h"       // VG_(get_IP)
-#include "pub_core_vki.h"           // To keep pub_core_threadstate.h happy
-#include "pub_core_libcsetjmp.h"    // Ditto
 #include "pub_core_threadstate.h"   // VG_(is_valid_tid)
 #include "pub_core_execontext.h"    // self
 
@@ -83,6 +81,21 @@ struct _ExeContext {
       be a multiple of four, and must be unique.  Hence they start at
       4. */
    UInt ecu;
+   /* epoch in which the ExeContext can be symbolised. In other words, epoch
+      identifies the set of debug info to use to symbolise the Addr in ips
+      using e.g. VG_(get_filename), VG_(get_fnname), ...
+      Note 1: 2 ExeContexts are equal when their ips array are equal and
+      their epoch are equal.
+      Note 2: a freshly created ExeContext has a DiEpoch_INVALID epoch.
+      DiEpoch_INVALID is used as a special value to indicate that ExeContext
+      is valid in the current epoch. VG_(get_ExeContext_epoch) translates
+      this invalid value in the real current epoch.
+      When a debug info is archived, the set of ExeContext is scanned :
+      If an ExeContext with epoch == DiEpoch_INVALID has one or more
+      ips Addr corresponding to the just archived debug info, the ExeContext
+      epoch is changed to the last epoch identifying the set containing the
+      archived debug info. */
+   DiEpoch epoch;
    /* Variable-length array.  The size is 'n_ips'; at
       least 1, at most VG_DEEPEST_BACKTRACE.  [0] is the current IP,
       [1] is its caller, [2] is the caller of [1], etc. */
@@ -118,7 +131,7 @@ static ULong ec_cmpAlls;
 
 
 /*------------------------------------------------------------*/
-/*--- Exported functions.                                  ---*/
+/*--- ExeContext functions.                                ---*/
 /*------------------------------------------------------------*/
 
 static ExeContext* record_ExeContext_wrk2 ( const Addr* ips, UInt n_ips );
@@ -155,31 +168,49 @@ static void init_ExeContext_storage ( void )
    init_done = True;
 }
 
+DiEpoch VG_(get_ExeContext_epoch)( const ExeContext* e )
+{
+   if (is_DiEpoch_INVALID (e->epoch))
+      return VG_(current_DiEpoch)();
+   else
+      return e->epoch;
+}
 
 /* Print stats. */
 void VG_(print_ExeContext_stats) ( Bool with_stacktraces )
 {
+   Int i;
+   ULong total_n_ips;
+   ExeContext* ec;
+
    init_ExeContext_storage();
 
    if (with_stacktraces) {
-      Int i;
-      ExeContext* ec;
       VG_(message)(Vg_DebugMsg, "   exectx: Printing contexts stacktraces\n");
       for (i = 0; i < ec_htab_size; i++) {
          for (ec = ec_htab[i]; ec; ec = ec->chain) {
-            VG_(message)(Vg_DebugMsg, "   exectx: stacktrace ecu %u n_ips %u\n",
-                         ec->ecu, ec->n_ips);
-            VG_(pp_StackTrace)( ec->ips, ec->n_ips );
+            VG_(message)(Vg_DebugMsg,
+                         "   exectx: stacktrace ecu %u epoch %u n_ips %u\n",
+                         ec->ecu, ec->epoch.n, ec->n_ips);
+            VG_(pp_StackTrace)( VG_(get_ExeContext_epoch)(ec),
+                                ec->ips, ec->n_ips );
          }
       }
       VG_(message)(Vg_DebugMsg, 
                    "   exectx: Printed %'llu contexts stacktraces\n",
                    ec_totstored);
    }
-
+   
+   total_n_ips = 0;
+   for (i = 0; i < ec_htab_size; i++) {
+      for (ec = ec_htab[i]; ec; ec = ec->chain)
+         total_n_ips += ec->n_ips;
+   }
    VG_(message)(Vg_DebugMsg, 
-      "   exectx: %'lu lists, %'llu contexts (avg %'llu per list)\n",
-      ec_htab_size, ec_totstored, ec_totstored / (ULong)ec_htab_size
+      "   exectx: %'lu lists, %'llu contexts (avg %3.2f per list)"
+      " (avg %3.2f IP per context)\n",
+      ec_htab_size, ec_totstored, (Double)ec_totstored / (Double)ec_htab_size,
+      (Double)total_n_ips / (Double)ec_totstored
    );
    VG_(message)(Vg_DebugMsg, 
       "   exectx: %'llu searches, %'llu full compares (%'llu per 1000)\n",
@@ -198,9 +229,38 @@ void VG_(print_ExeContext_stats) ( Bool with_stacktraces )
 /* Print an ExeContext. */
 void VG_(pp_ExeContext) ( ExeContext* ec )
 {
-   VG_(pp_StackTrace)( ec->ips, ec->n_ips );
+   VG_(pp_StackTrace)( VG_(get_ExeContext_epoch)(ec), ec->ips, ec->n_ips );
 }
 
+
+void VG_(archive_ExeContext_in_range) (DiEpoch last_epoch,
+                                       Addr text_avma, SizeT length )
+{
+   Int i;
+   ExeContext* ec;
+   ULong n_archived = 0;
+   const Addr text_avma_end = text_avma + length - 1;
+
+   if (VG_(clo_verbosity) > 1)
+      VG_(message)(Vg_DebugMsg, "Scanning and archiving ExeContexts ...\n");
+   for (i = 0; i < ec_htab_size; i++) {
+      for (ec = ec_htab[i]; ec; ec = ec->chain) {
+         if (is_DiEpoch_INVALID (ec->epoch))
+            for (UInt j = 0; j < ec->n_ips; j++) {
+               if (UNLIKELY(ec->ips[j] >= text_avma
+                            && ec->ips[j] <= text_avma_end)) {
+                  ec->epoch = last_epoch;
+                  n_archived++;
+                  break;
+               }
+            }
+      }
+   }
+   if (VG_(clo_verbosity) > 1)
+      VG_(message)(Vg_DebugMsg,
+                   "Scanned %'llu ExeContexts, archived %'llu ExeContexts\n",
+                   ec_totstored, n_archived);
+}
 
 /* Compare two ExeContexts.  Number of callers considered depends on res. */
 Bool VG_(eq_ExeContext) ( VgRes res, const ExeContext* e1,
@@ -214,6 +274,9 @@ Bool VG_(eq_ExeContext) ( VgRes res, const ExeContext* e1,
    // Must be at least one address in each trace.
    vg_assert(e1->n_ips >= 1 && e2->n_ips >= 1);
 
+   // Note: we compare the epoch in the case below, and not here
+   // to have the ec_cmp* stats correct.
+
    switch (res) {
    case Vg_LowRes:
       /* Just compare the top two callers. */
@@ -224,7 +287,7 @@ Bool VG_(eq_ExeContext) ( VgRes res, const ExeContext* e1,
          if (!(e1->n_ips <= i) &&  (e2->n_ips <= i)) return False;
          if (e1->ips[i] != e2->ips[i])               return False;
       }
-      return True;
+      return e1->epoch.n == e2->epoch.n;
 
    case Vg_MedRes:
       /* Just compare the top four callers. */
@@ -235,7 +298,7 @@ Bool VG_(eq_ExeContext) ( VgRes res, const ExeContext* e1,
          if (!(e1->n_ips <= i) &&  (e2->n_ips <= i)) return False;
          if (e1->ips[i] != e2->ips[i])               return False;
       }
-      return True;
+      return e1->epoch.n == e2->epoch.n;
 
    case Vg_HighRes:
       ec_cmpAlls++;
@@ -319,6 +382,12 @@ static void resize_ec_htab ( void )
    ec_htab_size_idx++;
 }
 
+/* Used by the outer as a marker to separate the frames of the inner valgrind
+   from the frames of the inner guest frames. */
+static void _______VVVVVVVV_appended_inner_guest_stack_VVVVVVVV_______ (void)
+{
+}
+
 /* Do the first part of getting a stack trace: actually unwind the
    stack, and hand the results off to the duplicate-trace-finder
    (_wrk2). */
@@ -343,6 +412,38 @@ static ExeContext* record_ExeContext_wrk ( ThreadId tid, Word first_ip_delta,
                                    NULL/*array to dump SP values in*/,
                                    NULL/*array to dump FP values in*/,
                                    first_ip_delta );
+      if (VG_(inner_threads) != NULL
+          && n_ips + 1 < VG_(clo_backtrace_size)) {
+         /* An inner V has informed us (the outer) of its thread array.
+            Append the inner guest stack trace, if we still have some
+            room in the ips array for the separator and (some) inner
+            guest IPs. */
+         UInt inner_tid;
+
+         for (inner_tid = 1; inner_tid < VG_N_THREADS; inner_tid++) {
+            if (VG_(threads)[tid].os_state.lwpid 
+                == VG_(inner_threads)[inner_tid].os_state.lwpid) {
+               ThreadState* save_outer_vg_threads = VG_(threads);
+               UInt n_ips_inner_guest;
+
+               /* Append the separator + the inner guest stack trace. */
+               ips[n_ips] = (Addr)
+                  _______VVVVVVVV_appended_inner_guest_stack_VVVVVVVV_______;
+               n_ips++;
+               VG_(threads) = VG_(inner_threads);
+               n_ips_inner_guest 
+                  = VG_(get_StackTrace)( inner_tid,
+                                         ips + n_ips,
+                                         VG_(clo_backtrace_size) - n_ips,
+                                         NULL/*array to dump SP values in*/,
+                                         NULL/*array to dump FP values in*/,
+                                         first_ip_delta );
+               n_ips += n_ips_inner_guest;
+               VG_(threads) = save_outer_vg_threads;
+               break;
+            }
+         }
+      }
    }
 
    return record_ExeContext_wrk2 ( ips, n_ips );
@@ -380,7 +481,7 @@ static ExeContext* record_ExeContext_wrk2 ( const Addr* ips, UInt n_ips )
    while (True) {
       if (list == NULL) break;
       ec_searchcmps++;
-      same = list->n_ips == n_ips;
+      same = list->n_ips == n_ips && is_DiEpoch_INVALID (list->epoch);
       for (i = 0; i < n_ips && same ; i++) {
          same = list->ips[i] == ips[i];
       }
@@ -436,6 +537,7 @@ static ExeContext* record_ExeContext_wrk2 ( const Addr* ips, UInt n_ips )
 
    new_ec->n_ips = n_ips;
    new_ec->chain = ec_htab[hash];
+   new_ec->epoch = DiEpoch_INVALID();
    ec_htab[hash] = new_ec;
 
    /* Resize the hash table, maybe? */

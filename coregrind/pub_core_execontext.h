@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -46,6 +46,12 @@
 // Print stats (informational only).
 // If with_stacktraces, outputs all the recorded stacktraces.
 extern void VG_(print_ExeContext_stats) ( Bool with_stacktraces );
+
+// All ExeContext that are valid in the current epoch and have one or more
+// ips in the given range are archived, i.e. their epoch is frozen to
+// the given last_epoch.
+extern void VG_(archive_ExeContext_in_range) (DiEpoch last_epoch,
+                                              Addr text_avma, SizeT length );
 
 // Extract the StackTrace from an ExeContext.
 // (Minor hack: we use Addr* as the return type instead of StackTrace so

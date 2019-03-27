@@ -1,4 +1,16 @@
+#if defined(__mips_hard_float)
+
 #include <stdio.h>
+
+/*
+ * Bits 18 (NAN2008) and 19 (ABS2008) are preset by hardware and may differ
+ * between platforms. Hence a macro to clear them before printing FCSR
+ * values.
+ */
+#define FCSR_NAN2008 1 << 18
+#define FCSR_ABS2008 1 << 19
+#define FLAGS_RM_MASK 0xFFFFFFFF & ~(FCSR_ABS2008 | FCSR_NAN2008)
+#define CLEAR_PRESETBITS_FCSR(fcsr) (fcsr & FLAGS_RM_MASK)
 
 typedef enum {
    CEILWS=0, CEILWD,
@@ -149,53 +161,65 @@ void set_rounding_mode(round_mode_t mode)
    }
 }
 
+void clear_fcc(){
+   __asm__ __volatile__(
+      "cfc1 $t0, $31"            "\n\t"
+      "and  $t0, $t0, 0x17FFFFF" "\n\t"
+      "ctc1 $t0, $31"            "\n\t"
+      :
+      :
+      : "t0"
+   );
+}
+
 int directedRoundingMode(flt_dir_op_t op) {
    int fd_w = 0;
    int i;
    int fcsr = 0;
    round_mode_t rm = TO_NEAREST;
    for (i = 0; i < 24; i++) {
+      clear_fcc();
       set_rounding_mode(rm);
       switch(op) {
          case CEILWS:
               UNOPfw("ceil.w.s");
               printf("%s %d %f\n", flt_dir_op_names[op], fd_w, fs_f[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case CEILWD:
               UNOPdw("ceil.w.d");
               printf("%s %d %lf\n", flt_dir_op_names[op], fd_w, fs_d[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case FLOORWS:
               UNOPfw("floor.w.s");
               printf("%s %d %f\n", flt_dir_op_names[op], fd_w, fs_f[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case FLOORWD:
               UNOPdw("floor.w.d");
               printf("%s %d %lf\n", flt_dir_op_names[op], fd_w, fs_d[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case ROUNDWS:
               UNOPfw("round.w.s");
               printf("%s %d %f\n", flt_dir_op_names[op], fd_w, fs_f[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case ROUNDWD:
               UNOPdw("round.w.d");
               printf("%s %d %lf\n", flt_dir_op_names[op], fd_w, fs_d[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case TRUNCWS:
               UNOPfw("trunc.w.s");
               printf("%s %d %f\n", flt_dir_op_names[op], fd_w, fs_f[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
          case TRUNCWD:
               UNOPdw("trunc.w.d");
               printf("%s %d %lf\n", flt_dir_op_names[op], fd_w, fs_d[i]);
-              printf("fcsr: 0x%x\n", fcsr);
+              printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
               break;
         default:
             printf("error\n");
@@ -217,37 +241,38 @@ int FCSRRoundingMode(flt_round_op_t op1)
       set_rounding_mode(rm);
       printf("roundig mode: %s\n", round_mode_name[rm]);
       for (i = 0; i < 24; i++) {
+         clear_fcc();
          set_rounding_mode(rm);
          switch(op1) {
             case CVTDS:
                  UNOPfd("cvt.d.s");
                  printf("%s %lf %lf\n", flt_round_op_names[op1], fd_d, fs_f[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             case CVTDW:
                  UNOPwd("cvt.d.w");
                  printf("%s %lf %d\n", flt_round_op_names[op1], fd_d, fs_w[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             case CVTSD:
                  UNOPdf("cvt.s.d");
                  printf("%s %f %lf\n", flt_round_op_names[op1], fd_f, fs_d[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             case CVTSW:
                  UNOPwf("cvt.s.w");
                  printf("%s %f %d\n", flt_round_op_names[op1], fd_f, fs_w[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             case CVTWS:
                  UNOPfw("cvt.w.s");
                  printf("%s %d %f\n", flt_round_op_names[op1], fd_w, fs_f[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             case CVTWD:
                  UNOPdw("cvt.w.d");
                  printf("%s %d %lf\n", flt_round_op_names[op1], fd_w, fs_d[i]);
-                 printf("fcsr: 0x%x\n", fcsr);
+                 printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                  break;
             default:
                  printf("error\n");
@@ -276,4 +301,9 @@ int main()
    }
    return 0;
 }
+#else
+int main() {
+   return 0;
+}
+#endif
 

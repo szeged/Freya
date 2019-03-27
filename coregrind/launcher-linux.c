@@ -1,3 +1,4 @@
+/* -*- mode: C; c-basic-offset: 3; -*- */
 
 /*--------------------------------------------------------------------*/
 /*--- Launching valgrind                              m_launcher.c ---*/
@@ -7,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -62,6 +63,14 @@
 
 #ifndef EM_PPC64
 #define EM_PPC64 21  // ditto
+#endif
+
+#ifndef E_MIPS_ABI_O32
+#define E_MIPS_ABI_O32 0x00001000
+#endif
+
+#ifndef E_MIPS_ABI2
+#define E_MIPS_ABI2    0x00000020
 #endif
 
 /* Report fatal errors */
@@ -128,7 +137,11 @@ static const char *find_client(const char *clientname)
 static const char *select_platform(const char *clientname)
 {
    int fd;
-   char header[4096];
+   union {
+      char c[4096];
+      Elf32_Ehdr ehdr32;
+      Elf64_Ehdr ehdr64;
+   } header;
    ssize_t n_bytes;
    const char *platform = NULL;
 
@@ -145,7 +158,7 @@ static const char *select_platform(const char *clientname)
 
    VG_(debugLog)(2, "launcher", "opened '%s'\n", clientname);
 
-   n_bytes = read(fd, header, sizeof(header));
+   n_bytes = read(fd, header.c, sizeof(header));
    close(fd);
    if (n_bytes < 2) {
       return NULL;
@@ -154,106 +167,151 @@ static const char *select_platform(const char *clientname)
    VG_(debugLog)(2, "launcher", "read %ld bytes from '%s'\n",
                     (long int)n_bytes, clientname);
 
-   if (header[0] == '#' && header[1] == '!') {
+   if (header.c[0] == '#' && header.c[1] == '!') {
       int i = 2;
-      char *interp = (char *)header + 2;
 
+      STATIC_ASSERT(VKI_BINPRM_BUF_SIZE < sizeof header);
+      if (n_bytes > VKI_BINPRM_BUF_SIZE)
+         n_bytes = VKI_BINPRM_BUF_SIZE - 1;
+      header.c[n_bytes] = '\0';
+      char *eol = strchr(header.c, '\n');
+      if (eol != NULL)
+         *eol = '\0';
+ 
       // Skip whitespace.
-      while (1) {
-         if (i == n_bytes) return NULL;
-         if (' ' != header[i] && '\t' != header[i]) break;
+      while (header.c[i] == ' '|| header.c[i] == '\t')
          i++;
-      }
 
       // Get the interpreter name.
-      interp = &header[i];
-      while (1) {
-         if (i == n_bytes) break;
-         if (isspace(header[i])) break;
-         i++;
+      const char *interp = header.c + i;
+
+      if (header.c[i] == '\0') {
+         // No interpreter was found; fall back to default shell
+#  if defined(VGPV_arm_linux_android) \
+      || defined(VGPV_x86_linux_android) \
+      || defined(VGPV_mips32_linux_android) \
+      || defined(VGPV_arm64_linux_android)
+         interp = "/system/bin/sh";
+#  else
+         interp = "/bin/sh";
+#  endif
+      } else {
+         while (header.c[i]) {
+            if (header.c[i] == ' ' || header.c[i] == '\t') break;
+            i++;
+         }
+         header.c[i] = '\0';
       }
-      if (i == n_bytes) return NULL;
-      header[i] = '\0';
 
       platform = select_platform(interp);
 
-   } else if (n_bytes >= SELFMAG && memcmp(header, ELFMAG, SELFMAG) == 0) {
+   } else if (n_bytes >= SELFMAG && memcmp(header.c, ELFMAG, SELFMAG) == 0) {
 
-      if (n_bytes >= sizeof(Elf32_Ehdr) && header[EI_CLASS] == ELFCLASS32) {
-         const Elf32_Ehdr *ehdr = (Elf32_Ehdr *)header;
+      if (n_bytes >= sizeof(Elf32_Ehdr) && header.c[EI_CLASS] == ELFCLASS32) {
 
-         if (header[EI_DATA] == ELFDATA2LSB) {
-            if (ehdr->e_machine == EM_386 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+         if (header.c[EI_DATA] == ELFDATA2LSB) {
+#           if defined(VGO_solaris)
+            if (header.ehdr32.e_machine == EM_386 &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SOLARIS)) {
+               platform = "x86-solaris";
+            }
+            else
+#           endif
+            if (header.ehdr32.e_machine == EM_386 &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "x86-linux";
             }
             else 
-            if (ehdr->e_machine == EM_ARM &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            if (header.ehdr32.e_machine == EM_ARM &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "arm-linux";
             }
             else
-            if (ehdr->e_machine == EM_MIPS &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            if (header.ehdr32.e_machine == EM_MIPS &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX) &&
+                 (header.ehdr32.e_flags & E_MIPS_ABI_O32)) {
                platform = "mips32-linux";
             }
+            else
+            if (header.ehdr32.e_machine == EM_MIPS &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX) &&
+                 (header.ehdr32.e_flags & E_MIPS_ABI2)) {
+               platform = "mips64-linux";
+            }
          }
-         else if (header[EI_DATA] == ELFDATA2MSB) {
-            if (ehdr->e_machine == EM_PPC &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+         else if (header.c[EI_DATA] == ELFDATA2MSB) {
+            if (header.ehdr32.e_machine == EM_PPC &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "ppc32-linux";
             }
             else 
-            if (ehdr->e_machine == EM_MIPS &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            if (header.ehdr32.e_machine == EM_MIPS &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX) &&
+                 (header.ehdr32.e_flags & E_MIPS_ABI_O32)) {
                platform = "mips32-linux";
+            }
+            else
+            if (header.ehdr32.e_machine == EM_MIPS &&
+                (header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr32.e_ident[EI_OSABI] == ELFOSABI_LINUX) &&
+                 (header.ehdr32.e_flags & E_MIPS_ABI2)) {
+               platform = "mips64-linux";
             }
          }
 
-      } else if (n_bytes >= sizeof(Elf64_Ehdr) && header[EI_CLASS] == ELFCLASS64) {
-         const Elf64_Ehdr *ehdr = (Elf64_Ehdr *)header;
+      } else if (n_bytes >= sizeof(Elf64_Ehdr) && header.c[EI_CLASS] == ELFCLASS64) {
 
-         if (header[EI_DATA] == ELFDATA2LSB) {
-            if (ehdr->e_machine == EM_X86_64 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+         if (header.c[EI_DATA] == ELFDATA2LSB) {
+#           if defined(VGO_solaris)
+            if (header.ehdr64.e_machine == EM_X86_64 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SOLARIS)) {
+               platform = "amd64-solaris";
+            }
+            else
+#           endif
+            if (header.ehdr64.e_machine == EM_X86_64 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "amd64-linux";
-            } else if (ehdr->e_machine == EM_MIPS &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            } else if (header.ehdr64.e_machine == EM_MIPS &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "mips64-linux";
-            } else if (ehdr->e_machine == EM_AARCH64 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            } else if (header.ehdr64.e_machine == EM_AARCH64 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "arm64-linux";
-            } else if (ehdr->e_machine == EM_PPC64 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            } else if (header.ehdr64.e_machine == EM_PPC64 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "ppc64le-linux";
             }
-         } else if (header[EI_DATA] == ELFDATA2MSB) {
+         } else if (header.c[EI_DATA] == ELFDATA2MSB) {
 #           if !defined(VGPV_arm_linux_android) \
                && !defined(VGPV_x86_linux_android) \
                && !defined(VGPV_mips32_linux_android) \
                && !defined(VGPV_arm64_linux_android)
-            if (ehdr->e_machine == EM_PPC64 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            if (header.ehdr64.e_machine == EM_PPC64 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "ppc64be-linux";
             } 
             else 
-            if (ehdr->e_machine == EM_S390 &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            if (header.ehdr64.e_machine == EM_S390 &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "s390x-linux";
-            } else if (ehdr->e_machine == EM_MIPS &&
-                (ehdr->e_ident[EI_OSABI] == ELFOSABI_SYSV ||
-                 ehdr->e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
+            } else if (header.ehdr64.e_machine == EM_MIPS &&
+                (header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_SYSV ||
+                 header.ehdr64.e_ident[EI_OSABI] == ELFOSABI_LINUX)) {
                platform = "mips64-linux";
             }
 #           endif
@@ -278,6 +336,7 @@ int main(int argc, char** argv, char** envp)
    const char *platform;
    const char *default_platform;
    const char *cp;
+   const char *linkname;
    char *toolfile;
    const char *launcher_name;
    char* new_line;
@@ -317,14 +376,12 @@ int main(int argc, char** argv, char** envp)
    }
 
    /* Select a platform to use if we can't decide that by looking at
-      the executable (eg because it's a shell script).  Note that the
-      default_platform is not necessarily either the primary or
-      secondary build target.  Instead it's chosen to maximise the
-      chances that /bin/sh will work on it.  Hence for a primary
-      target of ppc64-linux we still choose ppc32-linux as the default
-      target, because on most ppc64-linux setups, the basic /bin,
-      /usr/bin, etc, stuff is built in 32-bit mode, not 64-bit
-      mode. */
+      the executable (eg because it's a shell script).  VG_PLATFORM is the
+      default_platform. Its value is defined in coregrind/Makefile.am and
+      typically it is the primary build target. Unless the primary build
+      target is not built is not built in which case VG_PLATFORM is the
+      secondary build target. */
+#  if defined(VGO_linux)
    if ((0==strcmp(VG_PLATFORM,"x86-linux"))    ||
        (0==strcmp(VG_PLATFORM,"amd64-linux"))  ||
        (0==strcmp(VG_PLATFORM,"ppc32-linux"))  ||
@@ -336,6 +393,13 @@ int main(int argc, char** argv, char** envp)
        (0==strcmp(VG_PLATFORM,"mips32-linux")) ||
        (0==strcmp(VG_PLATFORM,"mips64-linux")))
       default_platform = VG_PLATFORM;
+#  elif defined(VGO_solaris)
+   if ((0==strcmp(VG_PLATFORM,"x86-solaris")) ||
+       (0==strcmp(VG_PLATFORM,"amd64-solaris")))
+      default_platform = SOLARIS_LAUNCHER_DEFAULT_PLATFORM;
+#  else
+#    error Unknown OS
+#  endif
    else
       barf("Unknown VG_PLATFORM '%s'", VG_PLATFORM);
 
@@ -358,6 +422,13 @@ int main(int argc, char** argv, char** envp)
    /* Figure out the name of this executable (viz, the launcher), so
       we can tell stage2.  stage2 will use the name for recursive
       invocations of valgrind on child processes. */
+#  if defined(VGO_linux)
+   linkname = "/proc/self/exe";
+#  elif defined(VGO_solaris)
+   linkname = "/proc/self/path/a.out";
+#  else
+#    error Unknown OS
+#  endif
    unsigned bufsiz = 0;
    char *buf = NULL;
 
@@ -366,14 +437,14 @@ int main(int argc, char** argv, char** envp)
       buf = realloc(buf, bufsiz);
       if (buf == NULL)
          barf("realloc of buf failed.");
-      r = readlink("/proc/self/exe", buf, bufsiz);
+      r = readlink(linkname, buf, bufsiz);
       if (r == -1) {
-        /* If /proc/self/exe can't be followed, don't give up.  Instead
-           continue with an empty string for VALGRIND_LAUNCHER.  In the
-           sys_execve wrapper, this is tested, and if found to be empty,
+        /* If /proc/self/exe (/proc/self/path/a.out) can't be followed, don't
+           give up. Instead continue with an empty string for VALGRIND_LAUNCHER.
+           In the sys_execve wrapper, this is tested, and if found to be empty,
            fail the execve. */
         fprintf(stderr, "valgrind: warning (non-fatal): "
-                "readlink(\"/proc/self/exe\") failed.\n");
+                "readlink(\"%s\") failed.\n", linkname);
         fprintf(stderr, "valgrind: continuing, however --trace-children=yes "
                 "will not work.\n");
         launcher_name = "";

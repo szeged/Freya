@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -53,14 +53,14 @@
 typedef
    struct SyscallArgs {
       Word sysno;
-      UWord arg1;
-      UWord arg2;
-      UWord arg3;
-      UWord arg4;
-      UWord arg5;
-      UWord arg6;
-      UWord arg7;
-      UWord arg8;
+      RegWord arg1;
+      RegWord arg2;
+      RegWord arg3;
+      RegWord arg4;
+      RegWord arg5;
+      RegWord arg6;
+      RegWord arg7;
+      RegWord arg8;
    }
    SyscallArgs;
 
@@ -109,9 +109,9 @@ typedef
       Int o_arg4;
       Int s_arg5;
       Int s_arg6;
-      Int uu_arg7;
+      Int s_arg7;
       Int uu_arg8;
-#     elif defined(VGP_x86_darwin)
+#     elif defined(VGP_x86_darwin) || defined(VGP_x86_solaris)
       Int s_arg1;
       Int s_arg2;
       Int s_arg3;
@@ -120,7 +120,7 @@ typedef
       Int s_arg6;
       Int s_arg7;
       Int s_arg8;
-#     elif defined(VGP_amd64_darwin)
+#     elif defined(VGP_amd64_darwin) || defined(VGP_amd64_solaris)
       Int o_arg1;
       Int o_arg2;
       Int o_arg3;
@@ -180,16 +180,7 @@ typedef
    fixed sized table exposed to the caller, but that's too inflexible;
    hence now use a function which can do arbitrary messing around to
    find the required entry. */
-#if defined(VGP_mips32_linux)
-   /* Up to 6 parameters, 4 in registers 2 on stack. */
-#  define PRA1(s,t,a) PRRAn(1,s,t,a)
-#  define PRA2(s,t,a) PRRAn(2,s,t,a)
-#  define PRA3(s,t,a) PRRAn(3,s,t,a)
-#  define PRA4(s,t,a) PRRAn(4,s,t,a)
-#  define PRA5(s,t,a) PSRAn(5,s,t,a)
-#  define PRA6(s,t,a) PSRAn(6,s,t,a)
 
-#endif
 #if defined(VGO_linux)
 extern
 SyscallTableEntry* ML_(get_linux_syscall_entry)( UInt sysno );
@@ -201,6 +192,10 @@ SyscallTableEntry* ML_(get_linux_syscall_entry)( UInt sysno );
 
 extern const SyscallTableEntry ML_(syscall_table)[];
 extern const UInt ML_(syscall_table_size);
+
+#elif defined(VGO_solaris)
+extern
+SyscallTableEntry* ML_(get_solaris_syscall_entry)( UInt sysno );
 
 #else
 #  error Unknown OS
@@ -280,7 +275,7 @@ extern const UInt ML_(syscall_table_size);
     vgSysWrap_##auxstr##_##name##_after
 
 /* Add a generic wrapper to a syscall table. */
-#if defined(VGO_linux)
+#if defined(VGO_linux) || defined(VGO_solaris)
 #  define GENX_(sysno, name)  WRAPPER_ENTRY_X_(generic, sysno, name)
 #  define GENXY(sysno, name)  WRAPPER_ENTRY_XY(generic, sysno, name)
 #elif defined(VGO_darwin)
@@ -315,6 +310,16 @@ extern const UInt ML_(syscall_table_size);
 #define ARG7   (arrghs->arg7)
 #define ARG8   (arrghs->arg8)
 
+/* Provide signed versions of the argument values */
+#define SARG1  ((Word)ARG1)
+#define SARG2  ((Word)ARG2)
+#define SARG3  ((Word)ARG3)
+#define SARG4  ((Word)ARG4)
+#define SARG5  ((Word)ARG5)
+#define SARG6  ((Word)ARG6)
+#define SARG7  ((Word)ARG7)
+#define SARG8  ((Word)ARG8)
+
 /* Reference to the syscall's current result status/value.  General
    paranoia all round. */
 #define SUCCESS       (status->what == SsComplete && !sr_isError(status->sres))
@@ -330,11 +335,13 @@ static inline UWord getRES ( SyscallStatus* st ) {
    return sr_Res(st->sres);
 }
 
+#if defined(VGO_darwin) || defined(VGO_solaris)
 static inline UWord getRESHI ( SyscallStatus* st ) {
    vg_assert(st->what == SsComplete);
    vg_assert(!sr_isError(st->sres));
    return sr_ResHI(st->sres);
 }
+#endif
 
 static inline UWord getERR ( SyscallStatus* st ) {
    vg_assert(st->what == SsComplete);
@@ -390,6 +397,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA4(s,t,a) PRRAn(4,s,t,a)
 #  define PRA5(s,t,a) PSRAn(5,s,t,a)
 #  define PRA6(s,t,a) PSRAn(6,s,t,a)
+#  define PRA7(s,t,a) PSRAn(7,s,t,a)
 
 #elif defined(VGO_linux) && !defined(VGP_mips32_linux)
    /* Up to 6 parameters, all in registers. */
@@ -400,7 +408,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA5(s,t,a) PRRAn(5,s,t,a)
 #  define PRA6(s,t,a) PRRAn(6,s,t,a)
 
-#elif defined(VGP_x86_darwin)
+#elif defined(VGP_x86_darwin) || defined(VGP_x86_solaris)
    /* Up to 8 parameters, all on the stack. */
 #  define PRA1(s,t,a) PSRAn(1,s,t,a)
 #  define PRA2(s,t,a) PSRAn(2,s,t,a)
@@ -411,7 +419,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #  define PRA7(s,t,a) PSRAn(7,s,t,a)
 #  define PRA8(s,t,a) PSRAn(8,s,t,a)
 
-#elif defined(VGP_amd64_darwin)
+#elif defined(VGP_amd64_darwin) || defined(VGP_amd64_solaris)
    /* Up to 8 parameters, 6 in registers, 2 on the stack. */
 #  define PRA1(s,t,a) PRRAn(1,s,t,a)
 #  define PRA2(s,t,a) PRRAn(2,s,t,a)
@@ -430,7 +438,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 /* Tell the tool that the syscall number is being read. */
 #define PRRSN \
       VG_(tdict).track_pre_reg_read(Vg_CoreSysCall, tid, "(syscallno)", \
-                                    layout->o_sysno, sizeof(UWord));
+                                    layout->o_sysno, sizeof(RegWord));
 
 /* REGISTER PARAMETERS */
 
@@ -448,7 +456,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #define PRRAn_LE(n,s,t,a)                          \
    do {                                            \
       Int here = layout->o_arg##n;                 \
-      vg_assert(sizeof(t) <= sizeof(UWord));       \
+      vg_assert(sizeof(t) <= sizeof(RegWord));     \
       vg_assert(here >= 0);                        \
       VG_(tdict).track_pre_reg_read(               \
          Vg_CoreSysCall, tid, s"("#a")",           \
@@ -462,16 +470,16 @@ static inline UWord getERR ( SyscallStatus* st ) {
    since the least significant parts of the guest register are stored
    in memory at the highest address.
 */
-#define PRRAn_BE(n,s,t,a)                          \
-   do {                                            \
-      Int here = layout->o_arg##n;                 \
-      Int next = layout->o_arg##n + sizeof(UWord); \
-      vg_assert(sizeof(t) <= sizeof(UWord));       \
-      vg_assert(here >= 0);                        \
-      VG_(tdict).track_pre_reg_read(               \
-         Vg_CoreSysCall, tid, s"("#a")",           \
-         next-sizeof(t), sizeof(t)                 \
-      );                                           \
+#define PRRAn_BE(n,s,t,a)                            \
+   do {                                              \
+      Int here = layout->o_arg##n;                   \
+      Int next = layout->o_arg##n + sizeof(RegWord); \
+      vg_assert(sizeof(t) <= sizeof(RegWord));       \
+      vg_assert(here >= 0);                          \
+      VG_(tdict).track_pre_reg_read(                 \
+         Vg_CoreSysCall, tid, s"("#a")",             \
+         next-sizeof(t), sizeof(t)                   \
+      );                                             \
    } while (0)
 
 #if defined(VG_BIGENDIAN)
@@ -499,7 +507,7 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #define PSRAn_LE(n,s,t,a)                          \
    do {                                            \
       Addr here = layout->s_arg##n + VG_(get_SP)(tid); \
-      vg_assert(sizeof(t) <= sizeof(UWord));       \
+      vg_assert(sizeof(t) <= sizeof(RegWord));     \
       VG_(tdict).track_pre_mem_read(               \
          Vg_CoreSysCallArgInMem, tid, s"("#a")",   \
          here, sizeof(t)                           \
@@ -515,9 +523,9 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #if (defined(VGP_mips32_linux) && defined (_MIPSEB))
  #define PSRAn_BE(n,s,t,a)                                        \
     do {                                                          \
-      Addr next = layout->s_arg##n + sizeof(UWord) +              \
+      Addr next = layout->s_arg##n + sizeof(RegWord) +            \
                   VG_(get_SP)(tid);                               \
-      vg_assert(sizeof(t) <= sizeof(UWord));                      \
+      vg_assert(sizeof(t) <= sizeof(RegWord));                    \
       VG_(tdict).track_pre_mem_read(                              \
          Vg_CoreSysCallArgInMem, tid, s"("#a")",                  \
          next-sizeof(t), sizeof(t)                                \
@@ -526,9 +534,9 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #else
 #define PSRAn_BE(n,s,t,a)                                         \
    do {                                                           \
-      Addr next = layout->o_arg##n + sizeof(UWord) +              \
+      Addr next = layout->o_arg##n + sizeof(RegWord) +            \
                   VG_(threads)[tid].arch.vex.VG_STACK_PTR;        \
-      vg_assert(sizeof(t) <= sizeof(UWord));                      \
+      vg_assert(sizeof(t) <= sizeof(RegWord));                    \
       VG_(tdict).track_pre_mem_read(                              \
          Vg_CoreSysCallArgInMem, tid, s"("#a")",                  \
          next-sizeof(t), sizeof(t)                                \
@@ -620,6 +628,19 @@ static inline UWord getERR ( SyscallStatus* st ) {
 #define POST_FIELD_WRITE(zzfield) \
     POST_MEM_WRITE((UWord)&zzfield, sizeof(zzfield))
 
+// Macros to support 64-bit syscall args split into two 32 bit values
+#define LOHI64(lo,hi)   ( ((ULong)(lo)) | (((ULong)(hi)) << 32) )
+#if defined(VG_LITTLEENDIAN)
+#define MERGE64(lo,hi)   ( ((ULong)(lo)) | (((ULong)(hi)) << 32) )
+#define MERGE64_FIRST(name) name##_low
+#define MERGE64_SECOND(name) name##_high
+#elif defined(VG_BIGENDIAN)
+#define MERGE64(hi,lo)   ( ((ULong)(lo)) | (((ULong)(hi)) << 32) )
+#define MERGE64_FIRST(name) name##_high
+#define MERGE64_SECOND(name) name##_low
+#else
+#error Unknown endianness
+#endif
 
 #endif   // __PRIV_TYPES_N_MACROS_H
 

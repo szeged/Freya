@@ -1,3 +1,30 @@
+/*
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
+
+   Copyright (C) 2012-2017 Citrix
+
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+   02111-1307, USA.
+
+   The GNU General Public License is contained in the file COPYING.
+*/
+
+/* Contributed by Andrew Cooper <andrew.cooper3@citrix.com>
+   and Ian Campbell <ian.campbell@citrix.com> */
+
 #ifndef __VKI_XEN_X86_H
 #define __VKI_XEN_X86_H
 
@@ -242,6 +269,19 @@ struct vki_hvm_hw_cpu {
 };
 
 VKI_DECLARE_HVM_SAVE_TYPE(CPU, 2, struct vki_hvm_hw_cpu);
+
+struct vki_hvm_hw_mtrr {
+#define VKI_MTRR_VCNT     8
+#define VKI_NUM_FIXED_MSR 11
+   vki_uint64_t msr_pat_cr;
+   /* mtrr physbase & physmask msr pair*/
+   vki_uint64_t msr_mtrr_var[VKI_MTRR_VCNT*2];
+   vki_uint64_t msr_mtrr_fixed[VKI_NUM_FIXED_MSR];
+   vki_uint64_t msr_mtrr_cap;
+   vki_uint64_t msr_mtrr_def_type;
+};
+
+VKI_DECLARE_HVM_SAVE_TYPE(MTRR, 14, struct vki_hvm_hw_mtrr);
 
 #endif // __VKI_XEN_H
 

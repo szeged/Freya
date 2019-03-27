@@ -36,9 +36,9 @@ int main ( void )
    // if the superblock is used to provide a big aligned block
    // (see bug 250101, comment #14).
    // Valgrind m_mallocfree.c will allocate a big superblock for the memalign
-   // call and will split it in two. This splitted superblock was
+   // call and will split it in two. This split superblock was
    // wrongly marked as reclaimable, which was then causing
-   // assert failures (as reclaimable blocks cannot be splitted).
+   // assert failures (as reclaimable blocks cannot be split).
    p = memalign(1024 * 1024, 4 * 1024 * 1024 + 1);   assert(0 == (long)p % (1024 * 1024));
    // We allocate (and then free) a piece of memory smaller than
    // the hole created in the big superblock.
@@ -82,7 +82,7 @@ int main ( void )
 #  define PM(a,b,c) posix_memalign((void**)a, b, c)
 
    res = PM(&p, -1,100);      assert(EINVAL == res);
-   res = PM(&p, 0, 100);      assert(0 == res && 0 == (long)p % 8);
+   res = PM(&p, 0, 100);      assert(EINVAL == res);
    res = PM(&p, 1, 100);      assert(EINVAL == res);
    res = PM(&p, 2, 100);      assert(EINVAL == res);
    res = PM(&p, 3, 100);      assert(EINVAL == res);

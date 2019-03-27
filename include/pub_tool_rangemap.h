@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2014-2014 Mozilla Foundation
+   Copyright (C) 2014-2017 Mozilla Foundation
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -47,9 +47,9 @@ typedef  struct _RangeMap  RangeMap;
    succeeded.)  The new array will contain a single range covering the
    entire key space, which will be bound to the value |initialVal|.
    This function never returns NULL. */
-RangeMap* VG_(newRangeMap) ( void*(*alloc_fn)(const HChar*,SizeT), 
+RangeMap* VG_(newRangeMap) ( Alloc_Fn_t alloc_fn,
                              const HChar* cc,
-                             void(*free_fn)(void*),
+                             Free_Fn_t free_fn,
                              UWord initialVal );
 
 /* Free all memory associated with a RangeMap. */
@@ -71,7 +71,7 @@ void VG_(lookupRangeMap) ( /*OUT*/UWord* key_min, /*OUT*/UWord* key_max,
                            /*OUT*/UWord* val, const RangeMap* rm, UWord key );
 
 /* How many elements are there in the map? */
-Word VG_(sizeRangeMap) ( const RangeMap* rm );
+UInt VG_(sizeRangeMap) ( const RangeMap* rm );
 
 /* Get the i'th component */
 void VG_(indexRangeMap) ( /*OUT*/UWord* key_min, /*OUT*/UWord* key_max,

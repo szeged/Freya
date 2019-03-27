@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -61,10 +61,17 @@
    suggested end address (highest addressable byte) for the client's stack. */
 extern Addr VG_(am_startup) ( Addr sp_at_startup );
 
+/* Check whether ADDR is OK to be used as aspacem_minAddr. If not, *ERRMSG
+   will be set to identify what's wrong. ERRMSG may be NULL. */
+extern Bool VG_(am_is_valid_for_aspacem_minAddr)( Addr addr,
+                                                  const HChar **errmsg );
 
 //--------------------------------------------------------------
 // Querying current status
 
+
+/* Finds an anonymous segment containing 'a'. Returned pointer is read only. */
+extern NSegment const *VG_(am_find_anon_segment) ( Addr a );
 
 /* Find the next segment along from 'here', if it is a file/anon/resvn
    segment. */
@@ -86,6 +93,14 @@ extern Bool VG_(am_is_valid_for_valgrind)
    point of view they don't exist. */
 extern Bool VG_(am_is_valid_for_client_or_free_or_resvn)
    ( Addr start, SizeT len, UInt prot );
+
+/* Checks if a piece of memory consists of either free or reservation
+   segments. */
+extern Bool VG_(am_is_free_or_resvn)( Addr start, SizeT len );
+
+/* Check whether ADDR looks like an address or address-to-be located in an
+   extensible client stack segment. */
+extern Bool VG_(am_addr_is_in_extensible_client_stack)( Addr addr );
 
 /* Trivial fn: return the total amount of space in anonymous mappings,
    both for V and the client.  Is used for printing stats in
@@ -114,7 +129,9 @@ extern Bool VG_(am_do_sync_check) ( const HChar* fn,
 /* Describes a request for VG_(am_get_advisory). */
 typedef
    struct {
-      enum { MFixed, MHint, MAny } rkind;
+      /* Note: if rkind == MAlign then start specifies alignment. This is
+         Solaris specific. */
+      enum { MFixed, MHint, MAny, MAlign } rkind;
       Addr start;
       Addr len;
    }
@@ -174,7 +191,7 @@ extern Bool VG_(am_notify_mprotect)( Addr start, SizeT len, UInt prot );
 
 /* Notifies aspacem that an munmap completed successfully.  The
    segment array is updated accordingly.  As with
-   VG_(am_notify_munmap), we merely record the given info, and don't
+   VG_(am_notify_mprotect), we merely record the given info, and don't
    check it for sensibleness.  If the returned Bool is True, the
    caller should immediately discard translations from the specified
    address range. */
@@ -201,8 +218,14 @@ extern SysRes VG_(am_do_mmap_NO_NOTIFY)
    segment array accordingly. */
 extern SysRes VG_(am_mmap_file_fixed_client)
    ( Addr start, SizeT length, UInt prot, Int fd, Off64T offset );
+extern SysRes VG_(am_mmap_file_fixed_client_flags)
+   ( Addr start, SizeT length, UInt prot, UInt flags, Int fd, Off64T offset );
 extern SysRes VG_(am_mmap_named_file_fixed_client)
-   ( Addr start, SizeT length, UInt prot, Int fd, Off64T offset, const HChar *name );
+   ( Addr start, SizeT length, UInt prot, Int fd,
+     Off64T offset, const HChar *name );
+extern SysRes VG_(am_mmap_named_file_fixed_client_flags)
+   ( Addr start, SizeT length, UInt prot, UInt flags, Int fd,
+     Off64T offset, const HChar *name );
 
 /* Map anonymously at a fixed address for the client, and update
    the segment array accordingly. */
@@ -231,6 +254,10 @@ extern SysRes VG_(am_mmap_file_float_valgrind)
 extern SysRes VG_(am_shared_mmap_file_float_valgrind)
    ( SizeT length, UInt prot, Int fd, Off64T offset );
 
+/* Similar to VG_(am_mmap_anon_float_client) but also
+   marks the segment as containing the client heap. */
+extern SysRes VG_(am_mmap_client_heap) ( SizeT length, Int prot );
+
 /* Unmap the given address range and update the segment array
    accordingly.  This fails if the range isn't valid for the client.
    If *need_discard is True after a successful return, the caller
@@ -245,18 +272,10 @@ extern SysRes VG_(am_munmap_client)( /*OUT*/Bool* need_discard,
   suitable segment. */
 extern Bool VG_(am_change_ownership_v_to_c)( Addr start, SizeT len );
 
-/* 'seg' must be NULL or have been obtained from
-   VG_(am_find_nsegment), and still valid.  If non-NULL, and if it
-   denotes a SkAnonC (anonymous client mapping) area, set the .isCH
-   (is-client-heap) flag for that area.  Otherwise do nothing.
-   (Bizarre interface so that the same code works for both Linux and
-   AIX and does not impose inefficiencies on the Linux version.) */
-extern void VG_(am_set_segment_isCH_if_SkAnonC)( const NSegment* seg );
-
-/* Same idea as VG_(am_set_segment_isCH_if_SkAnonC), except set the
-   segment's hasT bit (has-cached-code) if this is a client segment,
-   i.e. SkFileC, SkAnonC, or SkShmC. */
-extern void VG_(am_set_segment_hasT_if_client_segment)( const NSegment* );
+/* Set the 'hasT' bit on the segment containing ADDR indicating that
+   translations have or may have been taken from this segment. ADDR is
+   expected to belong to a client segment. */
+extern void VG_(am_set_segment_hasT)( Addr addr );
 
 /* --- --- --- reservations --- --- --- */
 
@@ -309,24 +328,23 @@ extern Bool VG_(am_relocate_nooverlap_client)( /*OUT*/Bool* need_discard,
 // stacks.  The address space manager provides and suitably
 // protects such stacks.
 
+// VG_DEFAULT_STACK_ACTIVE_SZB is the default size of a Valgrind stack.
+// The effectively used size is controlled by the command line options
+// --valgrind-stack-size=xxxx (which must be page aligned).
+// Note that m_main.c needs an interim stack (just to startup), before
+// any command line option can be processed. This interim stack
+// (declared in m_main.c) will use the size VG_DEFAULT_STACK_ACTIVE_SZB.
 #if defined(VGP_ppc32_linux) \
     || defined(VGP_ppc64be_linux) || defined(VGP_ppc64le_linux)	\
     || defined(VGP_mips32_linux) || defined(VGP_mips64_linux) \
     || defined(VGP_arm64_linux)
 # define VG_STACK_GUARD_SZB  65536  // 1 or 16 pages
-# define VG_STACK_ACTIVE_SZB (4096 * 256) // 1Mb
 #else
 # define VG_STACK_GUARD_SZB  8192   // 2 pages
-# define VG_STACK_ACTIVE_SZB (4096 * 256) // 1Mb
 #endif
+# define VG_DEFAULT_STACK_ACTIVE_SZB 1048576 // (4096 * 256) = 1Mb 
 
-typedef
-   struct {
-      HChar bytes[VG_STACK_GUARD_SZB 
-                  + VG_STACK_ACTIVE_SZB 
-                  + VG_STACK_GUARD_SZB];
-   }
-   VgStack;
+typedef struct _VgStack VgStack;
 
 
 /* Allocate and initialise a VgStack (anonymous valgrind space).
@@ -343,6 +361,9 @@ extern VgStack* VG_(am_alloc_VgStack)( /*OUT*/Addr* initial_sp );
 extern SizeT VG_(am_get_VgStack_unused_szB)( const VgStack* stack,
                                              SizeT limit ); 
 
+/* Returns the Addr of the lowest usable byte of stack. */
+extern Addr VG_(am_valgrind_stack_low_addr)( const VgStack* stack);
+
 // DDD: this is ugly
 #if defined(VGO_darwin)
 typedef 
@@ -358,6 +379,11 @@ typedef
 extern Bool VG_(get_changed_segments)(
       const HChar* when, const HChar* where, /*OUT*/ChangedSeg* css,
       Int css_size, /*OUT*/Int* css_used);
+#endif
+
+#if defined(VGO_solaris)
+extern Bool VG_(am_search_for_new_segment)(Addr *start, SizeT *size,
+                                           UInt *prot);
 #endif
 
 #endif   // __PUB_CORE_ASPACEMGR_H

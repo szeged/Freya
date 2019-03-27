@@ -8,10 +8,10 @@
    This file is part of BBV, a Valgrind tool for generating SimPoint
    basic block vectors.
 
-   Copyright (C) 2006-2013 Vince Weaver
+   Copyright (C) 2006-2017 Vince Weaver
       vince _at_ csl.cornell.edu
 
-   pcfile code is Copyright (C) 2006-2013 Oriol Prat
+   pcfile code is Copyright (C) 2006-2017 Oriol Prat
       oriol.prat _at _ bsc.es
 
    This program is free software; you can redistribute it and/or
@@ -116,8 +116,8 @@ static void dumpPcFile(void)
       /*    and function name for each basic block             */
    VG_(OSetGen_ResetIter)(instr_info_table);
    while ( (bb_elem = VG_(OSetGen_Next)(instr_info_table)) ) {
-      VG_(fprintf)( fp, "F:%d:%x:%s\n", bb_elem->block_num,
-                    (Int)bb_elem->BB_addr, bb_elem->fn_name);
+      VG_(fprintf)( fp, "F:%d:%lx:%s\n", bb_elem->block_num,
+                    bb_elem->BB_addr, bb_elem->fn_name);
    }
 
    VG_(fclose)(fp);
@@ -346,6 +346,7 @@ static IRSB* bbv_instrument ( VgCallbackClosure* closure,
    IRDirty  *di;
    IRExpr   **argv, *arg1;
    Int      regparms,opcode_type;
+   DiEpoch  ep = VG_(current_DiEpoch)();
 
       /* We don't handle a host/guest word size mismatch */
    if (gWordTy != hWordTy) {
@@ -392,7 +393,8 @@ static IRSB* bbv_instrument ( VgCallbackClosure* closure,
       block_num++;
          /* get function name and entry point information */
       const HChar *fn_name;
-      bbInfo->is_entry=VG_(get_fnname_if_entry)(origAddr, &fn_name);
+      VG_(get_fnname)(ep, origAddr, &fn_name);
+      bbInfo->is_entry=VG_(get_fnname_if_entry)(ep, origAddr, &fn_name);
       bbInfo->fn_name =VG_(strdup)("bbv_strings", fn_name);
          /* insert structure into table */
       VG_(OSetGen_Insert)( instr_info_table, bbInfo );
@@ -564,10 +566,10 @@ static void bbv_fini(Int exitcode)
          VG_(sprintf)(buf,"\n\n"
                           "# Thread %d\n"
                           "#   Total intervals: %d (Interval Size %d)\n"
-                          "#   Total instructions: %lld\n"
-                          "#   Total reps: %lld\n"
-                          "#   Unique reps: %lld\n"
-                          "#   Total fldcw instructions: %lld\n\n",
+                          "#   Total instructions: %llu\n"
+                          "#   Total reps: %llu\n"
+                          "#   Unique reps: %llu\n"
+                          "#   Total fldcw instructions: %llu\n\n",
                 i,
                 (Int)(bbv_thread[i].total_instr/(ULong)interval_size),
                 interval_size,
@@ -596,7 +598,7 @@ static void bbv_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a SimPoint basic block vector generator");
    VG_(details_copyright_author)(
-      "Copyright (C) 2006-2013 Vince Weaver");
+      "Copyright (C) 2006-2017 Vince Weaver");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
 
    VG_(basic_tool_funcs)          (bbv_post_clo_init,

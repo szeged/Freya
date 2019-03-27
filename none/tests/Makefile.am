@@ -2,6 +2,7 @@
 include $(top_srcdir)/Makefile.tool-tests.am
 
 SUBDIRS = .
+SUBDIRS += scripts
 
 # Arch-specific tests.
 if VGCONF_ARCHS_INCLUDE_X86
@@ -39,23 +40,40 @@ endif
 if VGCONF_OS_IS_DARWIN
 SUBDIRS += darwin
 endif
+if VGCONF_OS_IS_SOLARIS
+SUBDIRS += solaris
+endif
 
 # Platform-specific tests
+if VGCONF_PLATFORMS_INCLUDE_AMD64_LINUX
+SUBDIRS += amd64-linux
+endif
 if VGCONF_PLATFORMS_INCLUDE_X86_LINUX
 SUBDIRS += x86-linux
 endif
+if VGCONF_PLATFORMS_INCLUDE_AMD64_DARWIN
+SUBDIRS += amd64-darwin
+endif
+if VGCONF_PLATFORMS_INCLUDE_X86_DARWIN
+SUBDIRS += x86-darwin
+endif
+if VGCONF_PLATFORMS_INCLUDE_AMD64_SOLARIS
+SUBDIRS += amd64-solaris
+endif
+if VGCONF_PLATFORMS_INCLUDE_X86_SOLARIS
+SUBDIRS += x86-solaris
+endif
 
 DIST_SUBDIRS = x86 amd64 ppc32 ppc64 arm arm64 s390x mips32 mips64 \
-               linux darwin x86-linux .
+               linux darwin solaris amd64-linux x86-linux amd64-darwin \
+               x86-darwin amd64-solaris x86-solaris scripts .
 
 dist_noinst_SCRIPTS = \
 	filter_cmdline0 \
 	filter_cmdline1 \
 	filter_fdleak \
 	filter_ioctl_moans \
-	filter_linenos \
 	filter_none_discards \
-	filter_shell_output \
 	filter_stderr \
 	filter_timestamp \
 	allexec_prepare_prereq
@@ -67,9 +85,12 @@ EXTRA_DIST = \
 	allexec64.stdout.exp allexec64.stderr.exp allexec64.vgtest\
 	ansi.stderr.exp ansi.vgtest \
 	args.stderr.exp args.stdout.exp args.vgtest \
-	async-sigs.stderr.exp async-sigs.stderr.exp-mips32 async-sigs.vgtest \
+	async-sigs.stderr.exp async-sigs.stderr.exp-mips32 \
+	async-sigs.vgtest \
+	bigcode.vgtest bigcode.stderr.exp bigcode.stdout.exp \
 	bitfield1.stderr.exp bitfield1.vgtest \
 	bug129866.vgtest bug129866.stderr.exp bug129866.stdout.exp \
+	bug234814.vgtest bug234814.stderr.exp bug234814.stdout.exp \
 	closeall.stderr.exp closeall.vgtest \
 	cmdline0.stderr.exp cmdline0.stdout.exp cmdline0.vgtest \
 	cmdline1.stderr.exp cmdline1.stdout.exp cmdline1.vgtest \
@@ -86,7 +107,8 @@ EXTRA_DIST = \
 	discard.vgtest \
 	empty-exe.vgtest empty-exe.stderr.exp \
 	exec-sigmask.vgtest exec-sigmask.stdout.exp \
-	exec-sigmask.stdout.exp2 exec-sigmask.stdout.exp3 exec-sigmask.stderr.exp \
+	exec-sigmask.stdout.exp2 exec-sigmask.stdout.exp3 \
+	exec-sigmask.stdout.exp-solaris exec-sigmask.stderr.exp \
 	execve.vgtest execve.stdout.exp execve.stderr.exp \
 	faultstatus.vgtest faultstatus.stderr.exp faultstatus.stderr.exp-s390x \
 	fcntl_setown.vgtest fcntl_setown.stdout.exp fcntl_setown.stderr.exp \
@@ -105,6 +127,8 @@ EXTRA_DIST = \
 	gxx304.stderr.exp gxx304.vgtest \
 	ifunc.stderr.exp ifunc.stdout.exp ifunc.vgtest \
 	ioctl_moans.stderr.exp ioctl_moans.vgtest \
+	libvex_test.stderr.exp libvex_test.vgtest \
+	libvexmultiarch_test.stderr.exp libvexmultiarch_test.vgtest \
 	manythreads.stdout.exp manythreads.stderr.exp manythreads.vgtest \
 	map_unaligned.stderr.exp map_unaligned.vgtest \
 	map_unmap.stderr.exp map_unmap.stdout.exp map_unmap.vgtest \
@@ -113,12 +137,19 @@ EXTRA_DIST = \
 	mq.stderr.exp mq.vgtest \
 	munmap_exe.stderr.exp munmap_exe.vgtest \
 	nestedfns.stderr.exp nestedfns.stdout.exp nestedfns.vgtest \
+	nocwd.stdout.exp nocwd.stderr.exp nocwd.vgtest \
 	nodir.stderr.exp nodir.vgtest \
 	pending.stdout.exp pending.stderr.exp pending.vgtest \
+	ppoll_alarm.stdout.exp ppoll_alarm.stderr.exp ppoll_alarm.vgtest \
 	procfs-linux.stderr.exp-with-readlinkat \
 	procfs-linux.stderr.exp-without-readlinkat \
 	procfs-linux.vgtest \
-	procfs-non-linux.stderr.exp procfs-non-linux.vgtest \
+	procfs-non-linux.vgtest \
+	procfs-non-linux.stderr.exp-with-readlinkat \
+	procfs-non-linux.stderr.exp-without-readlinkat \
+	pselect_alarm.stdout.exp pselect_alarm.stderr.exp pselect_alarm.vgtest \
+	pselect_sigmask_null.vgtest \
+	pselect_sigmask_null.stdout.exp pselect_sigmask_null.stderr.exp \
 	pth_atfork1.stderr.exp pth_atfork1.stdout.exp pth_atfork1.vgtest \
 	pth_blockedsig.stderr.exp \
 	pth_blockedsig.stdout.exp pth_blockedsig.vgtest \
@@ -134,12 +165,15 @@ EXTRA_DIST = \
 	pth_rwlock.stderr.exp pth_rwlock.vgtest \
 	pth_stackalign.stderr.exp \
 	pth_stackalign.stdout.exp pth_stackalign.vgtest \
+	pth_2sig.stderr.exp-linux pth_2sig.stderr.exp-solaris pth_2sig.vgtest \
+	pth_term_signal.stderr.exp pth_term_signal.vgtest \
 	rcrl.stderr.exp rcrl.stdout.exp rcrl.vgtest \
 	readline1.stderr.exp readline1.stdout.exp \
 	readline1.vgtest \
 	require-text-symbol-1.vgtest \
 		require-text-symbol-1.stderr.exp \
 	require-text-symbol-2.vgtest \
+		require-text-symbol-2.stderr.exp-libcso1 \
 		require-text-symbol-2.stderr.exp-libcso6 \
 	res_search.stderr.exp res_search.stdout.exp res_search.vgtest \
 	resolv.stderr.exp resolv.stdout.exp resolv.vgtest \
@@ -148,22 +182,11 @@ EXTRA_DIST = \
 	selfrun.stderr.exp selfrun.stdout.exp selfrun.vgtest \
 	sem.stderr.exp sem.stdout.exp sem.vgtest \
 	semlimit.stderr.exp semlimit.stdout.exp semlimit.vgtest \
-	shell shell.vgtest shell.stderr.exp shell.stderr.exp-dash \
-	    shell.stdout.exp shell.stderr.exp-dash2 \
-	shell_badinterp shell_badinterp.vgtest shell_badinterp.stderr.exp \
-	shell_binaryfile shell_binaryfile.vgtest shell_binaryfile.stderr.exp \
-	shell_dir.vgtest shell_dir.stderr.exp \
-	shell_nonexec.vgtest shell_nonexec.stderr.exp \
-	shell_nosuchfile.vgtest shell_nosuchfile.stderr.exp \
-	shell_valid1 shell_valid1.vgtest shell_valid1.stderr.exp \
-	shell_valid2 shell_valid2.vgtest shell_valid2.stderr.exp \
-	shell_valid3 shell_valid3.vgtest shell_valid3.stderr.exp \
-	shell_zerolength shell_zerolength.vgtest shell_zerolength.stderr.exp \
-	    shell_zerolength.stderr.exp-dash \
 	sha1_test.stderr.exp sha1_test.vgtest \
 	shortpush.stderr.exp shortpush.vgtest \
 	shorts.stderr.exp shorts.vgtest \
 	sigstackgrowth.stdout.exp sigstackgrowth.stderr.exp sigstackgrowth.vgtest \
+	sigsusp.stderr.exp sigsusp.vgtest \
 	stackgrowth.stdout.exp stackgrowth.stderr.exp stackgrowth.vgtest \
 	syscall-restart1.vgtest syscall-restart1.stdout.exp syscall-restart1.stderr.exp \
 	syscall-restart2.vgtest syscall-restart2.stdout.exp syscall-restart2.stderr.exp \
@@ -177,13 +200,14 @@ EXTRA_DIST = \
 	tls.vgtest tls.stderr.exp tls.stdout.exp  \
 	unit_debuglog.stderr.exp unit_debuglog.vgtest \
 	vgprintf.stderr.exp vgprintf.vgtest \
+	vgprintf_nvalgrind.stderr.exp vgprintf_nvalgrind.vgtest \
 	process_vm_readv_writev.stderr.exp process_vm_readv_writev.vgtest
 
 check_PROGRAMS = \
-	ansi args \
+	args \
 	async-sigs \
 	bitfield1 \
-	bug129866 \
+	bug129866 bug234814 \
 	closeall coolo_strlen \
 	discard exec-sigmask execve faultstatus fcntl_setown \
 	fdleak_cmsg fdleak_creat fdleak_dup fdleak_dup2 \
@@ -191,19 +215,24 @@ check_PROGRAMS = \
 	fdleak_socketpair \
 	floored fork fucomip \
 	ioctl_moans \
+	libvex_test \
+	libvexmultiarch_test \
 	manythreads \
 	mmap_fcntl_bug \
 	munmap_exe map_unaligned map_unmap mq \
+	nocwd \
 	pending \
 	procfs-cmdline-exe \
+	pselect_alarm \
+	pselect_sigmask_null \
 	pth_atfork1 pth_blockedsig pth_cancel1 pth_cancel2 pth_cvsimple \
 	pth_empty pth_exit pth_exit2 pth_mutexspeed pth_once pth_rwlock \
-	pth_stackalign \
+	pth_stackalign pth_2sig pth_term_signal\
 	rcrl readline1 \
 	require-text-symbol \
 	res_search resolv \
 	rlimit_nofile selfrun sem semlimit sha1_test \
-	shortpush shorts stackgrowth sigstackgrowth \
+	shortpush shorts stackgrowth sigstackgrowth sigsusp \
 	syscall-restart1 syscall-restart2 \
 	syslog \
 	system \
@@ -217,6 +246,7 @@ check_PROGRAMS = \
 	unit_debuglog \
 	valgrind_cpp_test \
 	vgprintf \
+	vgprintf_nvalgrind \
 	coolo_sigaction \
 	gxx304 \
 	process_vm_readv_writev
@@ -227,7 +257,13 @@ endif
 
 # This doesn't appear to be compilable on Darwin.
 if ! VGCONF_OS_IS_DARWIN
-   check_PROGRAMS += rlimit64_nofile 
+   check_PROGRAMS += rlimit64_nofile \
+        ppoll_alarm
+endif
+
+# clang does not know -ansi
+if ! COMPILER_IS_CLANG
+   check_PROGRAMS += ansi
 endif
 
 if BUILD_IFUNC_TESTS
@@ -240,6 +276,14 @@ AM_CXXFLAGS += $(AM_FLAG_M3264_PRI)
 # Extra stuff for C tests
 ansi_CFLAGS		= $(AM_CFLAGS) -ansi
 execve_CFLAGS		= $(AM_CFLAGS) @FLAG_W_NO_NONNULL@
+if VGCONF_OS_IS_SOLARIS
+fcntl_setown_LDADD	= -lsocket -lnsl
+fdleak_cmsg_CFLAGS	= $(AM_CFLAGS) -D_XOPEN_SOURCE=600
+fdleak_cmsg_LDADD	= -lsocket -lnsl
+fdleak_ipv4_LDADD	= -lsocket -lnsl
+fdleak_creat_LDADD	= -lsocket -lnsl
+fdleak_socketpair_LDADD	= -lsocket -lnsl
+endif
 floored_LDADD 		= -lm
 manythreads_LDADD	= -lpthread
 if VGCONF_OS_IS_DARWIN
@@ -248,6 +292,16 @@ else
  nestedfns_CFLAGS	= $(AM_CFLAGS)
  mq_LDADD		= -lrt
 endif
+libvex_test_CFLAGS      = $(AM_CFLAGS) @FLAG_FSANITIZE@
+libvex_test_LDADD       = ../../VEX/libvex-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a \
+			   @LIB_UBSAN@
+libvexmultiarch_test_CFLAGS= $(AM_CFLAGS) @FLAG_FSANITIZE@
+libvexmultiarch_test_LDADD = \
+	../../VEX/libvexmultiarch-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a \
+	../../VEX/libvex-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a @LIB_UBSAN@
+libvexmultiarch_test_SOURCES = libvex_test.c
+ppoll_alarm_LDADD	= -lpthread
+pselect_alarm_LDADD	= -lpthread
 pth_atfork1_LDADD	= -lpthread
 pth_blockedsig_LDADD	= -lpthread
 pth_cancel1_CFLAGS	= $(AM_CFLAGS) -Wno-shadow
@@ -260,12 +314,25 @@ pth_exit2_LDADD	 	= -lpthread
 pth_mutexspeed_LDADD	= -lpthread
 pth_once_LDADD		= -lpthread
 pth_rwlock_LDADD	= -lpthread
+pth_rwlock_CFLAGS	= $(AM_CFLAGS)
 pth_stackalign_LDADD	= -lpthread
+pth_2sig_LDADD		= -lpthread
+pth_term_signal_LDADD	= -lpthread
 res_search_LDADD        = -lresolv -lpthread
+resolv_CFLAGS		= $(AM_CFLAGS)
 resolv_LDADD            = -lresolv -lpthread
+if VGCONF_OS_IS_SOLARIS
+resolv_CFLAGS		+= -U_REENTRANT
+endif
 semlimit_LDADD		= -lpthread
+sha1_test_CFLAGS	= $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+sha1_test_CFLAGS	+= -Du_int32_t=uint32_t
+endif
+sigsusp_LDADD		= -lpthread
 thread_exits_LDADD	= -lpthread
 threaded_fork_LDADD	= -lpthread
+threadederrno_CFLAGS	= $(AM_CFLAGS)
 threadederrno_LDADD	= -lpthread
 tls_SOURCES		= tls.c tls2.c
 tls_DEPENDENCIES	= tls.so tls2.so
@@ -287,6 +354,9 @@ if VGCONF_OS_IS_DARWIN
 else
  tls2_so_LDFLAGS	= -shared
 endif
+
+vgprintf_nvalgrind_SOURCES = vgprintf.c
+vgprintf_nvalgrind_CFLAGS = -DNVALGRIND
 
 valgrind_cpp_test_SOURCES = valgrind_cpp_test.cpp
 valgrind_cpp_test_LDADD   = -lstdc++

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2007-2013 Apple Inc.
+   Copyright (C) 2007-2017 Apple Inc.
       Greg Parker  gparker@apple.com
 
    This program is free software; you can redistribute it and/or
@@ -33,6 +33,12 @@
 
 #ifndef __VKI_DARWIN_H
 #define __VKI_DARWIN_H
+
+/* struct __darwin_ucontext isn't fully declared without
+ * this definition.  It's crazy but there it is.  */
+#ifndef _XOPEN_SOURCE
+#define _XOPEN_SOURCE 0500
+#endif
 
 #include <stdint.h>
 
@@ -106,6 +112,8 @@ typedef uint32_t vki_u32;
 
 #define vki_timeval timeval
 #define vki_timeval32 timeval32
+#define vki_tv_sec tv_sec
+#define vki_tv_usec tv_usec
 #define vki_timespec timespec
 #define vki_itimerval itimerval
 #define vki_timezone timezone
@@ -295,6 +303,11 @@ typedef uint32_t vki_u32;
 #define VKI_F_ADDSIGS	F_ADDSIGS
 #if DARWIN_VERS >= DARWIN_10_9
 # define VKI_F_ADDFILESIGS  F_ADDFILESIGS
+#endif
+#if DARWIN_VERS >= DARWIN_10_11
+# define VKI_F_ADDFILESIGS_FOR_DYLD_SIM  F_ADDFILESIGS_FOR_DYLD_SIM
+# define VKI_F_BARRIERFSYNC              F_BARRIERFSYNC
+# define VKI_F_ADDFILESIGS_RETURN        F_ADDFILESIGS_RETURN
 #endif
 #define VKI_F_FULLFSYNC	F_FULLFSYNC
 #define VKI_F_PATHPKG_CHECK	F_PATHPKG_CHECK
@@ -794,6 +807,19 @@ typedef
 #define vki_kevent kevent
 #define vki_kevent64 kevent64_s
 
+// xnu_root/bsd/sys/event.h
+
+struct vki_kevent_qos_s {
+    uint64_t    ident;      /* identifier for this event */
+    int16_t     filter;     /* filter for event */
+    uint16_t    flags;      /* general flags */
+    int32_t     qos;        /* quality of service */
+    uint64_t    udata;      /* opaque user data identifier */
+    uint32_t    fflags;     /* filter-specific flags */
+    uint32_t    xflags;     /* extra filter-specific flags */
+    int64_t     data;       /* filter-specific data */
+    uint64_t    ext[4];     /* filter-specific extensions */
+};
 
 #include <sys/ev.h>
 
@@ -834,14 +860,19 @@ struct ByteRangeLockPB2
 #define VKI_FSIOC_SYNC_VOLUME        _IOW('A', 1, uint32_t)
 
 
-// Libc/pthreads/pthread.c
+// libpthread/kern/workqueue_internal.h
 
-#define VKI_WQOPS_QUEUE_ADD          1
-#define VKI_WQOPS_QUEUE_REMOVE       2
-#define VKI_WQOPS_THREAD_RETURN      4
-#define VKI_WQOPS_THREAD_SETCONC     8
-#define VKI_WQOPS_QUEUE_NEWSPISUPP  16  /* check for newer SPI support */
-#define VKI_WQOPS_QUEUE_REQTHREADS  32  /* request number of threads of a prio */
+#define VKI_WQOPS_QUEUE_ADD                    1
+#define VKI_WQOPS_QUEUE_REMOVE                 2
+#define VKI_WQOPS_THREAD_RETURN                4  /* parks the thread back into the kernel */
+#define VKI_WQOPS_THREAD_SETCONC               8
+#define VKI_WQOPS_QUEUE_NEWSPISUPP            16  /* check for newer SPI support */
+#define VKI_WQOPS_QUEUE_REQTHREADS            32  /* request number of threads of a prio */
+#define VKI_WQOPS_QUEUE_REQTHREADS2           48  /* request a number of threads in a given priority bucket */
+#define VKI_WQOPS_THREAD_KEVENT_RETURN        64  /* parks the thread after delivering the passed kevent array */
+#define VKI_WQOPS_SET_EVENT_MANAGER_PRIORITY 128  /* max() in the provided priority in the the priority of the event manager */
+#define VKI_WQOPS_THREAD_WORKLOOP_RETURN     256  /* parks the thread after delivering the passed kevent array */
+#define VKI_WQOPS_SHOULD_NARROW              512  /* checks whether we should narrow our concurrency */
 
 
 #include <sys/ttycom.h>
@@ -995,6 +1026,23 @@ struct ByteRangeLockPB2
 #define VKI_DTRACEHIOC_ADDDOF   DTRACEHIOC_ADDDOF
 
 
+#include <net/bpf.h>
+
+#define vki_bpf_program bpf_program
+#define vki_bf_len bf_len
+#define vki_bf_insns bf_insns
+#define vki_bpf_dltlist bpf_dltlist
+#define vki_bfl_len bfl_len
+#define vki_bfl_list bfl_list
+
+#define VKI_BIOCSETF        BIOCSETF
+#define VKI_BIOCFLUSH       BIOCFLUSH
+#define VKI_BIOCPROMISC     BIOCPROMISC
+#define VKI_BIOCSETIF       BIOCSETIF
+#define VKI_BIOCSRTIMEOUT   BIOCSRTIMEOUT
+#define VKI_BIOCGDLTLIST    BIOCGDLTLIST
+
+
 #include <sys/ucontext.h>
 
 /* quite why sys/ucontext.h provides a 'struct __darwin_ucontext'
@@ -1080,5 +1128,17 @@ struct vki_necp_aggregate_result {
 };
 #endif /* DARWIN_VERS == DARWIN_10_10 */
 
+#if DARWIN_VERS >= DARWIN_10_12
+// ulock_wake & ulock_wait operations
+#define VKI_UL_OPCODE_MASK      0x000000FF
+#define VKI_UL_FLAGS_MASK       0xFFFFFF00
+#define VKI_UL_COMPARE_AND_WAIT 1
+#define VKI_UL_UNFAIR_LOCK      2
+// ulock_wake & ulock_wait flags
+#define ULF_NO_ERRNO            0x01000000
+
+// ulock_wait flags
+#define WKI_ULF_WAIT_WORKQ_DATA_CONTENTION	0x00010000
+#endif /* DARWIN_VERS >= DARWIN_10_12 */
 
 #endif

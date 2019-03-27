@@ -9,7 +9,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -75,14 +75,18 @@ typedef
                             the macros defined in pub_core_debuginfo.h */
       const HChar*  pri_name;  /* primary name, never NULL */
       const HChar** sec_names; /* NULL, or a NULL term'd array of other names */
-      // XXX: this could be shrunk (on 32-bit platforms) by using 30
-      // bits for the size and 1 bit each for isText and isIFunc.  If you
-      // do this, make sure that all assignments to the latter two use
-      // 0 or 1 (or True or False), and that a positive number larger
-      // than 1 is never used to represent True.
+      // XXX: DiSym could be shrunk (on 32-bit platforms to exactly 16
+      // bytes, on 64-bit platforms the first 3 pointers already add
+      // up to 24 bytes, so size plus bits will extend to 32 bytes
+      // anyway) by using 29 bits for the size and 1 bit each for
+      // isText, isIFunc and isGlobal.  If you do this, make sure that
+      // all assignments to the latter two use 0 or 1 (or True or
+      // False), and that a positive number larger than 1 is never
+      // used to represent True.
       UInt    size;    /* size in bytes */
       Bool    isText;
       Bool    isIFunc; /* symbol is an indirect function? */
+      Bool    isGlobal; /* Is this symbol globally visible? */
    }
    DiSym;
 
@@ -382,7 +386,10 @@ typedef
       Creg_ARM_R14,
       Creg_ARM_R7,
       Creg_ARM64_X30,
-      Creg_S390_R14,
+      Creg_S390_IA,
+      Creg_S390_SP,
+      Creg_S390_FP,
+      Creg_S390_LR,
       Creg_MIPS_RA
    }
    CfiReg;
@@ -581,6 +588,36 @@ struct _DebugInfo {
       structure is allocated. */
    ULong handle;
 
+   /* The range of epochs for which this DebugInfo is valid.  These also
+      divide the DebugInfo's lifetime into three parts:
+
+      (1) Allocated: but with only .fsm holding useful info -- in
+          particular, not yet holding any debug info.
+          .first_epoch == DebugInfoEpoch_INVALID
+          .last_epoch  == DebugInfoEpoch_INVALID
+
+      (2) Active: containing debug info, and current.
+          .first_epoch != DebugInfoEpoch_INVALID
+          .last_epoch  == DebugInfoEpoch_INVALID
+
+      (3) Archived: containing debug info, but no longer current.
+          .first_epoch != DebugInfoEpoch_INVALID
+          .last_epoch  != DebugInfoEpoch_INVALID
+
+      State (2) corresponds to an object which is currently mapped.  When
+      the object is unmapped, what happens depends on the setting of
+      --keep-debuginfo:
+
+      * when =no, the DebugInfo is removed from debugInfo_list and
+        deleted.
+
+      * when =yes, the DebugInfo is retained in debugInfo_list, but its
+        .last_epoch field is filled in, and current_epoch is advanced.  This
+        effectively moves the DebugInfo into state (3).
+   */
+   DiEpoch first_epoch;
+   DiEpoch last_epoch;
+
    /* Used for debugging only - indicate what stuff to dump whilst
       reading stuff into the seginfo.  Are computed as early in the
       lifetime of the DebugInfo as possible -- at the point when it is
@@ -631,11 +668,14 @@ struct _DebugInfo {
 
       or the normal case, which is the AND of the following:
       (0) size of at least one rx mapping > 0
-      (1) no two DebugInfos with some rx mapping of size > 0 
+      (1) no two non-archived DebugInfos with some rx mapping of size > 0
           have overlapping rx mappings
-      (2) [cfsi_minavma,cfsi_maxavma] does not extend beyond
-          [avma,+size) of one rx mapping; that is, the former
-          is a subrange or equal to the latter.
+      (2) Each address in [cfsi_minavma,cfsi_maxavma] is in an rx mapping
+          or else no cfsi can cover this address.
+          The typical case is a single rx mapping covering the full range.
+          In some cases, the union of several rx mappings covers the range,
+          with possibly some holes between the rx mappings, and no cfsi fall
+          within such an hole.
       (3) all DiCfSI in the cfsi array all have ranges that fall within
           [avma,+size) of that rx mapping.
       (4) all DiCfSI in the cfsi array are non-overlapping
@@ -889,7 +929,7 @@ struct _DebugInfo {
       cfsi_m_ix as in many case, one byte is good enough. For big
       objects, 2 bytes are needed. No object has yet been found where
       4 bytes are needed (but the code is ready to handle this case).
-      Not covered ranges ('cfi holes') are stored explicitely in
+      Not covered ranges ('cfi holes') are stored explicitly in
       cfsi_base/cfsi_m_ix as this is more memory efficient than storing
       a length for each covered range : on x86 or amd64, we typically have
       a hole every 8 covered ranges. On arm64, we have very few holes
@@ -1084,7 +1124,6 @@ extern void ML_(finish_CFSI_arrays) ( struct _DebugInfo* di );
 /* Find a symbol-table index containing the specified pointer, or -1
    if not found.  Binary search.  */
 extern Word ML_(search_one_symtab) ( const DebugInfo* di, Addr ptr,
-                                     Bool match_anywhere_in_sym,
                                      Bool findText );
 
 /* Find a location-table index containing the specified pointer, or -1

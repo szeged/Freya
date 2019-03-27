@@ -1,3 +1,5 @@
+#if defined(__mips_hard_float)
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -6,7 +8,15 @@
 #define MAX_ARR 24
 #define PERROR \
         printf("This test is testing mips32r2 instructions in fpu64 mode.\n");
-#define FLAGS_RM_MASK 0xFFFFFFFF
+/*
+ * Bits 18 (NAN2008) and 19 (ABS2008) are preset by hardware and may differ
+ * between platforms. Hence a macro to clear them before printing FCSR
+ * values.
+ */
+#define FCSR_NAN2008 1 << 18
+#define FCSR_ABS2008 1 << 19
+#define FLAGS_RM_MASK 0xFFFFFFFF & ~(FCSR_ABS2008 | FCSR_NAN2008)
+#define CLEAR_PRESETBITS_FCSR(fcsr) (fcsr & FLAGS_RM_MASK)
 
 typedef enum {
    CVTLS,   CVTLD,   ROUNDLS, ROUNDLD,
@@ -70,7 +80,8 @@ const double fs_d[] = {
       : "$f0"                     \
    );
 
-#if (__mips==32) && (__mips_isa_rev>=2) && (__mips_fpr==64)
+#if (__mips==32) && (__mips_isa_rev>=2) && \
+    ((__mips_fpr==64) || (__mips_fpr==xx))
 void set_rounding_mode(round_mode_t mode)
 {
    switch(mode) {
@@ -119,61 +130,61 @@ int FCSRRoundingMode(flt_round_op_t op)
                UNOPsl("cvt.l.s");
                printf("%s %lld %f\n",
                       flt_round_op_names[op], fd_l, fs_f[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case CVTLD:
                UNOPdl("cvt.l.d");
                printf("%s %lld %lf\n",
                       flt_round_op_names[op], fd_l, fs_d[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case ROUNDLS:
                UNOPsl("round.l.s");
                printf("%s %lld %f\n",
                       flt_round_op_names[op], fd_l, fs_f[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case ROUNDLD:
                UNOPdl("round.l.d");
                printf("%s %lld %lf\n",
                       flt_round_op_names[op], fd_l, fs_d[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case TRUNCLS:
                UNOPsl("trunc.l.s");
                printf("%s %lld %f\n",
                       flt_round_op_names[op], fd_l, fs_f[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case TRUNCLD:
                UNOPdl("trunc.l.d");
                printf("%s %lld %lf\n",
                       flt_round_op_names[op], fd_l, fs_d[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case FLOORLS:
                UNOPsl("floor.l.s");
                printf("%s %lld %f\n",
                       flt_round_op_names[op], fd_l, fs_f[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case FLOORLD:
                UNOPdl("floor.l.d");
                printf("%s %lld %lf\n",
                       flt_round_op_names[op], fd_l, fs_d[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case CEILLS:
                UNOPsl("ceil.l.s");
                printf("%s %lld %f\n",
                       flt_round_op_names[op], fd_l, fs_f[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             case CEILLD:
                UNOPdl("ceil.l.d");
                printf("%s %lld %lf\n",
                       flt_round_op_names[op], fd_l, fs_d[i]);
-               printf("fcsr: 0x%x\n", fcsr & FLAGS_RM_MASK);
+               printf("fcsr: 0x%x\n", CLEAR_PRESETBITS_FCSR(fcsr));
                break;
             default:
                printf("error\n");
@@ -188,7 +199,8 @@ int FCSRRoundingMode(flt_round_op_t op)
 
 int main()
 {
-#if (__mips==32) && (__mips_isa_rev>=2) && (__mips_fpr==64)
+#if (__mips==32) && (__mips_isa_rev>=2) && \
+    ((__mips_fpr==64) || (__mips_fpr==xx))
    flt_round_op_t op;
    signal(SIGILL, handler);
    /* Test fpu64 mode. */
@@ -202,3 +214,8 @@ int main()
 #endif
    return 0;
 }
+#else
+int main() {
+   return 0;
+}
+#endif

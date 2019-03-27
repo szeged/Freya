@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -32,7 +32,7 @@
 #ifndef __VKI_SCNUMS_X86_LINUX_H
 #define __VKI_SCNUMS_X86_LINUX_H
 
-// Derived from linux-2.6/arch/x86/syscalls/syscall_32.tbl
+// Derived from linux-2.6/arch/x86/entry/syscalls/syscall_32.tbl
 
 #define __NR_restart_syscall      0
 #define __NR_exit		  1
@@ -392,6 +392,33 @@
 #define __NR_getrandom          355
 #define __NR_memfd_create       356
 #define __NR_bpf                357
+#define __NR_execveat           358
+#define __NR_socket             359
+#define __NR_socketpair         360
+#define __NR_bind               361
+#define __NR_connect            362
+#define __NR_listen             363
+#define __NR_accept4            364
+#define __NR_getsockopt         365
+#define __NR_setsockopt         366
+#define __NR_getsockname        367
+#define __NR_getpeername        368
+#define __NR_sendto             369
+#define __NR_sendmsg            370
+#define __NR_recvfrom           371
+#define __NR_recvmsg            372
+#define __NR_shutdown           373
+#define __NR_userfaultfd        374
+#define __NR_membarrier         375
+#define __NR_mlock2             376
+#define __NR_copy_file_range    377
+#define __NR_preadv2            378
+#define __NR_pwritev2           379
+#define __NR_pkey_mprotect      380
+#define __NR_pkey_alloc         381
+#define __NR_pkey_free          382
+#define __NR_statx              383
+#define __NR_arch_prctl         384
 
 #endif /* __VKI_SCNUMS_X86_LINUX_H */
 

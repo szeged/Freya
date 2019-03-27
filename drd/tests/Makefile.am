@@ -9,7 +9,9 @@ dist_noinst_SCRIPTS =		    \
 	filter_stderr               \
 	filter_stderr_and_thread_no \
 	filter_stderr_and_thread_no_and_offset \
+	filter_stderr_solaris       \
 	filter_thread_no	    \
+	filter_thread_name_xml      \
 	filter_xml_and_thread_no    \
 	run_openmp_test             \
 	supported_libpthread	    \
@@ -17,7 +19,8 @@ dist_noinst_SCRIPTS =		    \
 
 noinst_HEADERS =                                    \
 	tsan_thread_wrappers_pthread.h		    \
-	unified_annotations.h
+	unified_annotations.h			    \
+	dlopen_lib.h
 
 EXTRA_DIST =                                        \
 	annotate_barrier.stderr.exp		    \
@@ -38,6 +41,8 @@ EXTRA_DIST =                                        \
 	annotate_order_3.vgtest			    \
 	annotate_publish_hg.stderr.exp		    \
 	annotate_publish_hg.vgtest		    \
+	annotate_sem.stderr.exp                     \
+	annotate_sem.vgtest                         \
 	annotate_smart_pointer.stderr.exp	    \
 	annotate_smart_pointer.vgtest		    \
 	annotate_smart_pointer2.stderr.exp	    \
@@ -54,10 +59,13 @@ EXTRA_DIST =                                        \
 	annotate_ignore_rw.stderr.exp		    \
 	annotate_ignore_rw.vgtest		    \
 	annotate_ignore_rw2.stderr.exp		    \
+	annotate_ignore_rw2.stderr.exp-solaris	    \
 	annotate_ignore_rw2.vgtest		    \
 	annotate_ignore_write.stderr.exp	    \
+	annotate_ignore_write.stderr.exp-solaris    \
 	annotate_ignore_write.vgtest		    \
 	annotate_ignore_write2.stderr.exp	    \
+	annotate_ignore_write2.stderr.exp-solaris   \
 	annotate_ignore_write2.vgtest		    \
 	annotate_trace_memory.stderr.exp-32bit	    \
 	annotate_trace_memory.stderr.exp-64bit	    \
@@ -73,9 +81,15 @@ EXTRA_DIST =                                        \
 	annotate_static.vgtest		            \
 	atomic_var.stderr.exp			    \
 	atomic_var.vgtest			    \
+	bug322621.vgtest			    \
+	bug322621.stderr.exp			    \
 	bar_bad.stderr.exp			    \
+	bar_bad.stderr.exp-nohang		    \
+	bar_bad.stderr.exp-solaris		    \
 	bar_bad.vgtest				    \
 	bar_bad_xml.stderr.exp			    \
+	bar_bad_xml.stderr.exp-nohang		    \
+	bar_bad_xml.stderr.exp-solaris		    \
 	bar_bad_xml.vgtest			    \
 	bar_trivial.stderr.exp			    \
 	bar_trivial.stdout.exp			    \
@@ -92,6 +106,9 @@ EXTRA_DIST =                                        \
 	custom_alloc.vgtest			    \
 	custom_alloc_fiw.stderr.exp		    \
 	custom_alloc_fiw.vgtest			    \
+	dlopen.stderr.exp			    \
+	dlopen.stdout.exp			    \
+	dlopen.vgtest				    \
 	fp_race.stderr.exp                          \
 	fp_race.stderr.exp-mips32-be                \
 	fp_race.stderr.exp-mips32-le                \
@@ -101,6 +118,7 @@ EXTRA_DIST =                                        \
 	fp_race_xml.stderr.exp                      \
 	fp_race_xml.stderr.exp-mips32-be            \
 	fp_race_xml.stderr.exp-mips32-le            \
+	fp_race_xml.stderr.exp-solaris              \
 	fp_race_xml.vgtest                          \
 	free_is_write.stderr.exp		    \
 	free_is_write.vgtest			    \
@@ -170,6 +188,7 @@ EXTRA_DIST =                                        \
 	pth_cleanup_handler.stderr.exp		    \
 	pth_cleanup_handler.vgtest		    \
 	pth_cond_destroy_busy.stderr.exp            \
+	pth_cond_destroy_busy.stderr.exp-solaris    \
 	pth_cond_destroy_busy.vgtest                \
 	pth_cond_race.stderr.exp                    \
 	pth_cond_race.vgtest                        \
@@ -210,6 +229,7 @@ EXTRA_DIST =                                        \
 	read_and_free_race.vgtest		    \
 	recursive_mutex.stderr.exp-linux            \
 	recursive_mutex.stderr.exp-darwin           \
+	recursive_mutex.stderr.exp-solaris          \
 	recursive_mutex.vgtest                      \
 	rwlock_race.stderr.exp	                    \
 	rwlock_race.stderr.exp2	                    \
@@ -283,6 +303,7 @@ EXTRA_DIST =                                        \
 	tc09_bad_unlock.stderr.exp-ppc              \
 	tc09_bad_unlock.stderr.exp-glibc2.8         \
 	tc09_bad_unlock.stderr.exp-s390             \
+	tc09_bad_unlock.stderr.exp-solaris          \
 	tc09_bad_unlock.vgtest                      \
 	tc10_rec_lock.stderr.exp                    \
 	tc10_rec_lock.vgtest                        \
@@ -299,8 +320,10 @@ EXTRA_DIST =                                        \
 	tc17_sembar.stderr.exp                      \
 	tc17_sembar.vgtest                          \
 	tc18_semabuse.stderr.exp                    \
+	tc18_semabuse.stderr.exp-solaris            \
 	tc18_semabuse.vgtest                        \
 	tc19_shadowmem.stderr.exp-32bit             \
+	tc19_shadowmem.stderr.exp-32bit-BE          \
 	tc19_shadowmem.stderr.exp-64bit             \
 	tc19_shadowmem.vgtest                       \
 	tc21_pthonce.stderr.exp                     \
@@ -345,6 +368,8 @@ check_PROGRAMS =      \
   bug-235681          \
   custom_alloc        \
   concurrent_close    \
+  dlopen_main         \
+  dlopen_lib.so       \
   fp_race             \
   free_is_write	      \
   hold_lock           \
@@ -373,7 +398,6 @@ check_PROGRAMS =      \
   sem_as_mutex        \
   sem_open            \
   sigalrm             \
-  thread_name         \
   threaded-fork       \
   trylock             \
   unit_bitmap         \
@@ -416,8 +440,14 @@ check_PROGRAMS += omp_matinv omp_prime omp_printf
 endif
 
 if HAVE_PTHREAD_BARRIER
-check_PROGRAMS += matinv pth_barrier pth_barrier_race pth_barrier_reinit \
-	pth_barrier_thr_cr
+check_PROGRAMS +=		\
+	bug322621		\
+	matinv			\
+	pth_barrier		\
+	pth_barrier_race	\
+	pth_barrier_reinit	\
+	pth_barrier_thr_cr	\
+	thread_name
 endif
 
 if HAVE_PTHREAD_CREATE_GLIBC_2_0
@@ -434,16 +464,35 @@ endif
 
 
 AM_CFLAGS   += $(AM_FLAG_M3264_PRI) @FLAG_W_EXTRA@ -Wno-inline -Wno-unused-parameter
-AM_CXXFLAGS += $(AM_FLAG_M3264_PRI) @FLAG_W_EXTRA@ -Wno-inline -Wno-unused-parameter
+AM_CXXFLAGS += $(AM_FLAG_M3264_PRI) @FLAG_W_EXTRA@ @FLAG_FALIGNED_NEW@ \
+	-Wno-inline -Wno-unused-parameter
 
 LDADD = -lpthread
 
 
+bug322621_SOURCES           = bug322621.cpp
 concurrent_close_SOURCES    = concurrent_close.cpp
+dlopen_main_LDADD           = -ldl
+dlopen_lib_so_SOURCES       = dlopen_lib.c
+dlopen_lib_so_CFLAGS        = -fPIC
+dlopen_lib_so_LDFLAGS       = -shared -fPIC
 monitor_example_SOURCES     = monitor_example.cpp
 new_delete_SOURCES          = new_delete.cpp
+new_delete_CXXFLAGS         = $(AM_CXXFLAGS) @FLAG_W_NO_MISMATCHED_NEW_DELETE@
 
-pth_cleanup_handler_CFLAGS  = $(AM_CFLAGS) @FLAG_W_NO_EMPTY_BODY@
+free_is_write_CFLAGS        = $(AM_CFLAGS)
+pth_barrier_CFLAGS          = $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+free_is_write_CFLAGS        += -D__EXTENSIONS__
+pth_barrier_CFLAGS          += -D__EXTENSIONS__
+endif
+
+pth_create_chain_CFLAGS     = $(AM_CFLAGS)
+pth_detached_CFLAGS         = $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+pth_create_chain_CFLAGS     += -D__EXTENSIONS__
+pth_detached_CFLAGS         += -D__EXTENSIONS__
+endif
 
 tsan_unittest_SOURCES       = tsan_unittest.cpp
 tsan_unittest_CXXFLAGS      = $(AM_CXXFLAGS) \
@@ -486,8 +535,17 @@ omp_printf_LDFLAGS          = -fopenmp
 omp_printf_LDADD            = $(LDADD) -lm
 endif
 
+matinv_CFLAGS               = $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+matinv_CFLAGS               += -D__EXTENSIONS__
+endif
 if HAVE_PTHREAD_BARRIER
 matinv_LDADD                = $(LDADD) -lm
+endif
+
+rwlock_test_CFLAGS          = $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+rwlock_test_CFLAGS          += -D__EXTENSIONS__
 endif
 
 std_atomic_SOURCES          = std_atomic.cpp
@@ -504,10 +562,14 @@ std_string_CXXFLAGS         = $(AM_CXXFLAGS) -std=c++0x -Wno-sign-compare
 
 std_thread_SOURCES          = std_thread.cpp
 std_thread_CXXFLAGS         = $(AM_CXXFLAGS) -std=c++0x
+if !VGCONF_OS_IS_SOLARIS
 std_thread_LDFLAGS          = -Wl,--no-as-needed
+endif
 
 std_thread2_SOURCES          = std_thread2.cpp
 std_thread2_CXXFLAGS         = $(AM_CXXFLAGS) -std=c++0x
+if !VGCONF_OS_IS_SOLARIS
 std_thread2_LDFLAGS          = -Wl,--no-as-needed
+endif
 
 sem_wait_SOURCES            = sem_wait.cpp

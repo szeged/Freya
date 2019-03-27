@@ -8,6 +8,19 @@
 // to make a difference), but under Valgrind the one running more code is
 // significantly slower due to the extra translation time.
 
+// 31 Aug 2015: this only "works" on x86/amd64/s390 by accident; the
+// test is essentially kludged.  This "generates" code into memory
+// (the mmap'd area) and the executes it.  But historically and even
+// after this commit (r15601), the test has been run without 
+// --smc-check=all or all-non-file.  That just happens to work because
+// the "generated" code is never modified, so there's never a
+// translated-vs-reality coherence problem.  Really we ought to run
+// with the new-as-of-r15601 default --smc-check=all-non-file, but that
+// hugely slows it down and makes the results non-comparable with
+// pre r15601 results, so instead the .vgperf files now specify the
+// old default value --smc-check=stack explicitly.
+
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -18,7 +31,8 @@
 #endif
 #include "tests/sys_mman.h"
 
-#define FN_SIZE   996      // Must be big enough to hold the compiled f()
+#define FN_SIZE   1280     // Must be big enough to hold the compiled f()
+                           // and any literal pool that might be used
 #define N_LOOPS   20000    // Should be divisible by four
 #define RATIO     4        // Ratio of code sizes between the two modes
 
@@ -59,7 +73,7 @@ int main(int argc, char* argv[])
    printf("%d copies of f(), %d reps\n", n_fns, n_reps);
    
    char* a = mmap(0, FN_SIZE * n_fns, 
-                     PROT_EXEC|PROT_WRITE, 
+                     PROT_EXEC|PROT_WRITE|PROT_READ, 
                      MAP_PRIVATE|MAP_ANONYMOUS, -1,0);
    assert(a != (char*)MAP_FAILED);
 

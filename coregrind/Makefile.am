@@ -44,18 +44,34 @@ valgrind_SOURCES = \
 	launcher-darwin.c \
 	m_debuglog.c
 endif
+if VGCONF_OS_IS_SOLARIS
+valgrind_SOURCES = \
+	launcher-linux.c \
+	m_debuglog.c
+endif
+
+# for valgrind coregrind building, use the LTO versions, in case they differ from non lto versions
+AR = ${LTO_AR}
+RANLIB = ${LTO_RANLIB}
 
 valgrind_CPPFLAGS  = $(AM_CPPFLAGS_PRI)
-valgrind_CFLAGS    = $(AM_CFLAGS_PRI)
+valgrind_CFLAGS    = $(AM_CFLAGS_PRI) $(LTO_CFLAGS)
 valgrind_CCASFLAGS = $(AM_CCASFLAGS_PRI)
-valgrind_LDFLAGS   = $(AM_CFLAGS_PRI)
+valgrind_LDFLAGS   = $(AM_CFLAGS_PRI) @LIB_UBSAN@
+# If there is no secondary platform, and the platforms include x86-darwin,
+# then the primary platform must be x86-darwin.  Hence:
+if ! VGCONF_HAVE_PLATFORM_SEC
 if VGCONF_PLATFORMS_INCLUDE_X86_DARWIN
 valgrind_LDFLAGS   += -Wl,-read_only_relocs -Wl,suppress
+endif
 endif
 # On Android we must ask for non-executable stack, not sure why.
 if VGCONF_PLATVARIANT_IS_ANDROID
 valgrind_CFLAGS += -static
 valgrind_LDFLAGS   += -Wl,-z,noexecstack
+endif
+if VGCONF_OS_IS_SOLARIS
+valgrind_LDFLAGS   += -Wl,-M,/usr/lib/ld/map.noexstk
 endif
 
 
@@ -73,19 +89,30 @@ if VGCONF_OS_IS_DARWIN
 # having access to Darwin, 'none' implementation is used.
 vgdb_SOURCES += vgdb-invoker-none.c
 endif
+if VGCONF_OS_IS_SOLARIS
+vgdb_SOURCES += vgdb-invoker-solaris.c
+endif
 
 vgdb_CPPFLAGS  = $(AM_CPPFLAGS_PRI)
-vgdb_CFLAGS    = $(AM_CFLAGS_PRI)
+vgdb_CFLAGS    = $(AM_CFLAGS_PRI) $(LTO_CFLAGS)
 vgdb_CCASFLAGS = $(AM_CCASFLAGS_PRI)
-vgdb_LDFLAGS   = $(AM_CFLAGS_PRI)
+vgdb_LDFLAGS   = $(AM_CFLAGS_PRI) @LIB_UBSAN@
 if VGCONF_PLATVARIANT_IS_ANDROID
 vgdb_CFLAGS    += -static
 endif
+if VGCONF_OS_IS_SOLARIS
+vgdb_LDADD     = -lsocket
+else
 if !VGCONF_PLATVARIANT_IS_ANDROID
 vgdb_LDADD     = -lpthread
 endif
+endif
+# If there is no secondary platform, and the platforms include x86-darwin,
+# then the primary platform must be x86-darwin.  Hence:
+if ! VGCONF_HAVE_PLATFORM_SEC
 if VGCONF_PLATFORMS_INCLUDE_X86_DARWIN
 vgdb_LDFLAGS   += -Wl,-read_only_relocs -Wl,suppress
+endif
 endif
 
 #----------------------------------------------------------------------------
@@ -162,7 +189,6 @@ noinst_HEADERS = \
 	pub_core_cpuid.h	\
 	pub_core_deduppoolalloc.h \
 	pub_core_debuginfo.h	\
-	pub_core_debugger.h	\
 	pub_core_debuglog.h	\
 	pub_core_demangle.h	\
 	pub_core_dispatch.h	\
@@ -186,9 +212,9 @@ noinst_HEADERS = \
 	pub_core_mallocfree.h	\
 	pub_core_options.h	\
 	pub_core_oset.h		\
+	pub_core_poolalloc.h	\
 	pub_core_rangemap.h	\
 	pub_core_redir.h	\
-	pub_core_poolalloc.h	\
 	pub_core_replacemalloc.h\
 	pub_core_sbprofile.h	\
 	pub_core_scheduler.h	\
@@ -212,6 +238,8 @@ noinst_HEADERS = \
 	pub_core_vkiscnums_asm.h\
 	pub_core_wordfm.h	\
 	pub_core_xarray.h	\
+	pub_core_xtree.h	\
+	pub_core_xtmemory.h	\
 	m_aspacemgr/priv_aspacemgr.h \
 	m_debuginfo/priv_misc.h	\
 	m_debuginfo/priv_storage.h	\
@@ -243,11 +271,13 @@ noinst_HEADERS = \
 	m_scheduler/priv_sema.h \
 	m_scheduler/priv_sched-lock.h \
 	m_scheduler/priv_sched-lock-impl.h \
+	m_sigframe/priv_sigframe.h \
 	m_syswrap/priv_types_n_macros.h \
 	m_syswrap/priv_syswrap-generic.h \
 	m_syswrap/priv_syswrap-linux.h \
 	m_syswrap/priv_syswrap-linux-variants.h \
 	m_syswrap/priv_syswrap-darwin.h \
+	m_syswrap/priv_syswrap-solaris.h \
 	m_syswrap/priv_syswrap-main.h \
 	m_syswrap/priv_syswrap-xen.h \
 	m_ume/priv_ume.h \
@@ -273,24 +303,21 @@ COREGRIND_SOURCES_COMMON = \
 	m_clientstate.c \
 	m_cpuid.S \
 	m_deduppoolalloc.c \
-	m_debugger.c \
 	m_debuglog.c \
 	m_errormgr.c \
 	m_execontext.c \
-	m_poolalloc.c \
 	m_hashtable.c \
 	m_libcbase.c \
 	m_libcassert.c \
 	m_libcfile.c \
 	m_libcprint.c \
 	m_libcproc.c \
-	m_libcsetjmp.c \
 	m_libcsignal.c \
 	m_machine.c \
-	m_main.c \
 	m_mallocfree.c \
 	m_options.c \
 	m_oset.c \
+	m_poolalloc.c \
 	m_rangemap.c \
 	m_redir.c \
 	m_sbprofile.c \
@@ -309,14 +336,20 @@ COREGRIND_SOURCES_COMMON = \
 	m_vkiscnums.c \
 	m_wordfm.c \
 	m_xarray.c \
+	m_xtree.c \
+	m_xtmemory.c \
 	m_aspacehl.c \
 	m_aspacemgr/aspacemgr-common.c \
 	m_aspacemgr/aspacemgr-linux.c \
+	m_aspacemgr/aspacemgr-segnames.c \
 	m_coredump/coredump-elf.c \
 	m_coredump/coredump-macho.c \
+	m_coredump/coredump-solaris.c \
 	m_debuginfo/misc.c \
 	m_debuginfo/d3basics.c \
 	m_debuginfo/debuginfo.c \
+	m_debuginfo/image.c \
+	m_debuginfo/minilzo-inl.c \
 	m_debuginfo/readdwarf.c \
 	m_debuginfo/readdwarf3.c \
 	m_debuginfo/readelf.c \
@@ -324,13 +357,14 @@ COREGRIND_SOURCES_COMMON = \
 	m_debuginfo/readmacho.c \
 	m_debuginfo/readpdb.c \
 	m_debuginfo/storage.c \
+	m_debuginfo/tinfl.c \
 	m_debuginfo/tytypes.c \
-	m_debuginfo/image.c \
-	m_debuginfo/minilzo-inl.c \
 	m_demangle/cp-demangle.c \
 	m_demangle/cplus-dem.c \
 	m_demangle/demangle.c \
 	m_demangle/dyn-string.c \
+	m_demangle/d-demangle.c \
+	m_demangle/rust-demangle.c \
 	m_demangle/safe-ctype.c \
 	m_dispatch/dispatch-x86-linux.S \
 	m_dispatch/dispatch-amd64-linux.S \
@@ -344,6 +378,8 @@ COREGRIND_SOURCES_COMMON = \
 	m_dispatch/dispatch-mips64-linux.S \
 	m_dispatch/dispatch-x86-darwin.S \
 	m_dispatch/dispatch-amd64-darwin.S \
+	m_dispatch/dispatch-x86-solaris.S \
+	m_dispatch/dispatch-amd64-solaris.S \
 	m_gdbserver/inferiors.c \
 	m_gdbserver/m_gdbserver.c \
 	m_gdbserver/regcache.c \
@@ -364,16 +400,18 @@ COREGRIND_SOURCES_COMMON = \
 	m_gdbserver/version.c \
 	m_initimg/initimg-linux.c \
 	m_initimg/initimg-darwin.c \
+	m_initimg/initimg-solaris.c \
 	m_initimg/initimg-pathscan.c \
 	m_mach/mach_basics.c \
 	m_mach/mach_msg.c \
 	m_mach/mach_traps-x86-darwin.S \
 	m_mach/mach_traps-amd64-darwin.S \
 	m_replacemalloc/replacemalloc_core.c \
-	m_scheduler/scheduler.c \
-	m_scheduler/sema.c \
 	m_scheduler/sched-lock.c \
 	m_scheduler/sched-lock-generic.c \
+	m_scheduler/scheduler.c \
+	m_scheduler/sema.c \
+	m_sigframe/sigframe-common.c \
 	m_sigframe/sigframe-x86-linux.c \
 	m_sigframe/sigframe-amd64-linux.c \
 	m_sigframe/sigframe-ppc32-linux.c \
@@ -385,6 +423,7 @@ COREGRIND_SOURCES_COMMON = \
 	m_sigframe/sigframe-mips64-linux.c \
 	m_sigframe/sigframe-x86-darwin.c \
 	m_sigframe/sigframe-amd64-darwin.c \
+	m_sigframe/sigframe-solaris.c \
 	m_syswrap/syscall-x86-linux.S \
 	m_syswrap/syscall-amd64-linux.S \
 	m_syswrap/syscall-ppc32-linux.S \
@@ -397,11 +436,14 @@ COREGRIND_SOURCES_COMMON = \
 	m_syswrap/syscall-mips64-linux.S \
 	m_syswrap/syscall-x86-darwin.S \
 	m_syswrap/syscall-amd64-darwin.S \
+	m_syswrap/syscall-x86-solaris.S \
+	m_syswrap/syscall-amd64-solaris.S \
 	m_syswrap/syswrap-main.c \
 	m_syswrap/syswrap-generic.c \
 	m_syswrap/syswrap-linux.c \
 	m_syswrap/syswrap-linux-variants.c \
 	m_syswrap/syswrap-darwin.c \
+	m_syswrap/syswrap-solaris.c \
 	m_syswrap/syswrap-x86-linux.c \
 	m_syswrap/syswrap-amd64-linux.c \
 	m_syswrap/syswrap-ppc32-linux.c \
@@ -414,10 +456,42 @@ COREGRIND_SOURCES_COMMON = \
 	m_syswrap/syswrap-x86-darwin.c \
 	m_syswrap/syswrap-amd64-darwin.c \
 	m_syswrap/syswrap-xen.c \
+	m_syswrap/syswrap-x86-solaris.c \
+	m_syswrap/syswrap-amd64-solaris.c \
 	m_ume/elf.c \
 	m_ume/macho.c \
 	m_ume/main.c \
 	m_ume/script.c
+
+# The below files cannot be compiled with lto, otherwise that gives
+# undefined symbols at link time. So, define a noinst library to
+# build the needed .o with specific flags.
+# These objects are added to the libcoregrind library.
+NOLTO_COREGRIND_SOURCES_COMMON = \
+	m_libcsetjmp.c \
+	m_main.c
+noinst_LIBRARIES = libnolto_coregrind-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a
+libnolto_coregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES = \
+    $(NOLTO_COREGRIND_SOURCES_COMMON)
+libnolto_coregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CPPFLAGS = \
+    $(AM_CPPFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
+libnolto_coregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS = \
+    $(AM_CFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
+libnolto_coregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CCASFLAGS = \
+    $(AM_CCASFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
+
+if VGCONF_HAVE_PLATFORM_SEC
+noinst_LIBRARIES += libnolto_coregrind-@VGCONF_ARCH_SEC@-@VGCONF_OS@.a
+libnolto_coregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES = \
+    $(NOLTO_COREGRIND_SOURCES_COMMON)
+libnolto_coregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CPPFLAGS = \
+    $(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
+libnolto_coregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS = \
+    $(AM_CFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
+libnolto_coregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CCASFLAGS = \
+    $(AM_CCASFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
+endif
+
 
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES = \
     $(COREGRIND_SOURCES_COMMON)
@@ -425,7 +499,7 @@ nodist_libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES = \
     $(BUILT_SOURCES)
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CPPFLAGS = \
     $(AM_CPPFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
-libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS = \
+libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS = $(LTO_CFLAGS) \
     $(AM_CFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CCASFLAGS = \
     $(AM_CCASFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
@@ -435,6 +509,8 @@ libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES += \
 libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS += \
     -DENABLE_LINUX_TICKET_LOCK
 endif
+libcoregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_LIBADD = \
+    $(libnolto_coregrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_OBJECTS)
 
 if VGCONF_HAVE_PLATFORM_SEC
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES = \
@@ -443,7 +519,7 @@ nodist_libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES = \
     $(BUILT_SOURCES)
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CPPFLAGS = \
     $(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
-libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS = \
+libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS =  $(LTO_CFLAGS) \
     $(AM_CFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CCASFLAGS = \
     $(AM_CCASFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
@@ -453,6 +529,8 @@ libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES += \
 libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS += \
     -DENABLE_LINUX_TICKET_LOCK
 endif
+libcoregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_LIBADD = \
+    $(libnolto_coregrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_OBJECTS)
 endif
 
 #----------------------------------------------------------------------------
@@ -509,6 +587,17 @@ vgpreload_core_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_LDFLAGS = \
 	$(PRELOAD_LDFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
 endif
 
+if VGCONF_OS_IS_SOLARIS
+# Give the vgpreload_core library a proper soname so it can be easily
+# recognized during reading of debug information.
+vgpreload_core_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_LDFLAGS += \
+	-Wl,-soname -Wl,vgpreload_core.so.0
+if VGCONF_HAVE_PLATFORM_SEC
+vgpreload_core_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_LDFLAGS += \
+	-Wl,-soname -Wl,vgpreload_core.so.0
+endif
+endif
+
 #----------------------------------------------------------------------------
 # gdbserver xml target descriptions
 #----------------------------------------------------------------------------
@@ -554,12 +643,17 @@ GDBSERVER_XML_FILES = \
 	m_gdbserver/power64-core-valgrind-s1.xml \
 	m_gdbserver/power64-core-valgrind-s2.xml \
 	m_gdbserver/power64-core.xml \
+	m_gdbserver/power64-core2-valgrind-s1.xml \
+	m_gdbserver/power64-core2-valgrind-s2.xml \
 	m_gdbserver/power64-linux-valgrind-s1.xml \
 	m_gdbserver/power64-linux-valgrind-s2.xml \
 	m_gdbserver/power64-linux.xml \
 	m_gdbserver/power-altivec-valgrind-s1.xml \
 	m_gdbserver/power-altivec-valgrind-s2.xml \
 	m_gdbserver/power-altivec.xml \
+	m_gdbserver/power-vsx-valgrind-s1.xml \
+	m_gdbserver/power-vsx-valgrind-s2.xml \
+	m_gdbserver/power-vsx.xml \
 	m_gdbserver/power-core-valgrind-s1.xml \
 	m_gdbserver/power-core-valgrind-s2.xml \
 	m_gdbserver/power-core.xml \
@@ -642,7 +736,7 @@ if VGCONF_OS_IS_DARWIN
 
 BUILT_SOURCES += fixup_macho_loadcmds
 fixup_macho_loadcmds: fixup_macho_loadcmds.c
-	$(CC) -I $(top_srcdir) -g -Wall -o $@ $<
+	$(CC) -I$(top_srcdir) -I$(top_builddir) -g -Wall -o $@ $<
 
 CLEANFILES += fixup_macho_loadcmds
 

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -119,6 +119,12 @@ typedef
       /* The function code specified in GPR 0 executed by PFPO
          instruction is invalid */
       EmFail_S390X_invalid_PFPO_function,
+
+      /* some insn needs vector facility which is not available on this host */
+      EmFail_S390X_vx,
+
+      /* ppno insn is not supported on this host */
+      EmFail_S390X_ppno,
 
       EmNote_NUMBER
    }

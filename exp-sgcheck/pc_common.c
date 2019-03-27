@@ -9,7 +9,7 @@
    This file is part of Ptrcheck, a Valgrind tool for checking pointer
    use in programs.
 
-   Copyright (C) 2008-2013 OpenWorks Ltd
+   Copyright (C) 2008-2017 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -564,8 +564,8 @@ void pc_pp_Error ( const Error* err )
                   what, s );
             VG_(pp_ExeContext)( VG_(get_error_where)(err) );
    
-            emit( "  <auxwhat>Address %#lx is %ld bytes inside a "
-                  "%ld-byte block free'd</auxwhat>\n",
+            emit( "  <auxwhat>Address %#lx is %lu bytes inside a "
+                  "%lu-byte block free'd</auxwhat>\n",
                   lo, lo-Seg__addr(seglo), Seg__size(seglo) );
             VG_(pp_ExeContext)(Seg__where(seglo));
 
@@ -575,8 +575,8 @@ void pc_pp_Error ( const Error* err )
                   what, s );
             VG_(pp_ExeContext)( VG_(get_error_where)(err) );
    
-            emit( " Address %#lx is %ld bytes inside a "
-                  "%ld-byte block free'd\n",
+            emit( " Address %#lx is %lu bytes inside a "
+                  "%lu-byte block free'd\n",
                   lo, lo-Seg__addr(seglo), Seg__size(seglo) );
             VG_(pp_ExeContext)(Seg__where(seglo));
 
@@ -595,8 +595,8 @@ void pc_pp_Error ( const Error* err )
                emit( "  <auxwhat>First byte is "
                         "not inside a known block</auxwhat>\n" );
             } else {
-               emit( "  <auxwhat>First byte (%#lx) is %ld bytes inside a "
-                     "%ld-byte block alloc'd</auxwhat>\n",
+               emit( "  <auxwhat>First byte (%#lx) is %lu bytes inside a "
+                     "%lu-byte block alloc'd</auxwhat>\n",
                      lo, lo-Seg__addr(seglo), Seg__size(seglo) );
                VG_(pp_ExeContext)(Seg__where(seglo));
             }
@@ -605,8 +605,8 @@ void pc_pp_Error ( const Error* err )
                emit( "  <auxwhat>Last byte is "
                         "not inside a known block</auxwhat>\n" );
             } else {
-               emit( "  <auxwhat>Last byte (%#lx) is %ld bytes inside a "
-                     "%ld-byte block alloc'd</auxwhat>\n",
+               emit( "  <auxwhat>Last byte (%#lx) is %lu bytes inside a "
+                     "%lu-byte block alloc'd</auxwhat>\n",
                      hi, hi-Seg__addr(seghi), Seg__size(seghi) );
                VG_(pp_ExeContext)(Seg__where(seghi));
             }
@@ -620,8 +620,8 @@ void pc_pp_Error ( const Error* err )
             if (UNKNOWN == seglo) {
                emit( " First byte is not inside a known block\n" );
             } else {
-               emit( " First byte (%#lx) is %ld bytes inside a "
-                     "%ld-byte block alloc'd\n",
+               emit( " First byte (%#lx) is %lu bytes inside a "
+                     "%lu-byte block alloc'd\n",
                      lo, lo-Seg__addr(seglo), Seg__size(seglo) );
                VG_(pp_ExeContext)(Seg__where(seglo));
             }
@@ -629,8 +629,8 @@ void pc_pp_Error ( const Error* err )
             if (UNKNOWN == seghi) {
                emit( " Last byte is not inside a known block\n" );
             } else {
-               emit( " Last byte (%#lx) is %ld bytes inside a "
-                     "%ld-byte block alloc'd\n",
+               emit( " Last byte (%#lx) is %lu bytes inside a "
+                     "%lu-byte block alloc'd\n",
                      hi, hi-Seg__addr(seghi), Seg__size(seghi) );
                VG_(pp_ExeContext)(Seg__where(seghi));
             }
@@ -650,6 +650,8 @@ void pc_pp_Error ( const Error* err )
 UInt pc_update_Error_extra ( const Error* err )
 {
    XError *xe = (XError*)VG_(get_error_extra)(err);
+   const DiEpoch ep = VG_(get_ExeContext_epoch)(VG_(get_error_where)(err));
+
    tl_assert(xe);
    switch (xe->tag) {
       case XE_SorG:
@@ -675,7 +677,7 @@ UInt pc_update_Error_extra ( const Error* err )
          have_descr
             = VG_(get_data_description)( xe->XE.Heap.descr1,
                                          xe->XE.Heap.descr2,
-                                         xe->XE.Heap.addr );
+                                         ep, xe->XE.Heap.addr );
 
          /* If there's nothing in descr1/2, free it.  Why is it safe to
             to VG_(indexXA) at zero here?  Because
@@ -699,7 +701,7 @@ UInt pc_update_Error_extra ( const Error* err )
          if (!have_descr) {
             const HChar *name;
             if (VG_(get_datasym_and_offset)(
-                   xe->XE.Heap.addr, &name,
+                   ep, xe->XE.Heap.addr, &name,
                    &xe->XE.Heap.datasymoff )
                ) {
               xe->XE.Heap.datasym =
@@ -779,7 +781,7 @@ const HChar* pc_get_error_name ( const Error* err )
 SizeT pc_get_extra_suppression_info ( const Error* err,
                                       /*OUT*/HChar* buf, Int nBuf )
 {
-   ErrorKind ekind = VG_(get_error_kind )(err);
+   ErrorKind ekind = VG_(get_error_kind)(err);
    tl_assert(buf);
    tl_assert(nBuf >= 1);
 

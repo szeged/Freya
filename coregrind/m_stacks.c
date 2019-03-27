@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -37,6 +37,10 @@
 #include "pub_core_options.h"
 #include "pub_core_stacks.h"
 #include "pub_core_tooliface.h"
+#include "pub_core_inner.h"
+#if defined(ENABLE_INNER_CLIENT_REQUEST)
+#include "pub_core_clreq.h"
+#endif 
 
 // For expensive debugging
 #define EDEBUG(fmt, args...) //VG_(debugLog)(2, "stacks", fmt, ## args)
@@ -91,6 +95,8 @@ typedef struct _Stack {
    Addr start; // Lowest stack byte, included.
    Addr end;   // Highest stack byte, included.
    struct _Stack *next;
+   UWord outer_id; /* For an inner valgrind, stack id registered in outer
+                      valgrind. */
 } Stack;
 
 static Stack *stacks;
@@ -103,7 +109,7 @@ static UWord next_id;  /* Next id we hand out to a newly registered stack */
  */
 static Stack *current_stack;
 
-/* Find 'st' in the stacks_list and move it one step closer the the
+/* Find 'st' in the stacks_list and move it one step closer to the
    front of the list, so as to make subsequent searches for it
    cheaper. */
 static void move_Stack_one_step_forward ( Stack* st )
@@ -205,7 +211,7 @@ UWord VG_(register_stack)(Addr start, Addr end)
 
    VG_(debugLog)(2, "stacks", "register [start-end] [%p-%p] as stack %lu\n",
                     (void*)start, (void*)end, i->id);
-
+   INNER_REQUEST(i->outer_id = VALGRIND_STACK_REGISTER(start, end));
    return i->id;
 }
 
@@ -231,6 +237,7 @@ void VG_(deregister_stack)(UWord id)
          } else {
             prev->next = i->next;
          }
+         INNER_REQUEST(VALGRIND_STACK_DEREGISTER(i->outer_id));
          VG_(free)(i);
          return;
       }
@@ -257,6 +264,7 @@ void VG_(change_stack)(UWord id, Addr start, Addr end)
          /* FIXME : swap start/end like VG_(register_stack) ??? */
          i->start = start;
          i->end = end;
+         INNER_REQUEST(VALGRIND_STACK_CHANGE(i->outer_id, start, end));
          return;
       }
       i = i->next;
@@ -272,53 +280,81 @@ void VG_(stack_limits)(Addr SP, Addr *start, Addr *end )
    Stack* stack = find_stack_by_addr(SP);
    NSegment const *stackseg = VG_(am_find_nsegment) (SP);
 
-   if (stack) {
+   if (LIKELY(stack)) {
       *start = stack->start;
       *end = stack->end;
    }
 
-   /* SP is assumed to be in a RW segment.
+   /* SP is assumed to be in a RW segment or in the SkResvn segment of an
+      extensible stack (normally, only the main thread has an extensible
+      stack segment).
       If no such segment is found, assume we have no valid
       stack for SP, and set *start and *end to 0.
-      Otherwise, possibly reduce the stack limits to the boundaries of the
-      RW segment containing SP. */
-   if (stackseg == NULL) {
+      Otherwise, possibly reduce the stack limits using the boundaries of
+      the RW segment/SkResvn segments containing SP. */
+   if (UNLIKELY(stackseg == NULL)) {
       VG_(debugLog)(2, "stacks", 
                     "no addressable segment for SP %p\n", 
                     (void*)SP);
       *start = 0;
       *end = 0;
-   } else if (!stackseg->hasR || !stackseg->hasW) {
+      return;
+   } 
+
+   if (UNLIKELY((!stackseg->hasR || !stackseg->hasW)
+                && (stackseg->kind != SkResvn || stackseg->smode != SmUpper))) {
       VG_(debugLog)(2, "stacks", 
-                    "segment for SP %p is not Readable and/or not Writable\n",
+                    "segment for SP %p is not RW or not a SmUpper Resvn\n",
                     (void*)SP);
       *start = 0;
       *end = 0;
-   } else {
-      if (*start < stackseg->start) {
-         VG_(debugLog)(2, "stacks", 
-                       "segment for SP %p changed stack start limit"
-                       " from %p to %p\n",
-                       (void*)SP, (void*)*start, (void*)stackseg->start);
-         *start = stackseg->start;
-      }
-      if (*end > stackseg->end) {
-         VG_(debugLog)(2, "stacks", 
-                       "segment for SP %p changed stack end limit"
-                       " from %p to %p\n",
-                       (void*)SP, (void*)*end, (void*)stackseg->end);
-         *end = stackseg->end;
-      }
+      return;
+   } 
 
-      /* If reducing start and/or end to the SP segment gives an
-         empty range, return 'empty' limits */
-      if (*start > *end) {
+   /* SP is in a RW segment, or in the SkResvn of an extensible stack.
+      We can use the seg start as the stack start limit. */
+   if (UNLIKELY(*start < stackseg->start)) {
+      VG_(debugLog)(2, "stacks", 
+                    "segment for SP %p changed stack start limit"
+                    " from %p to %p\n",
+                    (void*)SP, (void*)*start, (void*)stackseg->start);
+      *start = stackseg->start;
+   }
+
+   /* Now, determine the stack end limit. If the stackseg is SkResvn,
+      we need to get the neighbour segment (towards higher addresses).
+      This segment must be anonymous and RW. */
+   if (UNLIKELY(stackseg->kind == SkResvn)) {
+      stackseg = VG_(am_next_nsegment)(stackseg, /*forward*/ True);
+      if (!stackseg || !stackseg->hasR || !stackseg->hasW
+          || stackseg->kind != SkAnonC) {
          VG_(debugLog)(2, "stacks", 
-                       "stack for SP %p start %p after end %p\n",
-                       (void*)SP, (void*)*start, (void*)end);
+                       "Next forward segment for SP %p Resvn segment"
+                       " is not RW or not AnonC\n",
+                       (void*)SP);
          *start = 0;
          *end = 0;
+         return;
       }
+   }
+
+   /* Limit the stack end limit, using the found segment. */
+   if (UNLIKELY(*end > stackseg->end)) {
+      VG_(debugLog)(2, "stacks", 
+                    "segment for SP %p changed stack end limit"
+                    " from %p to %p\n",
+                    (void*)SP, (void*)*end, (void*)stackseg->end);
+      *end = stackseg->end;
+   }
+
+   /* If reducing start and/or end to the SP segment gives an
+      empty range, return 'empty' limits */
+   if (UNLIKELY(*start > *end)) {
+      VG_(debugLog)(2, "stacks", 
+                    "stack for SP %p start %p after end %p\n",
+                    (void*)SP, (void*)*start, (void*)end);
+      *start = 0;
+      *end = 0;
    }
 }
 
@@ -383,8 +419,9 @@ static void complaints_stack_switch (Addr old_SP, Addr new_SP)
                 (void *) current_stack->end,                            \
                 current_stack->id);                                     \
          return;                                                        \
-      } else                                                            \
+      } else {                                                          \
          EDEBUG("new current_stack not found\n");                       \
+      }                                                                 \
    }
 
 #define IF_BIG_DELTA_complaints_AND_RETURN                              \

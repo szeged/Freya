@@ -504,7 +504,7 @@ test_strchrnul (void)
 #endif
 
 // DDD: better done by testing for the function.
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__sun)
 static void
 test_rawmemchr (void)
 {
@@ -580,7 +580,7 @@ test_strrchr (void)
 }
 
 // DDD: better done by testing for the function.
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__sun)
 static void
 test_memrchr (void)
 {
@@ -710,6 +710,15 @@ test_strspn (void)
   check(strspn("abc", "qx") == 0, 3);	/* None. */
   check(strspn("", "ab") == 0, 4);	/* Null string. */
   check(strspn("abc", "") == 0, 5);	/* Null search list. */
+  {
+     unsigned char work4[4];
+     work4[0] = 0xe2;
+     work4[1] = 0xe3;
+     work4[2] = 0xd9;
+     work4[3] = '\0';
+     /* Check for signed/unsigned mixup */
+     check(strspn((char*)work4, (char*)work4) == 3, 6);
+  }
 }
 
 static void
@@ -1063,7 +1072,7 @@ test_memcpy (void)
     }
 }
 
-#if !defined(__APPLE__)
+#if !defined(__APPLE__) && !defined(__sun)
 static void
 test_mempcpy (void)
 {
@@ -1442,7 +1451,7 @@ main (void)
   test_strchrnul ();
 # endif
 
-# if !defined(__APPLE__)
+# if !defined(__APPLE__) && !defined(__sun)
   /* rawmemchr.  */
   test_rawmemchr ();
 # endif
@@ -1453,7 +1462,7 @@ main (void)
   /* strrchr.  */
   test_strrchr ();
 
-# if !defined(__APPLE__)
+# if !defined(__APPLE__) && !defined(__sun)
   /* memrchr.  */
   test_memrchr ();
 # endif
@@ -1494,7 +1503,7 @@ main (void)
   /* memmove - must work on overlap.  */
   test_memmove ();
 
-# if !defined(__APPLE__)
+# if !defined(__APPLE__) && !defined(__sun)
   /* mempcpy */
   test_mempcpy ();
 # endif

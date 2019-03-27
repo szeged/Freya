@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2014-2014 Mozilla Foundation
+   Copyright (C) 2014-2017 Mozilla Foundation
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -48,9 +48,9 @@ typedef
 
 
 struct _RangeMap {
-   void* (*alloc_fn) ( const HChar*, SizeT ); /* alloc fn (nofail) */
+   Alloc_Fn_t alloc_fn;                /* alloc fn (nofail) */
    const HChar* cc;                    /* cost centre for alloc */
-   void  (*free_fn) ( void* );         /* free fn */
+   Free_Fn_t free_fn;                  /* free fn */
    XArray* ranges;
 };
 
@@ -62,9 +62,9 @@ static void split_at ( /*MOD*/RangeMap* rm, UWord key );
 static void show ( const RangeMap* rm );
 
 
-RangeMap* VG_(newRangeMap) ( void*(*alloc_fn)(const HChar*,SizeT), 
+RangeMap* VG_(newRangeMap) ( Alloc_Fn_t alloc_fn,
                              const HChar* cc,
-                             void(*free_fn)(void*),
+                             Free_Fn_t free_fn,
                              UWord initialVal )
 {
    /* check user-supplied info .. */
@@ -123,10 +123,12 @@ void VG_(lookupRangeMap) ( /*OUT*/UWord* key_min, /*OUT*/UWord* key_max,
    *val     = rng->val;
 }
 
-Word VG_(sizeRangeMap) ( const RangeMap* rm )
+UInt VG_(sizeRangeMap) ( const RangeMap* rm )
 {
    vg_assert(rm && rm->ranges);
-   return VG_(sizeXA)(rm->ranges);
+   Word size = VG_(sizeXA)(rm->ranges);
+   vg_assert(size >= 0);
+   return size;
 }
 
 void VG_(indexRangeMap) ( /*OUT*/UWord* key_min, /*OUT*/UWord* key_max,

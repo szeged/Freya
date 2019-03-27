@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -30,7 +30,6 @@
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
-#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_mallocfree.h"    // VG_(malloc)
 #include "pub_core_libcassert.h"
@@ -48,6 +47,8 @@ ThreadId VG_(running_tid) = VG_INVALID_THREADID;
 ThreadState *VG_(threads);
 UInt VG_N_THREADS;
 
+ThreadState *VG_(inner_threads);
+
 /*------------------------------------------------------------*/
 /*--- Operations.                                          ---*/
 /*------------------------------------------------------------*/
@@ -55,14 +56,10 @@ UInt VG_N_THREADS;
 void VG_(init_Threads)(void)
 {
    ThreadId tid;
-   UChar *addr, *aligned_addr;
 
-   addr = VG_(malloc)("init_Threads",
-          VG_N_THREADS * sizeof VG_(threads)[0] + LibVEX_GUEST_STATE_ALIGN - 1);
-
-   // Align
-   aligned_addr = addr + (Addr)addr % LibVEX_GUEST_STATE_ALIGN;
-   VG_(threads) = (ThreadState *)aligned_addr;
+   VG_(threads) = VG_(arena_memalign) (VG_AR_CORE, "init_Threads",
+                                       LibVEX_GUEST_STATE_ALIGN,
+                                       VG_N_THREADS * sizeof VG_(threads)[0]);
 
    for (tid = 1; tid < VG_N_THREADS; tid++) {
       INNER_REQUEST(
@@ -73,6 +70,7 @@ void VG_(init_Threads)(void)
                                     sizeof(VG_(threads)[tid].os_state.exitcode),
                                     ""));
    }
+   INNER_REQUEST(VALGRIND_INNER_THREADS(VG_(threads)));
 }
 
 const HChar* VG_(name_of_ThreadStatus) ( ThreadStatus status )
@@ -174,6 +172,20 @@ ThreadId VG_(lwpid_to_vgtid)(Int lwp)
    for(tid = 1; tid < VG_N_THREADS; tid++)
       if (VG_(threads)[tid].status != VgTs_Empty 
           && VG_(threads)[tid].os_state.lwpid == lwp)
+	 return tid;
+
+   return VG_INVALID_THREADID;
+}
+
+ThreadId VG_(lwpid_to_vgtid_dead_ok)(Int lwp)
+{
+   ThreadId tid = VG_(lwpid_to_vgtid)(lwp);
+
+   if (tid != VG_INVALID_THREADID)
+      return tid;
+   
+   for(tid = 1; tid < VG_N_THREADS; tid++)
+      if (VG_(threads)[tid].os_state.lwpid == lwp)
 	 return tid;
 
    return VG_INVALID_THREADID;

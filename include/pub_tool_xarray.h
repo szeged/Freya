@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2007-2013 OpenWorks LLP
+   Copyright (C) 2007-2017 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -54,9 +54,9 @@ typedef Int (*XACmpFn_t)(const void *, const void *);
    for elements of the specified size.  alloc_fn must not return NULL (that
    is, if it returns it must have succeeded.)
    This function never returns NULL. */
-extern XArray* VG_(newXA) ( void*(*alloc_fn)(const HChar*,SizeT), 
+extern XArray* VG_(newXA) ( Alloc_Fn_t alloc_fn,
                             const HChar* cc,
-                            void(*free_fn)(void*),
+                            Free_Fn_t free_fn,
                             Word elemSzB );
 
 /* Free all memory associated with an XArray. */
@@ -103,6 +103,13 @@ extern Bool VG_(lookupXA_UNSAFE) ( const XArray* xao, const void* key,
 
 /* How elements are there in this XArray now? */
 extern Word VG_(sizeXA) ( const XArray* );
+
+/* If you know how many elements an XArray will have, you can
+   optimise memory usage and number of reallocation needed
+   to insert these elements. The call to VG_(hintSizeXA) must be
+   done just after the call to VG_(newXA), before any element
+   has been inserted. */
+extern void VG_(hintSizeXA) ( XArray*, Word);
 
 /* Index into the XArray.  Checks bounds and bombs if the index is
    invalid.  What this returns is the address of the specified element
@@ -159,6 +166,8 @@ extern void VG_(getContentsXA_UNSAFE)( XArray* sr,
 extern void VG_(xaprintf)( XArray* dst, const HChar* format, ... )
                          PRINTF_CHECK(2, 3);
 
+/* Convenience function: linear search in an XArray of HChar*. */
+extern Bool VG_(strIsMemberXA)(const XArray* xa, const HChar* str );
 #endif   // __PUB_TOOL_XARRAY_H
 
 /*--------------------------------------------------------------------*/

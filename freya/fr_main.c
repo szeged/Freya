@@ -316,9 +316,10 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
    HChar* end;
    const HChar* current;
    Int match;
+   DiEpoch ep = VG_(current_DiEpoch)();
 
    // Get function name
-   if (VG_(get_fnname)( ips, &fnname_ptr )) {
+   if (VG_(get_fnname)(ep, ips, &fnname_ptr)) {
       fnname_len = VG_(strlen)( fnname_ptr );
    } else {
       fnname_ptr = "";
@@ -327,7 +328,7 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
 
    // Get directory
    end = dir_buffer;
-   if (VG_(get_filename_linenum)( ips, &file_ptr, &dir_ptr, &linenum)) {
+   if (VG_(get_filename_linenum)(ep, ips, &file_ptr, &dir_ptr, &linenum)) {
       dirname_available = dir_ptr[0] != '\0';
       // Concat the names
       VG_(strcpy) ( dir_buffer, dir_ptr );
@@ -336,7 +337,7 @@ static void check_address(Addr ips, Trace_Hash* hash_entry)
          *end++ = '/';
          VG_(strcpy)( end, file_ptr );
       }
-   } else if (VG_(get_objname)( ips, &dir_ptr )) {
+   } else if (VG_(get_objname)(ep, ips, &dir_ptr)) {
       VG_(strcpy)( dir_buffer, dir_ptr );
    } else
       dir_buffer[0] = '\0';
@@ -414,29 +415,30 @@ static HChar* fr_get_name(Addr ips)
    const HChar* fnname_ptr;
    const HChar* file_ptr;
    const HChar* dir_ptr;
+   DiEpoch ep = VG_(current_DiEpoch)();
 
-   len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "Addr: %p ", (void*) ips );
+   len = VG_(snprintf)(dst_ptr, (Int) dst_len, "Addr: %p ", (void*) ips);
    dst_len -= len;
    dst_ptr += len;
 
-   if (VG_(get_fnname)( ips, &fnname_ptr )) {
-     len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "%s ", fnname_ptr );
+   if (VG_(get_fnname)(ep, ips, &fnname_ptr)) {
+     len = VG_(snprintf)(dst_ptr, (Int) dst_len, "%s ", fnname_ptr);
      dst_len -= len;
      dst_ptr += len;
    }
 
-   if (VG_(get_filename_linenum)( ips, &file_ptr, &dir_ptr, &linenum )) {
+   if (VG_(get_filename_linenum)(ep, ips, &file_ptr, &dir_ptr, &linenum)) {
       if (dir_ptr[0] == '\0')
-         len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "(%s:%d)", file_ptr, linenum );
+         len = VG_(snprintf)(dst_ptr, (Int) dst_len, "(%s:%d)", file_ptr, linenum);
       else
-         len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "(%s/%s:%d)", dir_ptr, file_ptr, linenum );
+         len = VG_(snprintf)(dst_ptr, (Int) dst_len, "(%s/%s:%d)", dir_ptr, file_ptr, linenum);
    }
    else
    {
-      if (VG_(get_objname)( ips, &dir_ptr ))
-         len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "(%s)", dir_ptr );
+      if (VG_(get_objname)(ep, ips, &dir_ptr))
+         len = VG_(snprintf)(dst_ptr, (Int) dst_len, "(%s)", dir_ptr);
       else
-         len = VG_(snprintf) ( dst_ptr, (Int) dst_len, "(Unknown file, JIT perhaps?)" );
+         len = VG_(snprintf)(dst_ptr, (Int) dst_len, "(Unknown file, JIT perhaps?)");
    }
 
    dst_len -= len;
@@ -444,8 +446,8 @@ static HChar* fr_get_name(Addr ips)
 
    len = DIR_BUFFER_SIZE - dst_len + 1;
 
-   name_ptr = VG_(malloc)( "freya.alloc_trace.1", len );
-   VG_(memcpy)( name_ptr, dir_buffer, len );
+   name_ptr = VG_(malloc)("freya.alloc_trace.1", len);
+   VG_(memcpy)(name_ptr, dir_buffer, len);
    return name_ptr;
 }
 
@@ -627,31 +629,32 @@ static void cross_thread_free ( ThreadId tid, Trace_Block* block )
    Bool dirname_available = False;
    const HChar* file_ptr;
    const HChar* dir_ptr;
+   DiEpoch ep = VG_(current_DiEpoch)();
 
    if (!clo_cross_free)
       return;
 
    VG_(printf)( "Warning: free or realloc on a different thread!\n=== Original alloc ===\n" );
    while (block) {
-      if (block->ips && VG_(get_filename_linenum)( block->ips, &file_ptr, &dir_ptr, &linenum )) {
+      if (block->ips && VG_(get_filename_linenum)(ep, block->ips, &file_ptr, &dir_ptr, &linenum)) {
          dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
-            VG_(printf)( "(%s:%d)\n", file_ptr, linenum );
+            VG_(printf)("(%s:%d)\n", file_ptr, linenum);
          else
-            VG_(printf)( "(%s/%s:%d)\n", dir_ptr, file_ptr, linenum );
+            VG_(printf)("(%s/%s:%d)\n", dir_ptr, file_ptr, linenum);
       }
       block = block->parent;
    }
 
    VG_(printf)( "=== Current free or realloc ===\n" );
-   n_ips = VG_(get_StackTrace)( tid, trace_ips, clo_trace_len, NULL, NULL, 0 );
-   tl_assert( n_ips > 0 );
+   n_ips = VG_(get_StackTrace)(tid, trace_ips, clo_trace_len, NULL, NULL, 0);
+   tl_assert(n_ips > 0);
    if (n_ips > clo_trace_len)
        n_ips = clo_trace_len;
    ips_ptr = trace_ips;
 
    while (n_ips > 0) {
-      if (VG_(get_filename_linenum)( *ips_ptr, &file_ptr, &dir_ptr, &linenum )) {
+      if (VG_(get_filename_linenum)(ep, *ips_ptr, &file_ptr, &dir_ptr, &linenum)) {
          dirname_available = dir_ptr[0] != '\0';
          if (!dirname_available)
             VG_(printf)( "(%s:%d)\n", file_ptr, linenum );

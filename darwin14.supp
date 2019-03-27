@@ -77,15 +77,15 @@
    ...
 }
 
-#{
-#   OSX1010:8-Leak
-#   Memcheck:Leak
-#   match-leak-kinds: indirect
-#   fun:?alloc
-#   ...
-#   fun:libSystem_initializer
-#   ...
-#}
+{
+   OSX1010:8-Leak
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:?alloc
+   ...
+   fun:libSystem_initializer
+   ...
+}
 
 {
    OSX1010:9-Leak
@@ -131,6 +131,27 @@
    fun:malloc_zone_memalign
    ...
    fun:_ZN4dyld24initializeMainExecutableEv
+   ...
+}
+
+{
+   OSX1010:14-Leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:?alloc
+   ...
+   fun:libSystem_atfork_child
+   ...
+}
+
+{
+   OSX1010:15-Leak
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   fun:malloc
+   fun:__smakebuf
+   ...
+   fun:printf
    ...
 }
 
@@ -438,6 +459,13 @@
 }
 
 {
+   OSX1010:dyld-2
+   Memcheck:Cond
+   fun:exit
+   obj:*libdyld*dylib*
+}
+
+{
    OSX1010:libsystem_kernel-1
    Memcheck:Cond
    obj:*libsystem_kernel*dylib*
@@ -635,24 +663,6 @@
    Memcheck:Addr4
    obj:*IOAccelerator.framework*IOAccelerator*
    obj:*GPUSupport.framework*GPUSupportMercury*
-}
-
-{
-   OSX1010:mach_msg_trap-1
-   Memcheck:Param
-   msg->desc.port.name
-   fun:mach_msg_trap
-   obj:*libsystem_kernel.dylib*
-   obj:*SystemConfiguration.framework*SystemConfiguration*
-}
-
-{
-   OSX1010:mach_msg_trap-2
-   Memcheck:Param
-   msg->desc.port.name
-   fun:mach_msg_trap
-   obj:*SystemConfiguration.framework*SystemConfiguration*
-   obj:*SystemConfiguration.framework*SystemConfiguration*
 }
 
 # See https://bugs.kde.org/show_bug.cgi?id=188572 about this;  it's

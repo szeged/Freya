@@ -10,6 +10,12 @@ endif
 if VGCONF_ARCHS_INCLUDE_AMD64
 SUBDIRS += amd64
 endif
+if VGCONF_ARCHS_INCLUDE_MIPS32
+SUBDIRS += mips32
+endif
+if VGCONF_ARCHS_INCLUDE_MIPS64
+SUBDIRS += mips64
+endif
 if VGCONF_ARCHS_INCLUDE_PPC32
 SUBDIRS += ppc32
 endif
@@ -27,6 +33,9 @@ endif
 if VGCONF_OS_IS_DARWIN
 SUBDIRS += darwin
 endif
+if VGCONF_OS_IS_SOLARIS
+SUBDIRS += solaris
+endif
 
 # Platform-specific tests
 if VGCONF_PLATFORMS_INCLUDE_X86_LINUX
@@ -35,19 +44,32 @@ endif
 if VGCONF_PLATFORMS_INCLUDE_AMD64_LINUX
 SUBDIRS += amd64-linux
 endif
+if VGCONF_PLATFORMS_INCLUDE_ARM64_LINUX
+SUBDIRS += arm64-linux
+endif
+if VGCONF_PLATFORMS_INCLUDE_X86_SOLARIS
+SUBDIRS += x86-solaris
+endif
+if VGCONF_PLATFORMS_INCLUDE_AMD64_SOLARIS
+SUBDIRS += amd64-solaris
+endif
 
 DIST_SUBDIRS = x86 amd64 ppc32 ppc64 s390x linux \
-		darwin x86-linux amd64-linux common .
+		darwin solaris x86-linux amd64-linux arm64-linux \
+		x86-solaris amd64-solaris mips32 mips64 \
+		common .
 
 dist_noinst_SCRIPTS = \
 	filter_addressable \
 	filter_allocs \
 	filter_dw4 \
 	filter_leak_cases_possible \
+	filter_leak_cpp_interior \
 	filter_stderr filter_xml \
 	filter_strchr \
 	filter_varinfo3 \
-	filter_memcheck
+	filter_memcheck \
+	filter_overlaperror
 
 noinst_HEADERS = leak.h
 
@@ -58,6 +80,10 @@ EXTRA_DIST = \
 	atomic_incs.stdout.exp-32bit atomic_incs.stdout.exp-64bit \
 	badaddrvalue.stderr.exp \
 	badaddrvalue.stdout.exp badaddrvalue.vgtest \
+        exit_on_first_error.stderr.exp \
+        exit_on_first_error.vgtest \
+        exit_on_first_error_with_xml.stderr.exp \
+        exit_on_first_error_with_xml.vgtest \
 	badfree-2trace.stderr.exp badfree-2trace.vgtest \
 	badfree.stderr.exp badfree.vgtest \
 	badfree3.stderr.exp badfree3.vgtest \
@@ -74,7 +100,10 @@ EXTRA_DIST = \
 		buflen_check.stderr.exp-kfail \
 	bug155125.stderr.exp bug155125.vgtest \
 	bug287260.stderr.exp bug287260.vgtest \
+	bug340392.stderr.exp bug340392.vgtest \
 	calloc-overflow.stderr.exp calloc-overflow.vgtest\
+	cdebug_zlib.stderr.exp cdebug_zlib.vgtest \
+	cdebug_zlib_gnu.stderr.exp cdebug_zlib_gnu.vgtest \
 	client-msg.stderr.exp client-msg.vgtest \
 	client-msg-as-xml.stderr.exp client-msg-as-xml.vgtest \
 	clientperm.stderr.exp \
@@ -89,16 +118,17 @@ EXTRA_DIST = \
 	cond_st.vgtest cond_st.stdout.exp cond_st.stderr.exp-arm \
 		cond_st.stderr.exp-64bit-non-arm \
 		cond_st.stderr.exp-32bit-non-arm \
-	leak_cpp_interior.stderr.exp leak_cpp_interior.stderr.exp-64bit leak_cpp_interior.vgtest \
+	leak_cpp_interior.stderr.exp leak_cpp_interior.stderr.exp-64bit leak_cpp_interior.vgtest libstdc++.supp \
 	custom_alloc.stderr.exp custom_alloc.vgtest \
 		custom_alloc.stderr.exp-s390x-mvc \
 	custom-overlap.stderr.exp custom-overlap.vgtest \
 	deep-backtrace.vgtest deep-backtrace.stderr.exp \
 	demangle.stderr.exp demangle.vgtest \
+	big_debuginfo_symbol.stderr.exp big_debuginfo_symbol.vgtest \
 	describe-block.stderr.exp describe-block.vgtest \
 	descr_belowsp.vgtest descr_belowsp.stderr.exp \
 	doublefree.stderr.exp doublefree.vgtest \
-	dw4.vgtest dw4.stderr.exp dw4.stdout.exp \
+	dw4.vgtest dw4.stderr.exp dw4.stderr.exp-solaris dw4.stdout.exp \
 	err_disable1.vgtest err_disable1.stderr.exp \
 	err_disable2.vgtest err_disable2.stderr.exp \
 	err_disable3.vgtest err_disable3.stderr.exp \
@@ -114,6 +144,7 @@ EXTRA_DIST = \
 	fprw.stderr.exp fprw.stderr.exp-mips32-be fprw.stderr.exp-mips32-le \
 		fprw.vgtest \
 	fwrite.stderr.exp fwrite.vgtest fwrite.stderr.exp-kfail \
+	gone_abrt_xml.vgtest gone_abrt_xml.stderr.exp gone_abrt_xml.stderr.exp-solaris \
 	holey_buffer_too_small.vgtest holey_buffer_too_small.stdout.exp \
 	holey_buffer_too_small.stderr.exp \
 	inits.stderr.exp inits.vgtest \
@@ -135,6 +166,12 @@ EXTRA_DIST = \
 	leak-pool-3.vgtest leak-pool-3.stderr.exp \
 	leak-pool-4.vgtest leak-pool-4.stderr.exp \
 	leak-pool-5.vgtest leak-pool-5.stderr.exp \
+	leak-autofreepool-0.vgtest leak-autofreepool-0.stderr.exp \
+	leak-autofreepool-1.vgtest leak-autofreepool-1.stderr.exp \
+	leak-autofreepool-2.vgtest leak-autofreepool-2.stderr.exp \
+	leak-autofreepool-4.vgtest leak-autofreepool-4.stderr.exp \
+	leak-autofreepool-5.vgtest leak-autofreepool-5.stderr.exp \
+	leak-autofreepool-6.vgtest leak-autofreepool-6.stderr.exp \
 	leak-tree.vgtest leak-tree.stderr.exp \
 	leak-segv-jmp.vgtest leak-segv-jmp.stderr.exp \
 	lks.vgtest lks.stdout.exp lks.supp lks.stderr.exp \
@@ -214,15 +251,16 @@ EXTRA_DIST = \
 	realloc2.stderr.exp realloc2.vgtest \
 	realloc3.stderr.exp realloc3.vgtest \
 	recursive-merge.stderr.exp recursive-merge.vgtest \
+	resvn_stack.stderr.exp resvn_stack.vgtest \
 	sbfragment.stdout.exp sbfragment.stderr.exp sbfragment.vgtest \
 	sem.stderr.exp sem.vgtest \
-	sendmsg.stderr.exp sendmsg.vgtest \
+	sendmsg.stderr.exp sendmsg.stderr.exp-solaris sendmsg.vgtest \
 	sh-mem.stderr.exp sh-mem.vgtest \
 	sh-mem-random.stderr.exp sh-mem-random.stdout.exp64 \
 	sh-mem-random.stdout.exp sh-mem-random.vgtest \
 	sigaltstack.stderr.exp sigaltstack.vgtest \
 	sigkill.stderr.exp sigkill.stderr.exp-darwin sigkill.stderr.exp-mips32 \
-	sigkill.vgtest \
+	    sigkill.stderr.exp-solaris sigkill.vgtest \
 	signal2.stderr.exp signal2.stdout.exp signal2.vgtest \
 	sigprocmask.stderr.exp sigprocmask.stderr.exp2 sigprocmask.vgtest \
 	static_malloc.stderr.exp static_malloc.vgtest \
@@ -238,6 +276,10 @@ EXTRA_DIST = \
 	suppfree.stderr.exp suppfree.supp suppfree.vgtest \
 	suppfreecollision.stderr.exp suppfreecollision.supp suppfreecollision.vgtest \
 	supponlyobj.stderr.exp supponlyobj.supp supponlyobj.vgtest \
+	suppsrc_lineno.stderr.exp suppsrc_lineno.stdout.exp suppsrc_lineno.vgtest \
+	suppsrc_lineno.supp \
+	suppsrc_sanlineno.stderr.exp suppsrc_sanlineno.stdout.exp suppsrc_sanlineno.vgtest \
+	suppsrc_sanlineno.supp \
 	suppvarinfo5.stderr.exp suppvarinfo5.supp suppvarinfo5.vgtest \
 	test-plo-no.vgtest test-plo-no.stdout.exp \
 	    test-plo-no.stderr.exp-le64 test-plo-no.stderr.exp-le32 \
@@ -245,6 +287,8 @@ EXTRA_DIST = \
 	    test-plo-yes.stderr.exp-le64 test-plo-yes.stderr.exp-le32 \
 	    test-plo-no.stderr.exp-s390x-mvc \
 	thread_alloca.stderr.exp thread_alloca.vgtest \
+	threadname.vgtest threadname.stderr.exp \
+	threadname_xml.vgtest threadname_xml.stderr.exp \
 	trivialleak.stderr.exp trivialleak.vgtest trivialleak.stderr.exp2 \
 	undef_malloc_args.stderr.exp undef_malloc_args.vgtest \
 	unit_libcbase.stderr.exp unit_libcbase.vgtest \
@@ -265,7 +309,8 @@ EXTRA_DIST = \
 	vcpu_bz2.stdout.exp vcpu_bz2.stderr.exp vcpu_bz2.vgtest \
 	vcpu_fbench.stdout.exp vcpu_fbench.stderr.exp vcpu_fbench.vgtest \
 	vcpu_fnfns.stdout.exp vcpu_fnfns.stdout.exp-glibc28-amd64 \
-	vcpu_fnfns.stdout.exp-darwin vcpu_fnfns.stderr.exp vcpu_fnfns.vgtest \
+	vcpu_fnfns.stdout.exp-darwin vcpu_fnfns.stdout.exp-solaris \
+	vcpu_fnfns.stderr.exp vcpu_fnfns.vgtest \
 	wcs.vgtest wcs.stderr.exp wcs.stdout.exp \
 	wrap1.vgtest wrap1.stdout.exp wrap1.stderr.exp \
 	wrap2.vgtest wrap2.stdout.exp wrap2.stderr.exp \
@@ -275,11 +320,12 @@ EXTRA_DIST = \
 	wrap6.vgtest wrap6.stdout.exp wrap6.stderr.exp \
 	wrap7.vgtest wrap7.stdout.exp wrap7.stderr.exp \
 	wrap8.vgtest wrap8.stdout.exp wrap8.stderr.exp \
-	wrap8.stdout.exp2 wrap8.stderr.exp2 \
-	writev1.stderr.exp writev1.vgtest \
-	xml1.stderr.exp xml1.stdout.exp xml1.vgtest xml1.stderr.exp-s390x-mvc \
-	threadname.vgtest threadname.stderr.exp \
-	threadname_xml.vgtest threadname_xml.stderr.exp
+	wrap8.stdout.exp-ppc64 wrap8.stderr.exp-ppc64 \
+	wrapmalloc.vgtest wrapmalloc.stdout.exp wrapmalloc.stderr.exp \
+	wrapmallocstatic.vgtest wrapmallocstatic.stdout.exp \
+	wrapmallocstatic.stderr.exp \
+	writev1.stderr.exp writev1.stderr.exp-solaris writev1.vgtest \
+	xml1.stderr.exp xml1.stdout.exp xml1.vgtest xml1.stderr.exp-s390x-mvc
 
 check_PROGRAMS = \
 	accounting \
@@ -294,6 +340,7 @@ check_PROGRAMS = \
 	buflen_check \
 	bug155125 \
 	bug287260 \
+	bug340392 \
 	calloc-overflow \
 	client-msg \
 	clientperm \
@@ -305,6 +352,7 @@ check_PROGRAMS = \
 	custom_alloc \
 	custom-overlap \
 	demangle \
+	big_debuginfo_symbol \
 	deep-backtrace \
 	describe-block \
 	doublefree error_counts errs1 exitprog execve1 execve2 erringfds \
@@ -318,9 +366,9 @@ check_PROGRAMS = \
 	leak-cycle \
 	leak-delta \
 	leak-pool \
+	leak-autofreepool \
 	leak-tree \
 	leak-segv-jmp \
-	long_namespace_xml \
 	long-supps \
 	mallinfo \
 	malloc_free_fill \
@@ -340,6 +388,7 @@ check_PROGRAMS = \
 	post-syscall \
 	realloc1 realloc2 realloc3 \
 	recursive-merge \
+	resvn_stack \
 	sbfragment \
 	sendmsg \
 	sh-mem sh-mem-random \
@@ -359,10 +408,28 @@ check_PROGRAMS = \
 	wcs \
 	xml1 \
 	wrap1 wrap2 wrap3 wrap4 wrap5 wrap6 wrap7 wrap7so.so wrap8 \
+	wrapmalloc wrapmallocso.so wrapmallocstatic \
 	writev1
+
+if !SOLARIS_SUN_STUDIO_AS
+# Sun Studio assembler fails on "IDENT too long"
+check_PROGRAMS += long_namespace_xml
+endif
 
 if DWARF4
 check_PROGRAMS += dw4
+endif
+
+if GZ_ZLIB
+check_PROGRAMS += cdebug_zlib
+cdebug_zlib_SOURCES = cdebug.c
+cdebug_zlib_CFLAGS = $(AM_CFLAGS) -g -gz=zlib @FLAG_W_NO_UNINITIALIZED@
+endif
+
+if GZ_ZLIB_GNU
+check_PROGRAMS += cdebug_zlib_gnu
+cdebug_zlib_gnu_SOURCES = cdebug.c
+cdebug_zlib_gnu_CFLAGS = $(AM_CFLAGS) -g -gz=zlib-gnu @FLAG_W_NO_UNINITIALIZED@
 endif
 
 if HAVE_GNU_STPNCPY
@@ -391,17 +458,29 @@ else
 atomic_incs_CFLAGS = $(AM_CFLAGS)
 endif
 
+if VGCONF_OS_IS_SOLARIS
+buflen_check_LDADD	= -lsocket -lnsl
+endif
+
 leak_cpp_interior_SOURCES	= leak_cpp_interior.cpp
 
 demangle_SOURCES = demangle.cpp
 
+big_debuginfo_symbol_SOURCES = big_debuginfo_symbol.cpp
+big_debuginfo_symbol_CXXFLAGS = $(AM_CXXFLAGS) -std=c++0x
+
+bug340392_CFLAGS        = $(AM_CFLAGS) -O3
 dw4_CFLAGS		= $(AM_CFLAGS) -gdwarf-4 -fdebug-types-section
 
 descr_belowsp_LDADD     = -lpthread
 err_disable3_LDADD 	= -lpthread
 err_disable4_LDADD 	= -lpthread
+err_disable4_CFLAGS	= $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+err_disable4_CFLAGS	+= -D_XOPEN_SOURCE=600
+endif
 reach_thread_register_CFLAGS	= $(AM_CFLAGS) -O2
-reach_thread_register_LDADD     = -lpthread
+reach_thread_register_LDADD	= -lpthread
 thread_alloca_LDADD     = -lpthread
 threadname_LDADD 	= -lpthread
 
@@ -415,7 +494,7 @@ fprw_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
 inits_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
-inlinfo_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@ @FLAG_W_NO_STATIC_LOCAL_IN_INLINE@
+inlinfo_CFLAGS = $(AM_CFLAGS) -w
 
 inltemplate_SOURCES = inltemplate.cpp
 inltemplate_CXXFLAGS = $(AM_CXXFLAGS) @FLAG_W_NO_UNINITIALIZED@
@@ -424,12 +503,22 @@ long_namespace_xml_SOURCES = long_namespace_xml.cpp
 
 manuel1_CFLAGS = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
+memalign2_CFLAGS	= $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+memalign2_CFLAGS	+= -D__EXTENSIONS__
+endif
+
 memcmptest_CFLAGS	= $(AM_CFLAGS) -fno-builtin-memcmp
 
 mismatches_SOURCES	= mismatches.cpp
+mismatches_CXXFLAGS	= $(AM_CXXFLAGS) @FLAG_W_NO_MISMATCHED_NEW_DELETE@
 
 new_nothrow_SOURCES 	= new_nothrow.cpp
 new_override_SOURCES 	= new_override.cpp
+
+if VGCONF_OS_IS_SOLARIS
+null_socket_LDADD	= -lsocket -lnsl
+endif
 
 origin1_yes_CFLAGS      = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
@@ -448,7 +537,16 @@ origin6_fp_CFLAGS	= $(AM_CFLAGS) -O
 # because then we can't intercept it
 overlap_CFLAGS		= $(AM_CFLAGS) -fno-builtin-memcpy -fno-builtin-strcpy
 
-str_tester_CFLAGS	= $(AM_CFLAGS) -Wno-shadow
+resvn_stack_CFLAGS      = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
+
+sendmsg_CFLAGS		= $(AM_CFLAGS)
+if VGCONF_OS_IS_SOLARIS
+sendmsg_CFLAGS		+= -D_XOPEN_SOURCE=600
+sendmsg_LDADD		= -lsocket -lnsl
+endif
+
+str_tester_CFLAGS	= $(AM_CFLAGS) -Wno-shadow \
+			  @FLAG_W_NO_MEMSET_TRANSPOSED_ARGS@
 
 supp_CFLAGS             = $(AM_CFLAGS) @FLAG_W_NO_UNINITIALIZED@
 
@@ -497,7 +595,7 @@ else
  varinfo5so_so_LDFLAGS  = -fpic $(AM_FLAG_M3264_PRI) -shared \
 				-Wl,-soname -Wl,varinfo5so.so
 endif
-varinforestrict_CFLAGS	= $(AM_CFLAGS) -O0 -g -std=c99
+varinforestrict_CFLAGS	= $(AM_CFLAGS) -O0 -g
 
 # Build shared object for wrap7
 wrap7_SOURCES           = wrap7.c
@@ -521,3 +619,26 @@ else
 				-Wl,-soname -Wl,wrap7so.so
 endif
 
+# Build shared object for wrapmalloc
+wrapmalloc_SOURCES           = wrapmalloc.c
+wrapmalloc_DEPENDENCIES      = wrapmallocso.so
+if VGCONF_OS_IS_DARWIN
+ wrapmalloc_LDADD            = `pwd`/wrapmallocso.so
+ wrapmalloc_LDFLAGS          = $(AM_FLAG_M3264_PRI)
+else
+ wrapmalloc_LDADD            = wrapmallocso.so
+ wrapmalloc_LDFLAGS          = $(AM_FLAG_M3264_PRI) \
+				-Wl,-rpath,$(top_builddir)/memcheck/tests
+endif
+
+wrapmallocso_so_SOURCES      = wrapmallocso.c
+wrapmallocso_so_CFLAGS       = $(AM_CFLAGS) -fpic
+if VGCONF_OS_IS_DARWIN
+ wrapmallocso_so_LDFLAGS     = -fpic $(AM_FLAG_M3264_PRI) -dynamic \
+				-dynamiclib -all_load
+else
+ wrapmallocso_so_LDFLAGS     = -fpic $(AM_FLAG_M3264_PRI) -shared \
+				-Wl,-soname -Wl,wrapmallocso.so
+endif
+
+xml1_CFLAGS             = $(AM_CFLAGS) -D_GNU_SOURCE

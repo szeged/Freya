@@ -42,20 +42,24 @@ if VGCONF_OS_IS_DARWIN
  MPI_FLAG_M3264_PRI = $(AM_FLAG_M3264_PRI)
  MPI_FLAG_M3264_SEC = $(AM_FLAG_M3264_SEC)
 endif
+if VGCONF_OS_IS_SOLARIS
+ MPI_FLAG_M3264_PRI = $(AM_FLAG_M3264_PRI)
+ MPI_FLAG_M3264_SEC = $(AM_FLAG_M3264_SEC)
+endif
 
 
 if BUILD_MPIWRAP_PRI
 libmpiwrap_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_SOURCES  = libmpiwrap.c
 libmpiwrap_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_CPPFLAGS = -I$(top_srcdir)/include
 libmpiwrap_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_CFLAGS   = \
-	$(CFLAGS_MPI) $(MPI_FLAG_M3264_PRI)
+	$(CFLAGS_MPI) $(MPI_FLAG_M3264_PRI) -Wno-deprecated-declarations
 libmpiwrap_@VGCONF_ARCH_PRI@_@VGCONF_OS@_so_LDFLAGS  = $(LDFLAGS_MPI)
 endif
 if BUILD_MPIWRAP_SEC
 libmpiwrap_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_SOURCES  = libmpiwrap.c
 libmpiwrap_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_CPPFLAGS = -I$(top_srcdir)/include
 libmpiwrap_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_CFLAGS   = \
-	$(CFLAGS_MPI) $(MPI_FLAG_M3264_SEC)
+	$(CFLAGS_MPI) $(MPI_FLAG_M3264_SEC) -Wno-deprecated-declarations
 libmpiwrap_@VGCONF_ARCH_SEC@_@VGCONF_OS@_so_LDFLAGS  = $(LDFLAGS_MPI)
 endif
 

@@ -8,7 +8,7 @@
   This file is part of Valgrind, a dynamic binary instrumentation
   framework.
 
-  Copyright (C) 2000-2013 RT-RK
+  Copyright (C) 2000-2017 RT-RK
      mips-valgrind@rt-rk.com 
 
   This program is free software; you can redistribute it and/or
@@ -29,10 +29,10 @@
   The GNU General Public License is contained in the file COPYING.
 */
 
+#include "pub_core_basics_asm.h"
 
 #if defined(VGP_mips64_linux)
 
-#include "pub_core_basics_asm.h"
 #include "pub_core_dispatch_asm.h"
 #include "pub_core_transtab_asm.h"
 #include "libvex_guest_offsets.h"	/* for OFFSET_mips_PC */
@@ -111,8 +111,15 @@ postamble:
 
     /* Restore $4 from stack; holds address of two_words */
     ld $4, 160($29)
-    sd  $2, 0($4)         /* Store $2 to two_words[0] */
-    sd  $3, 8($4)         /* Store $3 to two_words[1] */
+    #if defined(VGABI_64)
+     sd  $2, 0($4)         /* Store $2 to two_words[0] */
+     sd  $3, 8($4)         /* Store $3 to two_words[1] */
+    #elif defined(VGABI_N32)
+     sw  $2, 0($4)         /* Store $2 to two_words[0] */
+     sw  $3, 4($4)         /* Store $3 to two_words[1] */
+    #else
+    #error unknown mips64 abi
+    #endif
 
     /* Restore callee-saved registers... */
 
@@ -196,7 +203,7 @@ VG_(disp_cp_xindir):
         daddu $13, $13, $14
 
         ld $12, 0($13) /* t3 = VG_(tt_fast)[hash] :: ULong* */
-        daddi $13, $13, 8
+        daddiu $13, $13, 8
         ld $25, 0($13) /* little-endian, so comparing 1st 32bit word */
         nop
 
@@ -235,11 +242,11 @@ VG_(disp_cp_evcheck_fail):
 
 .size VG_(disp_run_translations), .-VG_(disp_run_translations)
 
-
-/* Let the linker know we do not need an executable stack */
-.section .note.GNU-stack,"",@progbits
-
 #endif // defined(VGP_mips64_linux)
+
+/* Let the linker know we don't need an executable stack */
+MARK_STACK_NO_EXEC
+
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/
 /*--------------------------------------------------------------------*/

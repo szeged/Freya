@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -225,6 +225,7 @@ typedef
       Ity_I32, 
       Ity_I64,
       Ity_I128,  /* 128-bit scalar */
+      Ity_F16,   /* 16 bit float */
       Ity_F32,   /* IEEE 754 float */
       Ity_F64,   /* IEEE 754 double */
       Ity_D32,   /* 32-bit Decimal floating point */
@@ -502,6 +503,12 @@ typedef
 
       Iop_DivModS64to64, // :: I64,I64 -> I128
                          // of which lo half is div and hi half is mod
+      Iop_DivModU64to64, // :: I64,I64 -> I128
+                         // of which lo half is div and hi half is mod
+      Iop_DivModS32to32, // :: I32,I32 -> I64
+                         // of which lo half is div and hi half is mod
+      Iop_DivModU32to32, // :: I32,I32 -> I64
+                         // of which lo half is div and hi half is mod
 
       /* Integer conversions.  Some of these are redundant (eg
          Iop_64to8 is the same as Iop_64to32 and then Iop_32to8), but
@@ -669,6 +676,10 @@ typedef
 
       /* :: IRRoundingMode(I32) x F128 x F128 -> F128 */
       Iop_AddF128, Iop_SubF128, Iop_MulF128, Iop_DivF128,
+      Iop_MAddF128,    // (A * B) + C
+      Iop_MSubF128,    // (A * B) - C
+      Iop_NegMAddF128, // -((A * B) + C)
+      Iop_NegMSubF128, // -((A * B) - C)
 
       /* :: F128 -> F128 */
       Iop_NegF128, Iop_AbsF128,
@@ -687,8 +698,18 @@ typedef
       Iop_F128toI64S, /* IRRoundingMode(I32) x F128 -> signed I64  */
       Iop_F128toI32U, /* IRRoundingMode(I32) x F128 -> unsigned I32  */
       Iop_F128toI64U, /* IRRoundingMode(I32) x F128 -> unsigned I64  */
+      Iop_F128toI128S,/* IRRoundingMode(I32) x F128 -> signed I128 */
       Iop_F128toF64,  /* IRRoundingMode(I32) x F128 -> F64         */
       Iop_F128toF32,  /* IRRoundingMode(I32) x F128 -> F32         */
+      Iop_RndF128,    /* IRRoundingMode(I32) x F128 -> F128         */
+
+      /* Truncate to the specified value, source and result
+       * are stroed in a F128 register.
+       */
+      Iop_TruncF128toI32S,  /* truncate F128 -> I32         */
+      Iop_TruncF128toI32U,  /* truncate F128 -> I32         */
+      Iop_TruncF128toI64U,  /* truncate F128 -> I64         */
+      Iop_TruncF128toI64S,  /* truncate F128 -> I64         */
 
       /* --- guest x86/amd64 specifics, not mandated by 754. --- */
 
@@ -712,6 +733,8 @@ typedef
       Iop_CosF64,    /* FCOS */
       Iop_TanF64,    /* FTAN */
       Iop_2xm1F64,   /* (2^arg - 1.0) */
+      Iop_RoundF128toInt, /* F128 value to nearest integral value (still
+                             as F128) */
       Iop_RoundF64toInt, /* F64 value to nearest integral value (still
                             as F64) */
       Iop_RoundF32toInt, /* F32 value to nearest integral value (still
@@ -758,6 +781,21 @@ typedef
 
       Iop_RecpExpF64,  /* FRECPX d  :: IRRoundingMode(I32) x F64 -> F64 */
       Iop_RecpExpF32,  /* FRECPX s  :: IRRoundingMode(I32) x F32 -> F32 */
+
+      /* --------- Possibly required by IEEE 754-2008. --------- */
+
+      Iop_MaxNumF64,  /* max, F64, numerical operand if other is a qNaN */
+      Iop_MinNumF64,  /* min, F64, ditto */
+      Iop_MaxNumF32,  /* max, F32, ditto */
+      Iop_MinNumF32,  /* min, F32, ditto */
+
+      /* ------------------ 16-bit scalar FP ------------------ */
+
+      Iop_F16toF64,  /*                       F16 -> F64 */
+      Iop_F64toF16,  /* IRRoundingMode(I32) x F64 -> F16 */
+
+      Iop_F16toF32,  /*                       F16 -> F32 */
+      Iop_F32toF16,  /* IRRoundingMode(I32) x F32 -> F16 */
 
       /* ------------------ 32-bit SIMD Integer ------------------ */
 
@@ -908,6 +946,9 @@ typedef
       Iop_Clz8x8, Iop_Clz16x4, Iop_Clz32x2,
       Iop_Cls8x8, Iop_Cls16x4, Iop_Cls32x2,
       Iop_Clz64x2,
+
+      /*Vector COUNT trailing zeros */
+      Iop_Ctz8x16, Iop_Ctz16x8, Iop_Ctz32x4, Iop_Ctz64x2, 
 
       /* VECTOR x VECTOR SHIFT / ROTATE */
       Iop_Shl8x8, Iop_Shl16x4, Iop_Shl32x2,
@@ -1259,6 +1300,12 @@ typedef
        * signed code. */
       Iop_BCDAdd, Iop_BCDSub,
 
+      /* Conversion signed 128-bit integer to signed BCD 128-bit */
+      Iop_I128StoBCD128,
+
+      /* Conversion signed BCD 128-bit to 128-bit integer */
+      Iop_BCD128toI128S,
+
       /* Conversion I64 -> D64 */
       Iop_ReinterpI64asD64,
 
@@ -1285,8 +1332,10 @@ typedef
 
       /* unary */
       Iop_Abs32Fx4,
-      Iop_Sqrt32Fx4,
       Iop_Neg32Fx4,
+
+      /* binary :: IRRoundingMode(I32) x V128 -> V128 */
+      Iop_Sqrt32Fx4,
 
       /* Vector Reciprocal Estimate finds an approximate reciprocal of each
          element in the operand vector, and places the results in the
@@ -1301,6 +1350,13 @@ typedef
       /* Vector Reciprocal Square Root Estimate finds an approximate reciprocal
          square root of each element in the operand vector. */
       Iop_RSqrtEst32Fx4,
+
+      /* Scaling of vector with a power of 2  (wd[i] <- ws[i] * 2^wt[i]) */
+      Iop_Scale2_32Fx4,
+
+      /* Vector floating-point base 2 logarithm */
+      Iop_Log2_32Fx4,
+
 
       /* Vector Reciprocal Square Root Step computes (3.0 - arg1 * arg2) / 2.0.
          Note, that of one of the arguments is zero and another one is infiinty
@@ -1326,6 +1382,16 @@ typedef
       /* FIXME: what kind of rounding in F32x4 -> F16x4 case? */
       Iop_F32toF16x4, Iop_F16toF32x4,         /* F32x4 <-> F16x4      */
 
+
+
+      /* -- Double to/from half conversion -- */
+      Iop_F64toF16x2, Iop_F16toF64x2,
+
+      /* Values from two registers converted in smaller type and put in one
+       IRRoundingMode(I32) x (F32x4 | F32x4) -> Q16x8 */
+      Iop_F32x4_2toQ16x8,
+
+
       /* --- 32x4 lowest-lane-only scalar FP --- */
 
       /* In binary cases, upper 3/4 is copied from first operand.  In
@@ -1350,14 +1416,27 @@ typedef
 
       /* unary */
       Iop_Abs64Fx2,
-      Iop_Sqrt64Fx2,
       Iop_Neg64Fx2,
+
+      /* binary :: IRRoundingMode(I32) x V128 -> V128 */
+      Iop_Sqrt64Fx2,
+
+      /* Scaling of vector with a power of 2  (wd[i] <- ws[i] * 2^wt[i]) */
+      Iop_Scale2_64Fx2,
+
+      /* Vector floating-point base 2 logarithm */
+      Iop_Log2_64Fx2,
 
       /* see 32Fx4 variants for description */
       Iop_RecipEst64Fx2,    // unary
       Iop_RecipStep64Fx2,   // binary
       Iop_RSqrtEst64Fx2,    // unary
       Iop_RSqrtStep64Fx2,   // binary
+
+
+      /* Values from two registers converted in smaller type and put in one
+       IRRoundingMode(I32) x (F64x2 | F64x2) -> Q32x4 */
+      Iop_F64x2_2toQ32x4,
 
       /* --- 64x2 lowest-lane-only scalar FP --- */
 
@@ -1400,13 +1479,14 @@ typedef
       Iop_AndV128, Iop_OrV128, Iop_XorV128, 
 
       /* VECTOR SHIFT (shift amt :: Ity_I8) */
-      Iop_ShlV128, Iop_ShrV128,
+      Iop_ShlV128, Iop_ShrV128, Iop_SarV128,
 
       /* MISC (vector integer cmp != 0) */
       Iop_CmpNEZ8x16, Iop_CmpNEZ16x8, Iop_CmpNEZ32x4, Iop_CmpNEZ64x2,
+      Iop_CmpNEZ128x1,
 
       /* ADDITION (normal / U->U sat / S->S sat) */
-      Iop_Add8x16,    Iop_Add16x8,    Iop_Add32x4,    Iop_Add64x2,
+      Iop_Add8x16,    Iop_Add16x8,    Iop_Add32x4,    Iop_Add64x2,   Iop_Add128x1,
       Iop_QAdd8Ux16,  Iop_QAdd16Ux8,  Iop_QAdd32Ux4,  Iop_QAdd64Ux2,
       Iop_QAdd8Sx16,  Iop_QAdd16Sx8,  Iop_QAdd32Sx4,  Iop_QAdd64Sx2,
 
@@ -1421,14 +1501,14 @@ typedef
       Iop_QAddExtSUsatUU32x4, Iop_QAddExtSUsatUU64x2,
 
       /* SUBTRACTION (normal / unsigned sat / signed sat) */
-      Iop_Sub8x16,   Iop_Sub16x8,   Iop_Sub32x4,   Iop_Sub64x2,
+      Iop_Sub8x16,   Iop_Sub16x8,   Iop_Sub32x4,   Iop_Sub64x2,   Iop_Sub128x1,
       Iop_QSub8Ux16, Iop_QSub16Ux8, Iop_QSub32Ux4, Iop_QSub64Ux2,
       Iop_QSub8Sx16, Iop_QSub16Sx8, Iop_QSub32Sx4, Iop_QSub64Sx2,
 
       /* MULTIPLICATION (normal / high half of signed/unsigned) */
       Iop_Mul8x16,  Iop_Mul16x8,    Iop_Mul32x4,
-                    Iop_MulHi16Ux8, Iop_MulHi32Ux4,
-                    Iop_MulHi16Sx8, Iop_MulHi32Sx4,
+      Iop_MulHi8Ux16, Iop_MulHi16Ux8, Iop_MulHi32Ux4,
+      Iop_MulHi8Sx16, Iop_MulHi16Sx8, Iop_MulHi32Sx4,
       /* (widening signed/unsigned of even lanes, with lowest lane=zero) */
       Iop_MullEven8Ux16, Iop_MullEven16Ux8, Iop_MullEven32Ux4,
       Iop_MullEven8Sx16, Iop_MullEven16Sx8, Iop_MullEven32Sx4,
@@ -1505,7 +1585,7 @@ typedef
          Example:
             Iop_PwAddL16Ux4( [a,b,c,d] ) = [a+b,c+d]
                where a+b and c+d are unsigned 32-bit values. */
-      Iop_PwAddL8Ux16, Iop_PwAddL16Ux8, Iop_PwAddL32Ux4,
+      Iop_PwAddL8Ux16, Iop_PwAddL16Ux8, Iop_PwAddL32Ux4, Iop_PwAddL64Ux2,
       Iop_PwAddL8Sx16, Iop_PwAddL16Sx8, Iop_PwAddL32Sx4,
 
       /* Other unary pairwise ops */
@@ -1519,8 +1599,8 @@ typedef
       Iop_Abs8x16, Iop_Abs16x8, Iop_Abs32x4, Iop_Abs64x2,
 
       /* AVERAGING: note: (arg1 + arg2 + 1) >>u 1 */
-      Iop_Avg8Ux16, Iop_Avg16Ux8, Iop_Avg32Ux4,
-      Iop_Avg8Sx16, Iop_Avg16Sx8, Iop_Avg32Sx4,
+      Iop_Avg8Ux16, Iop_Avg16Ux8, Iop_Avg32Ux4, Iop_Avg64Ux2,
+      Iop_Avg8Sx16, Iop_Avg16Sx8, Iop_Avg32Sx4, Iop_Avg64Sx2,
 
       /* MIN/MAX */
       Iop_Max8Sx16, Iop_Max16Sx8, Iop_Max32Sx4, Iop_Max64Sx2,
@@ -1707,6 +1787,11 @@ typedef
       Iop_InterleaveOddLanes16x8, Iop_InterleaveEvenLanes16x8,
       Iop_InterleaveOddLanes32x4, Iop_InterleaveEvenLanes32x4,
 
+      /* Pack even/odd lanes. */
+      Iop_PackOddLanes8x16, Iop_PackEvenLanes8x16,
+      Iop_PackOddLanes16x8, Iop_PackEvenLanes16x8,
+      Iop_PackOddLanes32x4, Iop_PackEvenLanes32x4,
+
       /* CONCATENATION -- build a new value by concatenating either
          the even or odd lanes of both operands.  Note that
          Cat{Odd,Even}Lanes64x2 are identical to Interleave{HI,LO}64x2
@@ -1715,9 +1800,11 @@ typedef
       Iop_CatEvenLanes8x16, Iop_CatEvenLanes16x8, Iop_CatEvenLanes32x4,
 
       /* GET elements of VECTOR
-         GET is binop (V128, I8) -> I<elem_size> */
+         GET is binop (V128, I8) -> I<elem_size>
+         SET is triop (V128, I8, I<elem_size>) -> V128 */
       /* Note: the arm back-end handles only constant second argument. */
       Iop_GetElem8x16, Iop_GetElem16x8, Iop_GetElem32x4, Iop_GetElem64x2,
+      Iop_SetElem8x16, Iop_SetElem16x8, Iop_SetElem32x4, Iop_SetElem64x2,
 
       /* DUPLICATING -- copy value to all lanes */
       Iop_Dup8x16,   Iop_Dup16x8,   Iop_Dup32x4,
@@ -1746,6 +1833,12 @@ typedef
       Iop_Perm8x16,
       Iop_Perm32x4, /* ditto, except argR values are restricted to 0 .. 3 */
 
+      /* same, but Triop (argL consists of two 128-bit parts) */
+      /* correct range for argR values is 0..31 */
+      /* (V128, V128, V128) -> V128 */
+      /* (ArgL_first, ArgL_second, ArgR) -> result */
+      Iop_Perm8x16x2,
+
       /* MISC CONVERSION -- get high bits of each byte lane, a la
          x86/amd64 pmovmskb */
       Iop_GetMSBs8x16, /* V128 -> I16 */
@@ -1753,6 +1846,22 @@ typedef
       /* Vector Reciprocal Estimate and Vector Reciprocal Square Root Estimate
          See floating-point equivalents for details. */
       Iop_RecipEst32Ux4, Iop_RSqrtEst32Ux4,
+
+      /* 128-bit multipy by 10 instruction, result is lower 128-bits */
+      Iop_MulI128by10,
+
+      /* 128-bit multipy by 10 instruction, result is carry out from the MSB */
+      Iop_MulI128by10Carry,
+
+      /* 128-bit multipy by 10 instruction, result is lower 128-bits of the
+       * source times 10 plus the carry in
+       */
+      Iop_MulI128by10E,
+
+      /* 128-bit multipy by 10 instruction, result is carry out from the MSB
+       * of the source times 10 plus the carry in
+       */
+      Iop_MulI128by10ECarry,
 
       /* ------------------ 256-bit SIMD Integer. ------------------ */
 
@@ -1828,6 +1937,7 @@ typedef
 
       Iop_Max32Fx8, Iop_Min32Fx8,
       Iop_Max64Fx4, Iop_Min64Fx4,
+      Iop_Rotx32, Iop_Rotx64,
       Iop_LAST      /* must be the last enumerator */
    }
    IROp;
@@ -1835,6 +1945,10 @@ typedef
 /* Pretty-print an op. */
 extern void ppIROp ( IROp );
 
+/* For a given operand return the types of its arguments and its result. */
+extern void typeOfPrimop ( IROp op,
+                           /*OUTs*/ IRType* t_dst, IRType* t_arg1,
+                           IRType* t_arg2, IRType* t_arg3, IRType* t_arg4 );
 
 /* Encoding of IEEE754-specified rounding modes.
    Note, various front and back ends rely on the actual numerical
@@ -1896,7 +2010,7 @@ typedef
       Iex_ITE,
       Iex_CCall,
       Iex_VECRET,
-      Iex_BBPTR
+      Iex_GSPTR
    }
    IRExprTag;
 
@@ -2071,7 +2185,7 @@ struct _IRExpr {
          quite poor code to be generated.  Try to avoid it.
 
          In principle it would be allowable to have the arg vector
-         contain an IRExpr_VECRET(), although not IRExpr_BBPTR(). However,
+         contain an IRExpr_VECRET(), although not IRExpr_GSPTR(). However,
          at the moment there is no requirement for clean helper calls to
          be able to return V128 or V256 values.  Hence this is not allowed.
 
@@ -2135,8 +2249,8 @@ struct _IRQop {
    only appear at most once in an argument list, and it may not appear
    at all in argument lists for clean helper calls. */
 
-static inline Bool is_IRExpr_VECRET_or_BBPTR ( const IRExpr* e ) {
-   return e->tag == Iex_VECRET || e->tag == Iex_BBPTR;
+static inline Bool is_IRExpr_VECRET_or_GSPTR ( const IRExpr* e ) {
+   return e->tag == Iex_VECRET || e->tag == Iex_GSPTR;
 }
 
 
@@ -2156,7 +2270,7 @@ extern IRExpr* IRExpr_Const  ( IRConst* con );
 extern IRExpr* IRExpr_CCall  ( IRCallee* cee, IRType retty, IRExpr** args );
 extern IRExpr* IRExpr_ITE    ( IRExpr* cond, IRExpr* iftrue, IRExpr* iffalse );
 extern IRExpr* IRExpr_VECRET ( void );
-extern IRExpr* IRExpr_BBPTR  ( void );
+extern IRExpr* IRExpr_GSPTR  ( void );
 
 /* Deep-copy an IRExpr. */
 extern IRExpr* deepCopyIRExpr ( const IRExpr* );
@@ -2178,7 +2292,12 @@ extern IRExpr** mkIRExprVec_6 ( IRExpr*, IRExpr*, IRExpr*, IRExpr*,
 extern IRExpr** mkIRExprVec_7 ( IRExpr*, IRExpr*, IRExpr*, IRExpr*,
                                 IRExpr*, IRExpr*, IRExpr* );
 extern IRExpr** mkIRExprVec_8 ( IRExpr*, IRExpr*, IRExpr*, IRExpr*,
-                                IRExpr*, IRExpr*, IRExpr*, IRExpr*);
+                                IRExpr*, IRExpr*, IRExpr*, IRExpr* );
+extern IRExpr** mkIRExprVec_9 ( IRExpr*, IRExpr*, IRExpr*, IRExpr*,
+                                IRExpr*, IRExpr*, IRExpr*, IRExpr*, IRExpr* );
+extern IRExpr** mkIRExprVec_13 ( IRExpr*, IRExpr*, IRExpr*, IRExpr*,
+                                 IRExpr*, IRExpr*, IRExpr*, IRExpr*,
+                                 IRExpr*, IRExpr*, IRExpr*, IRExpr*, IRExpr* );
 
 /* IRExpr copiers:
    - shallowCopy: shallow-copy (ie. create a new vector that shares the
@@ -2260,6 +2379,7 @@ typedef
       Ijk_SigTRAP,        /* current instruction synths SIGTRAP */
       Ijk_SigSEGV,        /* current instruction synths SIGSEGV */
       Ijk_SigBUS,         /* current instruction synths SIGBUS */
+      Ijk_SigFPE,         /* current instruction synths generic SIGFPE */
       Ijk_SigFPE_IntDiv,  /* current instruction synths SIGFPE - IntDiv */
       Ijk_SigFPE_IntOvf,  /* current instruction synths SIGFPE - IntOvf */
       /* Unfortunately, various guest-dependent syscall kinds.  They
@@ -2269,6 +2389,8 @@ typedef
       Ijk_Sys_int128,     /* amd64/x86 'int $0x80' */
       Ijk_Sys_int129,     /* amd64/x86 'int $0x81' */
       Ijk_Sys_int130,     /* amd64/x86 'int $0x82' */
+      Ijk_Sys_int145,     /* amd64/x86 'int $0x91' */
+      Ijk_Sys_int210,     /* amd64/x86 'int $0xD2' */
       Ijk_Sys_sysenter    /* x86 'sysenter'.  guest_EIP becomes 
                              invalid at the point this happens. */
    }
@@ -2308,10 +2430,10 @@ extern void ppIRJumpKind ( IRJumpKind );
      number of times at a fixed interval, if required.
 
    Normally, code is generated to pass just the args to the helper.
-   However, if IRExpr_BBPTR() is present in the argument list (at most
-   one instance is allowed), then the baseblock pointer is passed for
+   However, if IRExpr_GSPTR() is present in the argument list (at most
+   one instance is allowed), then the guest state pointer is passed for
    that arg, so that the callee can access the guest state.  It is
-   invalid for .nFxState to be zero but IRExpr_BBPTR() to be present,
+   invalid for .nFxState to be zero but IRExpr_GSPTR() to be present,
    since .nFxState==0 is a claim that the call does not access guest
    state.
 
@@ -2348,7 +2470,7 @@ typedef
          allowed. */
       IRCallee* cee;    /* where to call */
       IRExpr*   guard;  /* :: Ity_Bit.  Controls whether call happens */
-      /* The args vector may contain IRExpr_BBPTR() and/or
+      /* The args vector may contain IRExpr_GSPTR() and/or
          IRExpr_VECRET(), in both cases, at most once. */
       IRExpr**  args;   /* arg vector, ends in NULL. */
       IRTemp    tmp;    /* to assign result to, or IRTemp_INVALID if none */
@@ -2577,6 +2699,7 @@ typedef
 typedef
    enum {
       ILGop_INVALID=0x1D00,
+      ILGop_IdentV128, /* 128 bit vector, no conversion */
       ILGop_Ident64,   /* 64 bit, no conversion */
       ILGop_Ident32,   /* 32 bit, no conversion */
       ILGop_16Uto32,   /* 16 bit load, Z-widen to 32 */

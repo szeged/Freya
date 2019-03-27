@@ -8,7 +8,7 @@
    This file is part of Cachegrind, a Valgrind tool for cache
    profiling programs.
 
-   Copyright (C) 2002-2013 Nicholas Nethercote
+   Copyright (C) 2002-2017 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -210,12 +210,14 @@ static HChar* get_perm_string(const HChar* s)
 static void get_debug_info(Addr instr_addr, const HChar **dir,
                            const HChar **file, const HChar **fn, UInt* line)
 {
+   DiEpoch ep = VG_(current_DiEpoch)();
    Bool found_file_line = VG_(get_filename_linenum)(
+                             ep,
                              instr_addr, 
                              file, dir,
                              line
                           );
-   Bool found_fn        = VG_(get_fnname)(instr_addr, fn);
+   Bool found_fn        = VG_(get_fnname)(ep, instr_addr, fn);
 
    if (!found_file_line) {
       *file = "???";
@@ -294,7 +296,7 @@ static LineCC* get_lineCC(Addr origAddr)
  * As this can be detected at instrumentation time, and results
  * in faster simulation, special-casing is benefical.
  *
- * Abbrevations used in var/function names:
+ * Abbreviations used in var/function names:
  *  IrNoX - instruction read does not cross cache lines
  *  IrGen - generic instruction read; not detected as IrNoX
  *  Ir    - not known / not important whether it is an IrNoX
@@ -914,7 +916,6 @@ void addEvent_Dr ( CgState* cgs, InstrInfo* inode, Int datasize, IRAtom* ea )
 static
 void addEvent_Dw ( CgState* cgs, InstrInfo* inode, Int datasize, IRAtom* ea )
 {
-   Event* lastEvt;
    Event* evt;
 
    tl_assert(isIRAtom(ea));
@@ -924,15 +925,16 @@ void addEvent_Dw ( CgState* cgs, InstrInfo* inode, Int datasize, IRAtom* ea )
       return;
 
    /* Is it possible to merge this write with the preceding read? */
-   lastEvt = &cgs->events[cgs->events_used-1];
-   if (cgs->events_used > 0
-       && lastEvt->tag       == Ev_Dr
-       && lastEvt->Ev.Dr.szB == datasize
-       && lastEvt->inode     == inode
-       && eqIRAtom(lastEvt->Ev.Dr.ea, ea))
-   {
-      lastEvt->tag   = Ev_Dm;
-      return;
+   if (cgs->events_used > 0) {
+      Event* lastEvt = &cgs->events[cgs->events_used-1];
+      if (   lastEvt->tag       == Ev_Dr
+          && lastEvt->Ev.Dr.szB == datasize
+          && lastEvt->inode     == inode
+          && eqIRAtom(lastEvt->Ev.Dr.ea, ea))
+      {
+         lastEvt->tag   = Ev_Dm;
+         return;
+      }
    }
 
    /* No.  Add as normal. */
@@ -1000,7 +1002,7 @@ void addEvent_Bc ( CgState* cgs, InstrInfo* inode, IRAtom* guard )
    Event* evt;
    tl_assert(isIRAtom(guard));
    tl_assert(typeOfIRExpr(cgs->sbOut->tyenv, guard) 
-             == (sizeof(HWord)==4 ? Ity_I32 : Ity_I64));
+             == (sizeof(RegWord)==4 ? Ity_I32 : Ity_I64));
    if (!clo_branch_sim)
       return;
    if (cgs->events_used == N_EVENTS)
@@ -1020,7 +1022,7 @@ void addEvent_Bi ( CgState* cgs, InstrInfo* inode, IRAtom* whereTo )
    Event* evt;
    tl_assert(isIRAtom(whereTo));
    tl_assert(typeOfIRExpr(cgs->sbOut->tyenv, whereTo) 
-             == (sizeof(HWord)==4 ? Ity_I32 : Ity_I64));
+             == (sizeof(RegWord)==4 ? Ity_I32 : Ity_I64));
    if (!clo_branch_sim)
       return;
    if (cgs->events_used == N_EVENTS)
@@ -1456,7 +1458,7 @@ static void fprint_CC_table_and_calc_totals(void)
 
       // Print the LineCC
       if (clo_cache_sim && clo_branch_sim) {
-         VG_(fprintf)(fp,  "%u %llu %llu %llu"
+         VG_(fprintf)(fp,  "%d %llu %llu %llu"
                              " %llu %llu %llu"
                              " %llu %llu %llu"
                              " %llu %llu %llu %llu\n",
@@ -1468,7 +1470,7 @@ static void fprint_CC_table_and_calc_totals(void)
                             lineCC->Bi.b, lineCC->Bi.mp);
       }
       else if (clo_cache_sim && !clo_branch_sim) {
-         VG_(fprintf)(fp,  "%u %llu %llu %llu"
+         VG_(fprintf)(fp,  "%d %llu %llu %llu"
                              " %llu %llu %llu"
                              " %llu %llu %llu\n",
                             lineCC->loc.line,
@@ -1477,7 +1479,7 @@ static void fprint_CC_table_and_calc_totals(void)
                             lineCC->Dw.a, lineCC->Dw.m1, lineCC->Dw.mL);
       }
       else if (!clo_cache_sim && clo_branch_sim) {
-         VG_(fprintf)(fp,  "%u %llu"
+         VG_(fprintf)(fp,  "%d %llu"
                              " %llu %llu %llu %llu\n",
                             lineCC->loc.line,
                             lineCC->Ir.a, 
@@ -1485,7 +1487,7 @@ static void fprint_CC_table_and_calc_totals(void)
                             lineCC->Bi.b, lineCC->Bi.mp);
       }
       else {
-         VG_(fprintf)(fp,  "%u %llu\n",
+         VG_(fprintf)(fp,  "%d %llu\n",
                             lineCC->loc.line,
                             lineCC->Ir.a);
       }
@@ -1698,11 +1700,11 @@ static void cg_fini(Int exitcode)
       VG_(dmsg)("cachegrind: with zero      info:%6.1f%% (%d)\n", 
                 no_debugs * 100.0 / debug_lookups, no_debugs);
 
-      VG_(dmsg)("cachegrind: string table size: %lu\n",
+      VG_(dmsg)("cachegrind: string table size: %u\n",
                 VG_(OSetGen_Size)(stringTable));
-      VG_(dmsg)("cachegrind: CC table size: %lu\n",
+      VG_(dmsg)("cachegrind: CC table size: %u\n",
                 VG_(OSetGen_Size)(CC_table));
-      VG_(dmsg)("cachegrind: InstrInfo table size: %lu\n",
+      VG_(dmsg)("cachegrind: InstrInfo table size: %u\n",
                 VG_(OSetGen_Size)(instrInfoTable));
    }
 }
@@ -1783,7 +1785,7 @@ static void cg_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a cache and branch-prediction profiler");
    VG_(details_copyright_author)(
-      "Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote et al.");
+      "Copyright (C) 2002-2017, and GNU GPL'd, by Nicholas Nethercote et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
    VG_(details_avg_translation_sizeB) ( 500 );
 

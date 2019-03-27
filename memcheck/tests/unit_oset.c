@@ -28,6 +28,7 @@
 #define vgPlain_memset                 memset
 #define vgPlain_memcpy                 memcpy
 #define vgPlain_memmove                memmove
+#define vgPlain_strcmp                 strcmp
 
 // Crudely replace some functions (in m_xarray.c, but not needed for
 // this unit test) by (hopefully) failing asserts.
@@ -207,7 +208,8 @@ void example1singleset(OSet* oset, char *descr)
    // Check that we can remove half of the elements, and that their values
    // are as expected.
    for (i = 0; i < NN; i += 2) {
-      assert( pv = VG_(OSetGen_Remove)(oset, vs[i]) );
+      pv = VG_(OSetGen_Remove)(oset, vs[i]);
+      assert( pv );
       assert( pv == vs[i] );
    }
 
@@ -216,7 +218,8 @@ void example1singleset(OSet* oset, char *descr)
 
    // Check we can find the remaining elements (with the right values).
    for (i = 1; i < NN; i += 2) {
-      assert( pv = VG_(OSetGen_LookupWithCmp)(oset, vs[i], NULL) );
+      pv = VG_(OSetGen_LookupWithCmp)(oset, vs[i], NULL);
+      assert( pv );
       assert( pv == vs[i] );
    }
 
@@ -228,7 +231,8 @@ void example1singleset(OSet* oset, char *descr)
    // Check that we can remove the remaining half of the elements, and that
    // their values are as expected.
    for (i = 1; i < NN; i += 2) {
-      assert( pv = VG_(OSetGen_Remove)(oset, vs[i]) );
+      pv = VG_(OSetGen_Remove)(oset, vs[i]);
+      assert( pv );
       assert( pv == vs[i] );
    }
 
@@ -430,8 +434,8 @@ void example1b(void)
 
 typedef struct {
    Int   b1;
-   Addr  first;
-   Addr  last;
+   RegWord  first;
+   RegWord  last;
    Int   b2;
 }
 Block;
@@ -441,13 +445,14 @@ static HChar *blockToStr(void *p)
 {
    static HChar buf[32];
    Block* b = (Block*)p;
-   sprintf(buf, "<(%d) %lu..%lu (%d)>", b->b1, b->first, b->last, b->b2);
+   sprintf(buf, "<(%d) %" FMT_REGWORD "u..%" FMT_REGWORD "u (%d)>",
+           b->b1, b->first, b->last, b->b2);
    return buf;
 }
 
 static Word blockCmp(const void* vkey, const void* velem)
 {
-   Addr   key  = *(const Addr*)vkey;
+   RegWord   key  = *(const RegWord*)vkey;
    const Block* elem = (const Block*)velem;
 
    assert(elem->first <= elem->last);
@@ -459,7 +464,7 @@ static Word blockCmp(const void* vkey, const void* velem)
 void example2(void)
 {
    Int i, n;
-   Addr a;
+   RegWord a;
    Block* vs[NN];
    Block v, prev;
    Block *pv;

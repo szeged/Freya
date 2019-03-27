@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -108,6 +108,7 @@ typedef
 #define VEX_HWCAPS_PPC32_VX    (1<<12) /* Vector-scalar floating-point (VSX); implies ISA 2.06 or higher  */
 #define VEX_HWCAPS_PPC32_DFP   (1<<17) /* Decimal Floating Point (DFP) -- e.g., dadd */
 #define VEX_HWCAPS_PPC32_ISA2_07   (1<<19) /* ISA 2.07 -- e.g., mtvsrd */
+#define VEX_HWCAPS_PPC32_ISA3_0    (1<<21) /* ISA 3.0  -- e.g., cnttzw */
 
 /* ppc64: baseline capability is integer and basic FP insns */
 #define VEX_HWCAPS_PPC64_V     (1<<13) /* Altivec (VMX) */
@@ -117,6 +118,7 @@ typedef
 #define VEX_HWCAPS_PPC64_VX    (1<<16) /* Vector-scalar floating-point (VSX); implies ISA 2.06 or higher  */
 #define VEX_HWCAPS_PPC64_DFP   (1<<18) /* Decimal Floating Point (DFP) -- e.g., dadd */
 #define VEX_HWCAPS_PPC64_ISA2_07   (1<<20) /* ISA 2.07 -- e.g., mtvsrd */
+#define VEX_HWCAPS_PPC64_ISA3_0    (1<<22) /* ISA 3.0  -- e.g., cnttzw */
 
 /* s390x: Hardware capability encoding
 
@@ -139,7 +141,9 @@ typedef
 #define VEX_S390X_MODEL_Z114     9
 #define VEX_S390X_MODEL_ZEC12    10
 #define VEX_S390X_MODEL_ZBC12    11
-#define VEX_S390X_MODEL_UNKNOWN  12     /* always last in list */
+#define VEX_S390X_MODEL_Z13      12
+#define VEX_S390X_MODEL_Z13S     13
+#define VEX_S390X_MODEL_UNKNOWN  14     /* always last in list */
 #define VEX_S390X_MODEL_MASK     0x3F
 
 #define VEX_HWCAPS_S390X_LDISP (1<<6)   /* Long-displacement facility */
@@ -154,6 +158,9 @@ typedef
 #define VEX_HWCAPS_S390X_FPEXT (1<<15)  /* Floating point extension facility */
 #define VEX_HWCAPS_S390X_LSC   (1<<16)  /* Conditional load/store facility */
 #define VEX_HWCAPS_S390X_PFPO  (1<<17)  /* Perform floating point ops facility */
+#define VEX_HWCAPS_S390X_VX    (1<<18)  /* Vector facility */
+#define VEX_HWCAPS_S390X_MSA5  (1<<19)  /* message security assistance facility */
+
 
 /* Special value representing all available s390x hwcaps */
 #define VEX_HWCAPS_S390X_ALL   (VEX_HWCAPS_S390X_LDISP | \
@@ -167,7 +174,9 @@ typedef
                                 VEX_HWCAPS_S390X_LSC   | \
                                 VEX_HWCAPS_S390X_ETF3  | \
                                 VEX_HWCAPS_S390X_ETF2  | \
-                                VEX_HWCAPS_S390X_PFPO)
+                                VEX_HWCAPS_S390X_PFPO  | \
+                                VEX_HWCAPS_S390X_VX    | \
+                                VEX_HWCAPS_S390X_MSA5)
 
 #define VEX_HWCAPS_S390X(x)  ((x) & ~VEX_S390X_MODEL_MASK)
 #define VEX_S390X_MODEL(x)   ((x) &  VEX_S390X_MODEL_MASK)
@@ -199,26 +208,57 @@ typedef
 
 */
 
-#define VEX_PRID_COMP_MIPS      0x00010000
-#define VEX_PRID_COMP_BROADCOM  0x00020000
-#define VEX_PRID_COMP_NETLOGIC  0x000C0000
-#define VEX_PRID_COMP_CAVIUM    0x000D0000
+#define VEX_PRID_COMP_LEGACY      0x00000000
+#define VEX_PRID_COMP_MIPS        0x00010000
+#define VEX_PRID_COMP_BROADCOM    0x00020000
+#define VEX_PRID_COMP_NETLOGIC    0x000C0000
+#define VEX_PRID_COMP_CAVIUM      0x000D0000
+#define VEX_PRID_COMP_INGENIC_E1  0x00E10000        /* JZ4780 */
+
+/*
+ * These are valid when 23:16 == PRID_COMP_LEGACY
+ */
+#define VEX_PRID_IMP_LOONGSON_64        0x6300  /* Loongson-2/3 */
 
 /*
  * These are the PRID's for when 23:16 == PRID_COMP_MIPS
  */
-#define VEX_PRID_IMP_34K        0x9500
-#define VEX_PRID_IMP_74K        0x9700
+#define VEX_PRID_IMP_34K                0x9500
+#define VEX_PRID_IMP_74K                0x9700
+#define VEX_PRID_IMP_P5600              0xa800
 
-/* CPU has FPU and 32 dbl. prec. FP registers */
-#define VEX_PRID_CPU_32FPR      0x00000040
-
+/*
+ * Instead of Company Options values, bits 31:24 will be packed with
+ * additional information, such as isa level and FP mode.
+ */
+#define VEX_MIPS_CPU_ISA_M32R1      0x01000000
+#define VEX_MIPS_CPU_ISA_M32R2      0x02000000
+#define VEX_MIPS_CPU_ISA_M64R1      0x04000000
+#define VEX_MIPS_CPU_ISA_M64R2      0x08000000
+#define VEX_MIPS_CPU_ISA_M32R6      0x10000000
+#define VEX_MIPS_CPU_ISA_M64R6      0x20000000
+/* FP mode is FR = 1 (32 dbl. prec. FP registers) */
+#define VEX_MIPS_HOST_FR            0x40000000
+/* Get MIPS Extended Information */
+#define VEX_MIPS_EX_INFO(x) ((x) & 0xFF000000)
 /* Get MIPS Company ID from HWCAPS */
 #define VEX_MIPS_COMP_ID(x) ((x) & 0x00FF0000)
 /* Get MIPS Processor ID from HWCAPS */
 #define VEX_MIPS_PROC_ID(x) ((x) & 0x0000FF00)
 /* Get MIPS Revision from HWCAPS */
 #define VEX_MIPS_REV(x) ((x) & 0x000000FF)
+/* Get host FP mode */
+#define VEX_MIPS_HOST_FP_MODE(x) (!!(VEX_MIPS_EX_INFO(x) & VEX_MIPS_HOST_FR))
+/* Check if the processor supports MIPS32R2. */
+#define VEX_MIPS_CPU_HAS_MIPS32R2(x) (VEX_MIPS_EX_INFO(x) & \
+                                      VEX_MIPS_CPU_ISA_M32R2)
+/* Check if the processor supports MIPS64R2. */
+#define VEX_MIPS_CPU_HAS_MIPS64R2(x) (VEX_MIPS_EX_INFO(x) & \
+                                      VEX_MIPS_CPU_ISA_M64R2)
+/* Check if the processor supports MIPSR6. */
+#define VEX_MIPS_CPU_HAS_MIPSR6(x) (VEX_MIPS_EX_INFO(x) & \
+                                    (VEX_MIPS_CPU_ISA_M32R6 | \
+                                    VEX_MIPS_CPU_ISA_M64R6))
 /* Check if the processor supports DSP ASE Rev 2. */
 #define VEX_MIPS_PROC_DSP2(x) ((VEX_MIPS_COMP_ID(x) == VEX_PRID_COMP_MIPS) && \
                                (VEX_MIPS_PROC_ID(x) == VEX_PRID_IMP_74K))
@@ -226,6 +266,11 @@ typedef
 #define VEX_MIPS_PROC_DSP(x)  (VEX_MIPS_PROC_DSP2(x) || \
                                ((VEX_MIPS_COMP_ID(x) == VEX_PRID_COMP_MIPS) && \
                                (VEX_MIPS_PROC_ID(x) == VEX_PRID_IMP_34K)))
+
+/* Check if the processor supports MIPS MSA (SIMD)*/
+#define VEX_MIPS_PROC_MSA(x) ((VEX_MIPS_COMP_ID(x) == VEX_PRID_COMP_MIPS) && \
+                              (VEX_MIPS_PROC_ID(x) == VEX_PRID_IMP_P5600) && \
+                              (VEX_MIPS_HOST_FP_MODE(x)))
 
 /* These return statically allocated strings. */
 
@@ -296,6 +341,9 @@ typedef
          line size of 64 bytes would be encoded here as 6. */
       UInt arm64_dMinLine_lg2_szB;
       UInt arm64_iMinLine_lg2_szB;
+      /* ARM64: does the host require us to use the fallback LLSC
+         implementation? */
+      Bool arm64_requires_fallback_LLSC;
    }
    VexArchInfo;
 
@@ -319,11 +367,13 @@ void LibVEX_default_VexArchInfo ( /*OUT*/VexArchInfo* vai );
    guest_amd64_assume_fs_is_const
       guest is amd64-linux                ==> True
       guest is amd64-darwin               ==> False
+      guest is amd64-solaris              ==> True
       guest is other                      ==> inapplicable
 
    guest_amd64_assume_gs_is_const
       guest is amd64-darwin               ==> True
       guest is amd64-linux                ==> True
+      guest is amd64-solaris              ==> False
       guest is other                      ==> inapplicable
 
    guest_ppc_zap_RZ_at_blr
@@ -335,6 +385,11 @@ void LibVEX_default_VexArchInfo ( /*OUT*/VexArchInfo* vai );
       guest is ppc64-linux                ==> const True
       guest is ppc32-linux                ==> const False
       guest is other                      ==> inapplicable
+
+   guest__use_fallback_LLSC
+      guest is mips32                     ==> applicable, default True
+      guest is mips64                     ==> applicable, default True
+      guest is arm64                      ==> applicable, default False
 
    host_ppc_calls_use_fndescrs:
       host is ppc32-linux                 ==> False
@@ -350,7 +405,7 @@ typedef
 
       /* AMD64 GUESTS only: should we translate %fs-prefixed
          instructions using the assumption that %fs always contains
-         the same value? (typically zero on linux) */
+         the same value? (typically zero on linux and solaris) */
       Bool guest_amd64_assume_fs_is_const;
 
       /* AMD64 GUESTS only: should we translate %gs-prefixed
@@ -368,10 +423,18 @@ typedef
          is assumed equivalent to a fn which always returns False. */
       Bool (*guest_ppc_zap_RZ_at_bl)(Addr);
 
+      /* Potentially for all guests that use LL/SC: use the fallback
+         (synthesised) implementation rather than passing LL/SC on to
+         the host? */
+      Bool guest__use_fallback_LLSC;
+
       /* PPC32/PPC64 HOSTS only: does '&f' give us a pointer to a
          function descriptor on the host, or to the function code
          itself?  True => descriptor, False => code. */
       Bool host_ppc_calls_use_fndescrs;
+
+      /* MIPS32/MIPS64 GUESTS only: emulated FPU mode. */
+      UInt guest_mips_fp_mode;
    }
    VexAbiInfo;
 
@@ -440,7 +503,7 @@ typedef
          Default=120.  A setting of zero disables unrolling.  */
       Int iropt_unroll_thresh;
       /* What's the maximum basic block length the front end(s) allow?
-         BBs longer than this are split up.  Default=50 (guest
+         BBs longer than this are split up.  Default=60 (guest
          insns). */
       Int guest_max_insns;
       /* How aggressive should front ends be in following
@@ -452,6 +515,11 @@ typedef
       /* EXPERIMENTAL: chase across conditional branches?  Not all
          front ends honour this.  Default: NO. */
       Bool guest_chase_cond;
+      /* Register allocator version. Allowed values are:
+         - '2': previous, good and slow implementation.
+         - '3': current, faster implementation; perhaps producing slightly worse
+                spilling decisions. */
+      UInt regalloc_version;
    }
    VexControl;
 
@@ -741,8 +809,17 @@ typedef
    VexTranslateArgs;
 
 
+/* Runs the entire compilation pipeline. */
 extern 
-VexTranslateResult LibVEX_Translate ( VexTranslateArgs* );
+VexTranslateResult LibVEX_Translate ( /*MOD*/ VexTranslateArgs* );
+
+/* Runs the first half of the compilation pipeline: lifts guest code to IR,
+   optimises, instruments and optimises it some more. */
+extern
+IRSB* LibVEX_FrontEnd ( /*MOD*/ VexTranslateArgs*,
+                        /*OUT*/ VexTranslateResult* res,
+                        /*OUT*/ VexRegisterUpdates* pxControl );
+
 
 /* A subtlety re interaction between self-checking translations and
    bb-chasing.  The supplied chase_into_ok function should say NO
@@ -840,7 +917,14 @@ typedef
       IRType t_opnd4;  // type of 4th operand
       UInt  rounding_mode;
       UInt  num_operands; // excluding rounding mode, if any
-      Bool  shift_amount_is_immediate;
+      /* The following two members describe if this operand has immediate
+       *  operands. There are a few restrictions:
+       *    (1) An operator can have at most one immediate operand.
+       * (2) If there is an immediate operand, it is the right-most operand
+       *  An immediate_index of 0 means there is no immediate operand.
+       */
+      UInt immediate_type;  // size of immediate Ity_I8, Ity_16
+      UInt immediate_index; // operand number: 1, 2
    }
    IRICB;
 

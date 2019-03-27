@@ -12,7 +12,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward.  All rights reserved.
+   Copyright (C) 2000-2017 Julian Seward.  All rights reserved.
 
    Redistribution and use in source and binary forms, with or without
    modification, are permitted provided that the following conditions
@@ -89,7 +89,7 @@
         || (__VALGRIND_MAJOR__ == 3 && __VALGRIND_MINOR__ >= 6))
 */
 #define __VALGRIND_MAJOR__    3
-#define __VALGRIND_MINOR__    10
+#define __VALGRIND_MINOR__    14
 
 
 #include <stdarg.h>
@@ -122,6 +122,8 @@
 #undef PLAT_s390x_linux
 #undef PLAT_mips32_linux
 #undef PLAT_mips64_linux
+#undef PLAT_x86_solaris
+#undef PLAT_amd64_solaris
 
 
 #if defined(__APPLE__) && defined(__i386__)
@@ -137,7 +139,7 @@
 #  define PLAT_amd64_win64 1
 #elif defined(__linux__) && defined(__i386__)
 #  define PLAT_x86_linux 1
-#elif defined(__linux__) && defined(__x86_64__)
+#elif defined(__linux__) && defined(__x86_64__) && !defined(__ILP32__)
 #  define PLAT_amd64_linux 1
 #elif defined(__linux__) && defined(__powerpc__) && !defined(__powerpc64__)
 #  define PLAT_ppc32_linux 1
@@ -157,6 +159,10 @@
 #  define PLAT_mips64_linux 1
 #elif defined(__linux__) && defined(__mips__) && (__mips!=64)
 #  define PLAT_mips32_linux 1
+#elif defined(__sun) && defined(__i386__)
+#  define PLAT_x86_solaris 1
+#elif defined(__sun) && defined(__x86_64__)
+#  define PLAT_amd64_solaris 1
 #else
 /* If we're not compiling for our target platform, don't generate
    any inline asms.  */
@@ -244,10 +250,11 @@
    inline asm stuff to be useful.
 */
 
-/* ------------------------- x86-{linux,darwin} ---------------- */
+/* ----------------- x86-{linux,darwin,solaris} ---------------- */
 
 #if defined(PLAT_x86_linux)  ||  defined(PLAT_x86_darwin)  \
-    ||  (defined(PLAT_x86_win32) && defined(__GNUC__))
+    ||  (defined(PLAT_x86_win32) && defined(__GNUC__)) \
+    ||  defined(PLAT_x86_solaris)
 
 typedef
    struct { 
@@ -307,7 +314,8 @@ typedef
                     );                                           \
  } while (0)
 
-#endif /* PLAT_x86_linux || PLAT_x86_darwin || (PLAT_x86_win32 && __GNUC__) */
+#endif /* PLAT_x86_linux || PLAT_x86_darwin || (PLAT_x86_win32 && __GNUC__)
+          || PLAT_x86_solaris */
 
 /* ------------------------- x86-Win32 ------------------------- */
 
@@ -382,9 +390,10 @@ valgrind_do_client_request_expr(uintptr_t _zzq_default, uintptr_t _zzq_request,
 
 #endif /* PLAT_x86_win32 */
 
-/* ------------------------ amd64-{linux,darwin} --------------- */
+/* ----------------- amd64-{linux,darwin,solaris} --------------- */
 
 #if defined(PLAT_amd64_linux)  ||  defined(PLAT_amd64_darwin) \
+    ||  defined(PLAT_amd64_solaris) \
     ||  (defined(PLAT_amd64_win64) && defined(__GNUC__))
 
 typedef
@@ -445,7 +454,7 @@ typedef
                     );                                           \
  } while (0)
 
-#endif /* PLAT_amd64_linux || PLAT_amd64_darwin */
+#endif /* PLAT_amd64_linux || PLAT_amd64_darwin || PLAT_amd64_solaris */
 
 /* ------------------------- amd64-Win64 ------------------------- */
 
@@ -782,7 +791,8 @@ typedef
                      "orr x10, x10, x10\n\t"                      \
                      "mov %0, x3"     /*result*/                  \
                      : "=r" (_zzq_result)                         \
-                     : "r" (_zzq_default), "r" (&_zzq_args[0])    \
+                     : "r" ((unsigned long int)(_zzq_default)),   \
+                       "r" (&_zzq_args[0])                        \
                      : "cc","memory", "x3", "x4");                \
     _zzq_result;                                                  \
   })
@@ -933,7 +943,7 @@ typedef
                      "move %0, $11\n\t"     /*result*/            \
                      : "=r" (_zzq_result)                         \
                      : "r" (_zzq_default), "r" (&_zzq_args[0])    \
-                     : "$11", "$12");                             \
+                     : "$11", "$12", "memory");                   \
     _zzq_result;                                                  \
   })
 
@@ -1004,7 +1014,7 @@ typedef
                          "move %0, $11\n\t"     /*result*/          \
                          : "=r" (_zzq_result)                       \
                          : "r" (_zzq_default), "r" (&_zzq_args[0])  \
-                         : "$11", "$12");                           \
+                         : "$11", "$12", "memory");                 \
     _zzq_result;                                                    \
   })
 
@@ -1132,9 +1142,10 @@ typedef
    do { volatile unsigned long _junk;                             \
         CALL_FN_W_7W(_junk,fnptr,arg1,arg2,arg3,arg4,arg5,arg6,arg7); } while (0)
 
-/* ------------------------- x86-{linux,darwin} ---------------- */
+/* ----------------- x86-{linux,darwin,solaris} ---------------- */
 
-#if defined(PLAT_x86_linux)  ||  defined(PLAT_x86_darwin)
+#if defined(PLAT_x86_linux)  ||  defined(PLAT_x86_darwin) \
+    ||  defined(PLAT_x86_solaris)
 
 /* These regs are trashed by the hidden call.  No need to mention eax
    as gcc can already see that, plus causes gcc to bomb. */
@@ -1561,11 +1572,12 @@ typedef
       lval = (__typeof__(lval)) _res;                             \
    } while (0)
 
-#endif /* PLAT_x86_linux || PLAT_x86_darwin */
+#endif /* PLAT_x86_linux || PLAT_x86_darwin || PLAT_x86_solaris */
 
-/* ------------------------ amd64-{linux,darwin} --------------- */
+/* ---------------- amd64-{linux,darwin,solaris} --------------- */
 
-#if defined(PLAT_amd64_linux)  ||  defined(PLAT_amd64_darwin)
+#if defined(PLAT_amd64_linux)  ||  defined(PLAT_amd64_darwin) \
+    ||  defined(PLAT_amd64_solaris)
 
 /* ARGREGS: rdi rsi rdx rcx r8 r9 (the rest on stack in R-to-L order) */
 
@@ -2114,7 +2126,7 @@ typedef
       lval = (__typeof__(lval)) _res;                                  \
    } while (0)
 
-#endif /* PLAT_amd64_linux || PLAT_amd64_darwin */
+#endif /* PLAT_amd64_linux || PLAT_amd64_darwin || PLAT_amd64_solaris */
 
 /* ------------------------ ppc32-linux ------------------------ */
 
@@ -2626,7 +2638,7 @@ typedef
 #define __CALLER_SAVED_REGS                                       \
    "lr", "ctr", "xer",                                            \
    "cr0", "cr1", "cr2", "cr3", "cr4", "cr5", "cr6", "cr7",        \
-   "r0", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10",   \
+   "r0", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10",         \
    "r11", "r12", "r13"
 
 /* Macros to save and align the stack before making a function
@@ -3182,7 +3194,7 @@ typedef
 #define __CALLER_SAVED_REGS                                       \
    "lr", "ctr", "xer",                                            \
    "cr0", "cr1", "cr2", "cr3", "cr4", "cr5", "cr6", "cr7",        \
-   "r0", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10",   \
+   "r0", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10",         \
    "r11", "r12", "r13"
 
 /* Macros to save and align the stack before making a function
@@ -5675,15 +5687,17 @@ typedef
 "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "$24", \
 "$25", "$31"
 
-/* These CALL_FN_ macros assume that on mips-linux, sizeof(unsigned
-   long) == 4. */
+/* These CALL_FN_ macros assume that on mips64-linux,
+   sizeof(long long) == 8. */
+
+#define MIPS64_LONG2REG_CAST(x) ((long long)(long)x)
 
 #define CALL_FN_W_v(lval, orig)                                   \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[1];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
+      volatile unsigned long long _argvec[1];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
       __asm__ volatile(                                           \
          "ld $25, 0(%1)\n\t"  /* target->t9 */                    \
          VALGRIND_CALL_NOREDIR_T9                                 \
@@ -5692,16 +5706,16 @@ typedef
          : /*in*/    "0" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_W(lval, orig, arg1)                             \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[2];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
+      volatile unsigned long long _argvec[2];                     \
+      volatile unsigned long long  _res;                          \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"   /* arg1*/                           \
          "ld $25, 0(%1)\n\t"  /* target->t9 */                    \
@@ -5711,17 +5725,17 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_WW(lval, orig, arg1,arg2)                       \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[3];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
+      volatile unsigned long long _argvec[3];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = _orig.nraddr;                                  \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5732,18 +5746,19 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
+
 
 #define CALL_FN_W_WWW(lval, orig, arg1,arg2,arg3)                 \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[4];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
+      volatile unsigned long long _argvec[4];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = _orig.nraddr;                                  \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5755,19 +5770,19 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_WWWW(lval, orig, arg1,arg2,arg3,arg4)           \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[5];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
+      volatile unsigned long long _argvec[5];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5780,20 +5795,20 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_5W(lval, orig, arg1,arg2,arg3,arg4,arg5)        \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[6];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
+      volatile unsigned long long _argvec[6];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5807,21 +5822,21 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_6W(lval, orig, arg1,arg2,arg3,arg4,arg5,arg6)   \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[7];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
+      volatile unsigned long long _argvec[7];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5836,23 +5851,23 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_7W(lval, orig, arg1,arg2,arg3,arg4,arg5,arg6,   \
                                  arg7)                            \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[8];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
+      volatile unsigned long long _argvec[8];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5868,24 +5883,24 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_8W(lval, orig, arg1,arg2,arg3,arg4,arg5,arg6,   \
                                  arg7,arg8)                       \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[9];                          \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
-      _argvec[8] = (unsigned long)(arg8);                         \
+      volatile unsigned long long _argvec[9];                     \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
+      _argvec[8] = MIPS64_LONG2REG_CAST(arg8);                    \
       __asm__ volatile(                                           \
          "ld $4, 8(%1)\n\t"                                       \
          "ld $5, 16(%1)\n\t"                                      \
@@ -5902,25 +5917,25 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_9W(lval, orig, arg1,arg2,arg3,arg4,arg5,arg6,   \
                                  arg7,arg8,arg9)                  \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[10];                         \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
-      _argvec[8] = (unsigned long)(arg8);                         \
-      _argvec[9] = (unsigned long)(arg9);                         \
+      volatile unsigned long long _argvec[10];                    \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
+      _argvec[8] = MIPS64_LONG2REG_CAST(arg8);                    \
+      _argvec[9] = MIPS64_LONG2REG_CAST(arg9);                    \
       __asm__ volatile(                                           \
          "dsubu $29, $29, 8\n\t"                                  \
          "ld $4, 72(%1)\n\t"                                      \
@@ -5941,26 +5956,26 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_10W(lval, orig, arg1,arg2,arg3,arg4,arg5,arg6,  \
                                   arg7,arg8,arg9,arg10)           \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[11];                         \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
-      _argvec[8] = (unsigned long)(arg8);                         \
-      _argvec[9] = (unsigned long)(arg9);                         \
-      _argvec[10] = (unsigned long)(arg10);                       \
+      volatile unsigned long long _argvec[11];                    \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
+      _argvec[8] = MIPS64_LONG2REG_CAST(arg8);                    \
+      _argvec[9] = MIPS64_LONG2REG_CAST(arg9);                    \
+      _argvec[10] = MIPS64_LONG2REG_CAST(arg10);                  \
       __asm__ volatile(                                           \
          "dsubu $29, $29, 16\n\t"                                 \
          "ld $4, 72(%1)\n\t"                                      \
@@ -5983,7 +5998,7 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_11W(lval, orig, arg1,arg2,arg3,arg4,arg5,       \
@@ -5991,20 +6006,20 @@ typedef
                                   arg11)                          \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[12];                         \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
-      _argvec[8] = (unsigned long)(arg8);                         \
-      _argvec[9] = (unsigned long)(arg9);                         \
-      _argvec[10] = (unsigned long)(arg10);                       \
-      _argvec[11] = (unsigned long)(arg11);                       \
+      volatile unsigned long long _argvec[12];                    \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
+      _argvec[8] = MIPS64_LONG2REG_CAST(arg8);                    \
+      _argvec[9] = MIPS64_LONG2REG_CAST(arg9);                    \
+      _argvec[10] = MIPS64_LONG2REG_CAST(arg10);                  \
+      _argvec[11] = MIPS64_LONG2REG_CAST(arg11);                  \
       __asm__ volatile(                                           \
          "dsubu $29, $29, 24\n\t"                                 \
          "ld $4, 72(%1)\n\t"                                      \
@@ -6029,7 +6044,7 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #define CALL_FN_W_12W(lval, orig, arg1,arg2,arg3,arg4,arg5,       \
@@ -6037,21 +6052,21 @@ typedef
                                   arg11,arg12)                    \
    do {                                                           \
       volatile OrigFn        _orig = (orig);                      \
-      volatile unsigned long _argvec[13];                         \
-      volatile unsigned long _res;                                \
-      _argvec[0] = (unsigned long)_orig.nraddr;                   \
-      _argvec[1] = (unsigned long)(arg1);                         \
-      _argvec[2] = (unsigned long)(arg2);                         \
-      _argvec[3] = (unsigned long)(arg3);                         \
-      _argvec[4] = (unsigned long)(arg4);                         \
-      _argvec[5] = (unsigned long)(arg5);                         \
-      _argvec[6] = (unsigned long)(arg6);                         \
-      _argvec[7] = (unsigned long)(arg7);                         \
-      _argvec[8] = (unsigned long)(arg8);                         \
-      _argvec[9] = (unsigned long)(arg9);                         \
-      _argvec[10] = (unsigned long)(arg10);                       \
-      _argvec[11] = (unsigned long)(arg11);                       \
-      _argvec[12] = (unsigned long)(arg12);                       \
+      volatile unsigned long long _argvec[13];                    \
+      volatile unsigned long long _res;                           \
+      _argvec[0] = MIPS64_LONG2REG_CAST(_orig.nraddr);            \
+      _argvec[1] = MIPS64_LONG2REG_CAST(arg1);                    \
+      _argvec[2] = MIPS64_LONG2REG_CAST(arg2);                    \
+      _argvec[3] = MIPS64_LONG2REG_CAST(arg3);                    \
+      _argvec[4] = MIPS64_LONG2REG_CAST(arg4);                    \
+      _argvec[5] = MIPS64_LONG2REG_CAST(arg5);                    \
+      _argvec[6] = MIPS64_LONG2REG_CAST(arg6);                    \
+      _argvec[7] = MIPS64_LONG2REG_CAST(arg7);                    \
+      _argvec[8] = MIPS64_LONG2REG_CAST(arg8);                    \
+      _argvec[9] = MIPS64_LONG2REG_CAST(arg9);                    \
+      _argvec[10] = MIPS64_LONG2REG_CAST(arg10);                  \
+      _argvec[11] = MIPS64_LONG2REG_CAST(arg11);                  \
+      _argvec[12] = MIPS64_LONG2REG_CAST(arg12);                  \
       __asm__ volatile(                                           \
          "dsubu $29, $29, 32\n\t"                                 \
          "ld $4, 72(%1)\n\t"                                      \
@@ -6078,11 +6093,10 @@ typedef
          : /*in*/    "r" (&_argvec[0])                            \
          : /*trash*/ "memory", __CALLER_SAVED_REGS                \
       );                                                          \
-      lval = (__typeof__(lval)) _res;                             \
+      lval = (__typeof__(lval)) (long)_res;                       \
    } while (0)
 
 #endif /* PLAT_mips64_linux */
-
 
 /* ------------------------------------------------------------------ */
 /* ARCHITECTURE INDEPENDENT MACROS for CLIENT REQUESTS.               */
@@ -6106,8 +6120,9 @@ typedef
 
 /* !! ABIWARNING !! ABIWARNING !! ABIWARNING !! ABIWARNING !! 
    This enum comprises an ABI exported by Valgrind to programs
-   which use client requests.  DO NOT CHANGE THE ORDER OF THESE
-   ENTRIES, NOR DELETE ANY -- add new ones at the end. */
+   which use client requests.  DO NOT CHANGE THE NUMERIC VALUES OF THESE
+   ENTRIES, NOR DELETE ANY -- add new ones at the end of the most
+   relevant group. */
 typedef
    enum { VG_USERREQ__RUNNING_ON_VALGRIND  = 0x1001,
           VG_USERREQ__DISCARD_TRANSLATIONS = 0x1002,
@@ -6177,8 +6192,13 @@ typedef
              Other values are not allowed. */
           VG_USERREQ__CHANGE_ERR_DISABLEMENT = 0x1801,
 
+          /* Some requests used for Valgrind internal, such as
+             self-test or self-hosting. */
           /* Initialise IR injection */
-          VG_USERREQ__VEX_INIT_FOR_IRI = 0x1901
+          VG_USERREQ__VEX_INIT_FOR_IRI = 0x1901,
+          /* Used by Inner Valgrind to inform Outer Valgrind where to
+             find the list of inner guest threads */
+          VG_USERREQ__INNER_THREADS    = 0x1902
    } Vg_ClientRequest;
 
 #if !defined(__GNUC__)
@@ -6204,6 +6224,10 @@ typedef
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__DISCARD_TRANSLATIONS,  \
                                     _qzz_addr, _qzz_len, 0, 0, 0)
 
+#define VALGRIND_INNER_THREADS(_qzz_addr)                               \
+   VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__INNER_THREADS,           \
+                                   _qzz_addr, 0, 0, 0, 0)
+
 
 /* These requests are for getting Valgrind itself to print something.
    Possibly with a backtrace.  This is a really ugly hack.  The return value
@@ -6223,6 +6247,7 @@ __inline
 VALGRIND_PRINTF(const char *format, ...)
 {
 #if defined(NVALGRIND)
+   (void)format;
    return 0;
 #else /* NVALGRIND */
 #if defined(_MSC_VER) || defined(__MINGW64__)
@@ -6261,6 +6286,7 @@ __inline
 VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
 {
 #if defined(NVALGRIND)
+   (void)format;
    return 0;
 #else /* NVALGRIND */
 #if defined(_MSC_VER) || defined(__MINGW64__)
@@ -6290,7 +6316,7 @@ VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
 
 
 /* These requests allow control to move from the simulated CPU to the
-   real CPU, calling an arbitary function.
+   real CPU, calling an arbitrary function.
    
    Note that the current ThreadId is inserted as the first argument.
    So this call:
@@ -6471,6 +6497,38 @@ VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__CREATE_MEMPOOL,   \
                                     pool, rzB, is_zeroed, 0, 0)
 
+/* Create a memory pool with some flags specifying extended behaviour.
+   When flags is zero, the behaviour is identical to VALGRIND_CREATE_MEMPOOL.
+   
+   The flag VALGRIND_MEMPOOL_METAPOOL specifies that the pieces of memory 
+   associated with the pool using VALGRIND_MEMPOOL_ALLOC  will be used
+   by the application as superblocks to dole out MALLOC_LIKE blocks using
+   VALGRIND_MALLOCLIKE_BLOCK. In other words, a meta pool is a "2 levels"
+   pool : first level is the blocks described by VALGRIND_MEMPOOL_ALLOC.
+   The second level blocks are described using VALGRIND_MALLOCLIKE_BLOCK.
+   Note that the association between the pool and the second level blocks
+   is implicit : second level blocks will be located inside first level
+   blocks. It is necessary to use the VALGRIND_MEMPOOL_METAPOOL flag
+   for such 2 levels pools, as otherwise valgrind will detect overlapping
+   memory blocks, and will abort execution (e.g. during leak search).
+
+   Such a meta pool can also be marked as an 'auto free' pool using the flag
+   VALGRIND_MEMPOOL_AUTO_FREE, which must be OR-ed together with the
+   VALGRIND_MEMPOOL_METAPOOL. For an 'auto free' pool, VALGRIND_MEMPOOL_FREE
+   will automatically free the second level blocks that are contained
+   inside the first level block freed with VALGRIND_MEMPOOL_FREE.
+   In other words, calling VALGRIND_MEMPOOL_FREE will cause implicit calls
+   to VALGRIND_FREELIKE_BLOCK for all the second level blocks included
+   in the first level block.
+   Note: it is an error to use the VALGRIND_MEMPOOL_AUTO_FREE flag
+   without the VALGRIND_MEMPOOL_METAPOOL flag.
+*/
+#define VALGRIND_MEMPOOL_AUTO_FREE  1
+#define VALGRIND_MEMPOOL_METAPOOL   2
+#define VALGRIND_CREATE_MEMPOOL_EXT(pool, rzB, is_zeroed, flags)        \
+   VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__CREATE_MEMPOOL,          \
+                                   pool, rzB, is_zeroed, flags, 0)
+
 /* Destroy a memory pool. */
 #define VALGRIND_DESTROY_MEMPOOL(pool)                            \
     VALGRIND_DO_CLIENT_REQUEST_STMT(VG_USERREQ__DESTROY_MEMPOOL,  \
@@ -6583,5 +6641,7 @@ VALGRIND_PRINTF_BACKTRACE(const char *format, ...)
 #undef PLAT_s390x_linux
 #undef PLAT_mips32_linux
 #undef PLAT_mips64_linux
+#undef PLAT_x86_solaris
+#undef PLAT_amd64_solaris
 
 #endif   /* __VALGRIND_H */

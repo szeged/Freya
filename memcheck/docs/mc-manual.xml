@@ -57,8 +57,12 @@ problems that are common in C and C++ programs.</para>
 
 <para>Problems like these can be difficult to find by other means,
 often remaining undetected for long periods, then causing occasional,
-difficult-to-diagnose crashes.</para>
+  difficult-to-diagnose crashes.</para>
 
+<para>Memcheck also provides <xref linkend="manual-core.xtree"/> memory
+  profiling using the command line
+  option <computeroutput>--xtree-memory</computeroutput> and the monitor command
+   <computeroutput>xtmemory</computeroutput>.</para>
 </sect1>
 
 
@@ -811,7 +815,7 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
 
   <varlistentry id="opt.leak-check-heuristics" xreflabel="--leak-check-heuristics">
     <term>
-      <option><![CDATA[--leak-check-heuristics=<set> [default: none] ]]></option>
+      <option><![CDATA[--leak-check-heuristics=<set> [default: all] ]]></option>
     </term>
     <listitem>
       <para>Specifies the set of leak check heuristics to be used
@@ -876,6 +880,58 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
     <para> Note that  <option>--show-possibly-lost=no</option> has no effect
       if <option>--show-reachable=yes</option> is specified.</para>
   </varlistentry>
+
+  <varlistentry id="opt.xtree-leak" xreflabel="--xtree-leak">
+    <term>
+      <option><![CDATA[--xtree-leak=<no|yes> [no] ]]></option>
+    </term>
+    <listitem>
+      <para>If set to yes, the results for the leak search done at exit will be
+        output in a 'Callgrind Format' execution tree file. Note that this
+        automatically sets the option <option>--leak-check=full</option>.
+        The produced file
+       will contain the following events:</para>
+      <itemizedlist>
+        <listitem><para><option>RB</option> : Reachable Bytes</para></listitem> 
+         <listitem><para><option>PB</option> : Possibly lost Bytes</para></listitem>
+         <listitem><para><option>IB</option> : Indirectly lost Bytes</para></listitem>
+         <listitem><para><option>DB</option> : Definitely lost Bytes (direct plus indirect)</para></listitem>
+         <listitem><para><option>DIB</option> : Definitely Indirectly lost Bytes (subset of DB)</para></listitem>
+         <listitem><para><option>RBk</option> : reachable Blocks</para></listitem>
+         <listitem><para><option>PBk</option> : Possibly lost Blocks</para></listitem>
+         <listitem><para><option>IBk</option> : Indirectly lost Blocks</para></listitem>
+         <listitem><para><option>DBk</option> : Definitely lost Blocks</para></listitem>
+      </itemizedlist>
+      
+      <para>The increase or decrease for all events above will also be output in
+        the file to provide the delta (increase or decrease) between 2
+        successive leak searches. For example, <option>iRB</option> is the
+        increase of the <option>RB</option> event, <option>dPBk</option> is the
+        decrease of <option>PBk</option> event. The values for the increase and
+        decrease events will be zero for the first leak search done.</para>
+      
+      <para>See <xref linkend="manual-core.xtree"/> for a detailed explanation
+        about execution trees.</para>
+    </listitem>
+  </varlistentry>
+  
+  <varlistentry id="opt.xtree-leak-file" xreflabel="--xtree-leak-file">
+    <term>
+      <option><![CDATA[--xtree-leak-file=<filename> [default:
+      xtleak.kcg.%p] ]]></option>
+    </term>
+    <listitem>
+      <para>Specifies that Valgrind should produce the xtree leak
+        report in the specified file.  Any <option>%p</option>,
+        <option>%q</option> or  <option>%n</option> sequences appearing in
+        the filename are expanded
+        in exactly the same way as they are for <option>--log-file</option>.
+        See the description of <xref linkend="opt.log-file"/>
+        for details. </para>
+      <para>See <xref linkend="manual-core.xtree"/>
+      for a detailed explanation about execution trees formats. </para>
+    </listitem>
+  </varlistentry>
   
   <varlistentry id="opt.undef-value-errors" xreflabel="--undef-value-errors">
     <term>
@@ -885,8 +941,9 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
       <para>Controls whether Memcheck reports
       uses of undefined value errors.  Set this to
       <varname>no</varname> if you don't want to see undefined value
-      errors.  It also has the side effect of speeding up
-      Memcheck somewhat.
+      errors. It also has the side effect of speeding up Memcheck somewhat.
+      AddrCheck (removed in Valgrind 3.1.0) functioned like Memcheck with
+      <option>--undef-value-errors=no</option>.
       </para>
     </listitem>
   </varlistentry>
@@ -947,7 +1004,7 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
 
   <varlistentry id="opt.partial-loads-ok" xreflabel="--partial-loads-ok">
     <term>
-      <option><![CDATA[--partial-loads-ok=<yes|no> [default: no] ]]></option>
+      <option><![CDATA[--partial-loads-ok=<yes|no> [default: yes] ]]></option>
     </term>
     <listitem>
       <para>Controls how Memcheck handles 32-, 64-, 128- and 256-bit
@@ -965,14 +1022,45 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
 
       <para>Note that code that behaves in this way is in violation of
       the ISO C/C++ standards, and should be considered broken.  If
-      at all possible, such code should be fixed.  This option should be
-      used only as a last resort.</para>
+      at all possible, such code should be fixed.</para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.expensive-definedness-checks" xreflabel="--expensive-definedness-checks">
+    <term>
+      <option><![CDATA[--expensive-definedness-checks=<no|auto|yes> [default: auto] ]]></option>
+    </term>
+    <listitem>
+      <para>Controls whether Memcheck should employ more precise but also
+        more expensive (time consuming) instrumentation when checking the
+        definedness of certain values.  In particular, this affects the
+        instrumentation of integer adds, subtracts and equality
+        comparisons.</para>
+      <para>Selecting <option>--expensive-definedness-checks=yes</option>
+        causes Memcheck to use the most accurate analysis possible.  This
+        minimises false error rates but can cause up to 30% performance
+        degradation.</para>
+      <para>Selecting <option>--expensive-definedness-checks=no</option>
+        causes Memcheck to use the cheapest instrumentation possible.  This
+        maximises performance but will normally give an unusably high false
+        error rate.</para>
+      <para>The default
+        setting, <option>--expensive-definedness-checks=auto</option>, is
+        strongly recommended.  This causes Memcheck to use the minimum of
+        expensive instrumentation needed to achieve the same false error
+        rate as <option>--expensive-definedness-checks=yes</option>.  It
+        also enables an instrumentation-time analysis pass which aims to
+        further reduce the costs of accurate instrumentation.  Overall, the
+        performance loss is generally around 5% relative to
+        <option>--expensive-definedness-checks=no</option>, although this is
+        strongly workload dependent.  Note that the exact instrumentation
+        settings in this mode are architecture dependent.</para>
     </listitem>
   </varlistentry>
 
   <varlistentry id="opt.keep-stacktraces" xreflabel="--keep-stacktraces">
     <term>
-      <option><![CDATA[--keep-stacktraces=alloc|free|alloc-and-free|alloc-then-free|none [default: alloc-then-free] ]]></option>
+      <option><![CDATA[--keep-stacktraces=alloc|free|alloc-and-free|alloc-then-free|none [default: alloc-and-free] ]]></option>
     </term>
     <listitem>
       <para>Controls which stack trace(s) to keep for malloc'd and/or
@@ -1023,6 +1111,13 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
       and/or by using a smaller value for the
       option <varname>--num-callers</varname>.
       </para>
+      
+      <para>If you want to use
+        <computeroutput>--xtree-memory=full</computeroutput> memory profiling
+        (see <xref linkend="manual-core.xtree"/> ), then you cannot
+        specify <varname>--keep-stacktraces=free</varname>
+        or <varname>--keep-stacktraces=none</varname>.</para>
+
     </listitem>
   </varlistentry>
 
@@ -1090,9 +1185,38 @@ is <option>--errors-for-leak-kinds=definite,possible</option>
       conversions.  This is in violation of the 32-bit PowerPC ELF
       specification, which makes no provision for locations below the
       stack pointer to be accessible.</para>
+
+      <para>This option is deprecated as of version 3.12 and may be
+      removed from future versions.  You should instead use
+      <option>--ignore-range-below-sp</option> to specify the exact
+      range of offsets below the stack pointer that should be ignored.
+      A suitable equivalent
+      is <option>--ignore-range-below-sp=1024-1</option>.
+      </para>
     </listitem>
   </varlistentry>
 
+  <varlistentry id="opt.ignore-range-below-sp"
+                xreflabel="--ignore-range-below-sp">
+    <term>
+      <option><![CDATA[--ignore-range-below-sp=<number>-<number> ]]></option>
+    </term>
+    <listitem>
+      <para>This is a more general replacement for the deprecated
+      <option>--workaround-gcc296-bugs</option> option.  When
+       specified, it causes Memcheck not to report errors for accesses
+       at the specified offsets below the stack pointer.  The two
+       offsets must be positive decimal numbers and -- somewhat
+       counterintuitively -- the first one must be larger, in order to
+       imply a non-wraparound address range to ignore.  For example,
+       to ignore 4 byte accesses at 8192 bytes below the stack
+       pointer,
+       use <option>--ignore-range-below-sp=8192-8189</option>.  Only
+       one range may be specified.
+      </para>
+    </listitem>
+  </varlistentry>
+  
   <varlistentry id="opt.show-mismatched-frees"
                 xreflabel="--show-mismatched-frees">
     <term>
@@ -1444,6 +1568,22 @@ is necessary.  This allows GCC to copy
 warning will only be emitted if the uninitialised values are later
 used.</para>
 
+<para>As explained above, Memcheck maintains 8 V bits for each byte in your
+process, including for bytes that are in shared memory.  However, the same piece
+of shared memory can be mapped multiple times, by several processes or even by
+the same process (for example, if the process wants a read-only and a read-write
+mapping of the same page).  For such multiple mappings, Memcheck tracks the V
+bits for each mapping independently. This can lead to false positive errors, as
+the shared memory can be initialised via a first mapping, and accessed via
+another mapping.  The access via this other mapping will have its own V bits,
+which have not been changed when the memory was initialised via the first
+mapping.  The bypass for these false positives is to use Memcheck's client
+requests <varname>VALGRIND_MAKE_MEM_DEFINED</varname> and
+<varname>VALGRIND_MAKE_MEM_UNDEFINED</varname> to inform
+Memcheck about what your program does (or what another process does)
+to these shared memory mappings.
+</para>
+
 </sect2>
 
 
@@ -1648,42 +1788,82 @@ built-in gdbserver (see <xref linkend="manual-core-adv.gdbserver-commandhandling
 
 <itemizedlist>
   <listitem>
-    <para><varname>get_vbits &lt;addr&gt; [&lt;len&gt;]</varname>
-    shows the definedness (V) bits for &lt;len&gt; (default 1) bytes
-    starting at &lt;addr&gt;.  The definedness of each byte in the
-    range is given using two hexadecimal digits.  These hexadecimal
-    digits encode the validity of each bit of the corresponding byte,
-    using 0 if the bit is defined and 1 if the bit is undefined.
-    If a byte is not addressable, its validity bits are replaced
-    by <varname>__</varname> (a double underscore).
+    <para><varname>xb &lt;addr&gt; [&lt;len&gt;]</varname>
+      shows the definedness (V) bits and values for &lt;len&gt; (default 1)
+      bytes starting at &lt;addr&gt;.
+      For each 8 bytes, two lines are output.
     </para>
     <para>
-    In the following example, <varname>string10</varname> is an array
-    of 10 characters, in which the even numbered bytes are
-    undefined. In the below example, the byte corresponding
-    to <varname>string10[5]</varname> is not addressable.
+      The first line shows the validity bits for 8 bytes.
+      The definedness of each byte in the range is given using two hexadecimal
+      digits.  These hexadecimal digits encode the validity of each bit of the
+      corresponding byte,
+      using 0 if the bit is defined and 1 if the bit is undefined.
+      If a byte is not addressable, its validity bits are replaced
+      by <varname>__</varname> (a double underscore).
+    </para>
+    <para>
+      The second line shows the values of the bytes below the corresponding
+      validity bits. The format used to show the bytes data is similar to the
+      GDB command 'x /&lt;len&gt;xb &lt;addr&gt;'. The value for a non
+      addressable bytes is shown as ?? (two question marks).
+    </para>
+    <para>
+      In the following example, <varname>string10</varname> is an array
+      of 10 characters, in which the even numbered bytes are
+      undefined. In the below example, the byte corresponding
+      to <varname>string10[5]</varname> is not addressable.
     </para>
 <programlisting><![CDATA[
 (gdb) p &string10
-$4 = (char (*)[10]) 0x8049e28
-(gdb) monitor get_vbits 0x8049e28 10
-ff00ff00 ff__ff00 ff00
-(gdb) 
+$4 = (char (*)[10]) 0x804a2f0
+(gdb) mo xb 0x804a2f0 10
+                  ff      00      ff      00      ff      __      ff      00
+0x804A2F0:      0x3f    0x6e    0x3f    0x65    0x3f    0x??     0x3f    0x65
+                  ff      00
+0x804A2F8:      0x3f    0x00
+Address 0x804A2F0 len 10 has 1 bytes unaddressable
+(gdb)
 ]]></programlisting>
 
-    <para> The command get_vbits cannot be used with registers. To get
-    the validity bits of a register, you must start Valgrind with the
-    option <option>--vgdb-shadow-registers=yes</option>. The validity
-    bits of a register can be obtained by printing the 'shadow 1'
-    corresponding register.  In the below x86 example, the register
-    eax has all its bits undefined, while the register ebx is fully
-    defined.
+    <para> The command xb cannot be used with registers. To get
+      the validity bits of a register, you must start Valgrind with the
+      option <option>--vgdb-shadow-registers=yes</option>. The validity
+      bits of a register can then be obtained by printing the 'shadow 1'
+      corresponding register.  In the below x86 example, the register
+      eax has all its bits undefined, while the register ebx is fully
+      defined.
     </para>
 <programlisting><![CDATA[
 (gdb) p /x $eaxs1
 $9 = 0xffffffff
 (gdb) p /x $ebxs1
 $10 = 0x0
+(gdb) 
+]]></programlisting>
+
+  </listitem>
+
+  <listitem>
+    <para><varname>get_vbits &lt;addr&gt; [&lt;len&gt;]</varname>
+    shows the definedness (V) bits for &lt;len&gt; (default 1) bytes
+    starting at &lt;addr&gt; using the same convention as the
+    <varname>xb</varname> command. <varname>get_vbits</varname> only
+    shows the V bits (grouped by 4 bytes). It does not show the values.
+    If you want to associate V bits with the corresponding byte values, the
+    <varname>xb</varname> command will be easier to use, in particular
+    on little endian computers when associating undefined parts of an integer
+    with their V bits values.
+    </para>
+    <para>
+    The following example shows the result of <varname>get_vibts</varname>
+    on the <varname>string10</varname> used in the  <varname>xb</varname>
+    command explanation.
+    </para>
+<programlisting><![CDATA[
+(gdb) monitor get_vbits 0x804a2f0 10
+ff00ff00 ff__ff00 ff00
+Address 0x804A2F0 len 10 has 1 bytes unaddressable
 (gdb) 
 ]]></programlisting>
 
@@ -1737,7 +1917,7 @@ Address 0x8049E28 len 1 defined
   </listitem>
 
   <listitem>
-    <para><varname>leak_check [full*|summary]
+    <para><varname>leak_check [full*|summary|xtleak]
                               [kinds &lt;set&gt;|reachable|possibleleak*|definiteleak]
                               [heuristics heur1,heur2,...]
                               [increased*|changed|any]
@@ -1746,7 +1926,7 @@ Address 0x8049E28 len 1 defined
     performs a leak check. The <varname>*</varname> in the arguments
     indicates the default values. </para>
 
-    <para> If the <varname>[full*|summary]</varname> argument is
+    <para> If the <varname>[full*|summary|xtleak]</varname> argument is
     <varname>summary</varname>, only a summary of the leak search is given;
     otherwise a full leak report is produced.  A full leak report gives
     detailed information for each leak: the stack trace where the leaked blocks
@@ -1760,6 +1940,13 @@ Address 0x8049E28 len 1 defined
     of leak records to output. If this maximum is reached, the leak
     search  outputs the records with the biggest number of bytes.
     </para>
+    <para>The value <varname>xtleak</varname> also produces a full leak report,
+      but output it as an xtree in a file xtleak.kcg.%p.%n (see <xref linkend="opt.log-file"/>).
+      See <xref linkend="manual-core.xtree"/>
+      for a detailed explanation about execution trees formats.
+      See <xref linkend="opt.xtree-leak"/> for the description of the events
+      in a xtree leak file.
+      </para>
 
     <para>The <varname>kinds</varname> argument controls what kind of blocks
     are shown for a <varname>full</varname> leak search.  The set of leak kinds
@@ -1846,8 +2033,19 @@ Address 0x8049E28 len 1 defined
   </listitem>
 
   <listitem>
-    <para><varname>block_list &lt;loss_record_nr&gt; </varname>
-    shows the list of blocks belonging to &lt;loss_record_nr&gt;.
+    <para><varname>block_list &lt;loss_record_nr&gt;|&lt;loss_record_nr_from&gt;..&lt;loss_record_nr_to&gt;
+        [unlimited*|limited &lt;max_blocks&gt;]
+        [heuristics heur1,heur2,...]
+      </varname>
+      shows the list of blocks belonging to
+      <varname>&lt;loss_record_nr&gt;</varname> (or to the loss records range
+      <varname>&lt;loss_record_nr_from&gt;..&lt;loss_record_nr_to&gt;</varname>).
+      The nr of blocks to print can be controlled using the
+      <varname>limited</varname> argument followed by the maximum nr
+      of blocks to output.
+      If one or more heuristics are given, only prints the loss records
+      and blocks found via one of the given <varname>heur1,heur2,...</varname>
+      heuristics.
     </para>
 
     <para> A leak search merges the allocated blocks in loss records :
@@ -1857,7 +2055,8 @@ Address 0x8049E28 len 1 defined
     by a loss record number.
     The <varname>block_list</varname> command shows the loss record information
     followed by the addresses and sizes of the blocks which have been
-    merged in the loss record.
+    merged in the loss record. If a block was found using an heuristic, the block size
+    is followed by the heuristic.
     </para>
 
     <para> If a directly lost block causes some other blocks to be indirectly
@@ -2007,6 +2206,13 @@ Address 0x8049E28 len 1 defined
 
   </listitem>
 
+  <listitem>
+    <para><varname>xtmemory [&lt;filename&gt; default xtmemory.kcg.%p.%n]</varname>
+      requests Memcheck tool to produce an xtree heap memory report.
+      See <xref linkend="manual-core.xtree"/> for
+      a detailed explanation about execution trees. </para>
+  </listitem>
+  
 </itemizedlist>
 
 </sect1>
@@ -2248,6 +2454,59 @@ inform Memcheck about changes to the state of a mempool:</para>
     pool.  The request simply tells Memcheck that the pool exists, so that
     subsequent calls can refer to it as a pool.
     </para>
+  </listitem>
+
+  <listitem>
+    <!-- Note: the below is mostly a copy of valgrind.h. Keep in sync! -->
+    <para>
+      <varname>VALGRIND_CREATE_MEMPOOL_EXT(pool, rzB, is_zeroed, flags)</varname>:
+      Create a memory pool with some flags (that can
+      be OR-ed together) specifying extended behaviour.  When flags is
+      zero, the behaviour is identical to
+    <varname>VALGRIND_CREATE_MEMPOOL</varname>.</para>
+    <itemizedlist>
+      <listitem>
+	<para> The flag <varname>VALGRIND_MEMPOOL_METAPOOL</varname>
+          specifies that the pieces of memory associated with the pool
+          using <varname>VALGRIND_MEMPOOL_ALLOC</varname> will be used
+          by the application as superblocks to dole out MALLOC_LIKE
+          blocks using <varname>VALGRIND_MALLOCLIKE_BLOCK</varname>.
+          In other words, a meta pool is a "2 levels" pool : first
+          level is the blocks described
+          by <varname>VALGRIND_MEMPOOL_ALLOC</varname>.  The second
+          level blocks are described
+          using <varname>VALGRIND_MALLOCLIKE_BLOCK</varname>.  Note
+          that the association between the pool and the second level
+          blocks is implicit : second level blocks will be located
+          inside first level blocks. It is necessary to use
+          the <varname>VALGRIND_MEMPOOL_METAPOOL</varname> flag for
+          such 2 levels pools, as otherwise valgrind will detect
+          overlapping memory blocks, and will abort execution
+          (e.g. during leak search).
+	</para>
+      </listitem>
+      <listitem>
+	<para>
+	  <varname>VALGRIND_MEMPOOL_AUTO_FREE</varname>.  Such a meta
+          pool can also be marked as an 'auto free' pool using the
+          flag <varname>VALGRIND_MEMPOOL_AUTO_FREE</varname>, which
+          must be OR-ed together with
+          the <varname>VALGRIND_MEMPOOL_METAPOOL</varname>. For an
+          'auto free' pool, <varname>VALGRIND_MEMPOOL_FREE</varname>
+          will automatically free the second level blocks that are
+          contained inside the first level block freed
+          with <varname>VALGRIND_MEMPOOL_FREE</varname>.  In other
+          words, calling <varname>VALGRIND_MEMPOOL_FREE</varname> will
+          cause implicit calls
+          to <varname>VALGRIND_FREELIKE_BLOCK</varname> for all the
+          second level blocks included in the first level block.
+          Note: it is an error to use
+          the <varname>VALGRIND_MEMPOOL_AUTO_FREE</varname> flag
+          without the
+         <varname>VALGRIND_MEMPOOL_METAPOOL</varname> flag.
+	</para>
+      </listitem>
+    </itemizedlist>
   </listitem>
 
   <listitem>

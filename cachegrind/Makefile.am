@@ -28,8 +28,12 @@ cg_merge_CPPFLAGS  = $(AM_CPPFLAGS_PRI)
 cg_merge_CFLAGS    = $(AM_CFLAGS_PRI)
 cg_merge_CCASFLAGS = $(AM_CCASFLAGS_PRI)
 cg_merge_LDFLAGS   = $(AM_CFLAGS_PRI)
+# If there is no secondary platform, and the platforms include x86-darwin,
+# then the primary platform must be x86-darwin.  Hence:
+if ! VGCONF_HAVE_PLATFORM_SEC
 if VGCONF_PLATFORMS_INCLUDE_X86_DARWIN
 cg_merge_LDFLAGS   += -Wl,-read_only_relocs -Wl,suppress
+endif
 endif
 
 #----------------------------------------------------------------------------
@@ -49,7 +53,7 @@ cachegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_SOURCES      = \
 	$(CACHEGRIND_SOURCES_COMMON)
 cachegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_CPPFLAGS     = \
 	$(AM_CPPFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
-cachegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_CFLAGS       = \
+cachegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_CFLAGS       = $(LTO_CFLAGS) \
 	$(AM_CFLAGS_@VGCONF_PLATFORM_PRI_CAPS@)
 cachegrind_@VGCONF_ARCH_PRI@_@VGCONF_OS@_DEPENDENCIES = \
 	$(TOOL_DEPENDENCIES_@VGCONF_PLATFORM_PRI_CAPS@)
@@ -69,7 +73,7 @@ cachegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_SOURCES      = \
 	$(CACHEGRIND_SOURCES_COMMON)
 cachegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_CPPFLAGS     = \
 	$(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
-cachegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_CFLAGS       = \
+cachegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_CFLAGS       = $(LTO_CFLAGS)\
 	$(AM_CFLAGS_@VGCONF_PLATFORM_SEC_CAPS@)
 cachegrind_@VGCONF_ARCH_SEC@_@VGCONF_OS@_DEPENDENCIES = \
 	$(TOOL_DEPENDENCIES_@VGCONF_PLATFORM_SEC_CAPS@)

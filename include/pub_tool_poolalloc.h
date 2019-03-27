@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2011-2013 OpenWorks LLP info@open-works.co.uk,
+   Copyright (C) 2011-2017 OpenWorks LLP info@open-works.co.uk,
                            Philippe Waroquiers philippe.waroquiers@skynet.be
 
    This program is free software; you can redistribute it and/or
@@ -56,9 +56,9 @@ typedef  struct _PoolAlloc  PoolAlloc;
    This function never returns NULL. */
 extern PoolAlloc* VG_(newPA) ( UWord  elemSzB,
                                UWord  nPerPool,
-                               void*  (*alloc)(const HChar*, SizeT),
+                               Alloc_Fn_t alloc_fn,
                                const  HChar* cc,
-                               void   (*free_fn)(void*) );
+                               Free_Fn_t free_fn );
 
 
 /* Free all memory associated with a PoolAlloc. */
@@ -89,6 +89,11 @@ extern void VG_(addRefPA) ( PoolAlloc* pa);
 // count.
 extern UWord VG_(releasePA) ( PoolAlloc* pa);
 
+// How many elements are managed by the pool 'pa'. This includes
+// the elements allocated by VG_(allocEltPA), the elements freed by
+// VG_(freeEltPA) and the elements that are in a block and have not
+// yet been allocated.
+extern UWord VG_(sizePA) ( PoolAlloc* pa);
 #endif   // __PUB_TOOL_POOLALLOC_
 
 /*--------------------------------------------------------------------*/

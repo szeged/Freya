@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -263,6 +263,9 @@ extern void VG_(details_bug_reports_to)   ( const HChar* bug_reports_to );
 /* Should __libc_freeres() be run?  Bugs in it can crash the tool. */
 extern void VG_(needs_libc_freeres) ( void );
 
+/* Should __gnu_cxx::__freeres() be run?  Bugs in it can crash the tool. */
+extern void VG_(needs_cxx_freeres) ( void );
+
 /* Want to have errors detected by Valgrind's core reported?  Includes:
    - pthread API errors (many;  eg. unlocking a non-locked mutex) 
      [currently disabled]
@@ -460,7 +463,7 @@ extern void VG_(needs_print_stats) (
    of an address ? */
 extern void VG_(needs_info_location) (
    // Get and pp information about Addr
-   void (*info_location)(Addr)
+   void (*info_location)(DiEpoch, Addr)
 );
 
 /* Do we need to see variable type and location information? */
@@ -630,6 +633,16 @@ void VG_(track_post_reg_write)(void(*f)(CorePart part, ThreadId tid,
 /* This one is called for malloc() et al if they are replaced by a tool. */
 void VG_(track_post_reg_write_clientcall_return)(
       void(*f)(ThreadId tid, PtrdiffT guest_state_offset, SizeT size, Addr f));
+
+/* Mem-to-reg or reg-to-mem copy functions, these ones occur around syscalls
+   and signal handling when the VCPU state is saved to (or restored from) the
+   client memory. */
+void VG_(track_copy_mem_to_reg)(void(*f)(CorePart part, ThreadId tid,
+                                         Addr a, PtrdiffT guest_state_offset,
+                                         SizeT size));
+void VG_(track_copy_reg_to_mem)(void(*f)(CorePart part, ThreadId tid,
+                                         PtrdiffT guest_state_offset,
+                                         Addr a, SizeT size));
 
 
 /* Scheduler events (not exhaustive) */

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2013 Nicholas Nethercote
+   Copyright (C) 2005-2017 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -58,7 +58,7 @@ typedef struct _VgHashTable VgHashTable;
 extern VgHashTable *VG_(HT_construct) ( const HChar* name );
 
 /* Count the number of nodes in a table. */
-extern Int VG_(HT_count_nodes) ( const VgHashTable *table );
+extern UInt VG_(HT_count_nodes) ( const VgHashTable *table );
 
 /* Add a node to the table.  Duplicate keys are permitted. */
 extern void VG_(HT_add_node) ( VgHashTable *t, void* node );
@@ -84,7 +84,10 @@ typedef Word  (*HT_Cmp_t) ( const void* node1, const void* node2 );
     * when comparing the rest of the node, if the node data contains holes
       between components, either the node memory should be fully initialised
       (e.g. allocated using VG_(calloc)) or each component should be compared
-       individually. */
+       individually.
+   Note that the cmp function is only called for elements that already
+   have keys that are equal. So, it is not needed for cmp to check for
+   key equality. */
 extern void* VG_(HT_gen_lookup) ( const VgHashTable *table, const void* node,
                                   HT_Cmp_t cmp );
 extern void* VG_(HT_gen_remove) ( VgHashTable *table, const void* node,
@@ -117,6 +120,14 @@ extern void VG_(HT_ResetIter) ( VgHashTable *table );
    disallowing HT_add_node during iteration should give the required
    assurance. */
 extern void* VG_(HT_Next) ( VgHashTable *table );
+
+/* Remove the element pointed to by the iterator and leave the iterator
+   in a state where VG_(HT_Next) will return the element just after the removed
+   node.
+   This allows removing elements from the table whilst iterating over it.
+   Note that removing an entry does not resize the hash table, making this
+   safe. */
+extern void VG_(HT_remove_at_Iter)( VgHashTable *table );
 
 /* Destroy a table and deallocates the memory used by the nodes using
    freenode_fn.*/

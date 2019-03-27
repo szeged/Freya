@@ -8,7 +8,7 @@
    This file is part of Helgrind, a Valgrind tool for detecting errors
    in threaded programs.
 
-   Copyright (C) 2007-2013 OpenWorks Ltd
+   Copyright (C) 2007-2017 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -33,6 +33,7 @@
 #include "pub_tool_libcbase.h"
 #include "pub_tool_libcassert.h"
 #include "pub_tool_libcprint.h"
+#include "pub_tool_stacktrace.h"
 #include "pub_tool_execontext.h"
 #include "pub_tool_errormgr.h"
 #include "pub_tool_wordfm.h"
@@ -184,6 +185,18 @@ static Lock* mk_LockP_from_LockN ( Lock* lkn,
    return lkp;
 }
 
+static Int sort_by_guestaddr(const void* n1, const void* n2)
+{
+   const Lock* l1 = *(const Lock *const *)n1;
+   const Lock* l2 = *(const Lock *const *)n2;
+
+   Addr a1 = l1 == Lock_INVALID ? 0 : l1->guestaddr;
+   Addr a2 = l2 == Lock_INVALID ? 0 : l2->guestaddr;
+   if (a1 < a2) return -1;
+   if (a1 > a2) return 1;
+   return 0;
+}
+
 /* Expand a WordSet of LockN*'s into a NULL-terminated vector of
    LockP*'s.  Any LockN's that can't be converted into a LockP
    (because they have been freed, see comment on mk_LockP_from_LockN)
@@ -215,6 +228,10 @@ Lock** enumerate_WordSet_into_LockP_vector( WordSetU* univ_lsets,
       lockPs[i] = mk_LockP_from_LockN( (Lock*)lockNs[i],
                                        allowed_to_be_invalid );
    }
+   /* Sort the locks by increasing Lock::guestaddr to avoid jitters
+      in the output. */
+   VG_(ssort)(lockPs, nLockNs, sizeof lockPs[0], sort_by_guestaddr);
+
    return lockPs;
 }
 
@@ -404,7 +421,8 @@ UInt HG_(update_extra) ( const Error* err )
          VG_(printf)("HG_(update_extra): "
                      "%d conflicting-event queries\n", xxx);
 
-      HG_(describe_addr) (xe->XE.Race.data_addr, &xe->XE.Race.data_addrinfo);
+      HG_(describe_addr) (VG_(get_ExeContext_epoch)(VG_(get_error_where)(err)),
+                          xe->XE.Race.data_addr, &xe->XE.Race.data_addrinfo);
 
       /* And poke around in the conflicting-event map, to see if we
          can rustle up a plausible-looking conflicting memory access
@@ -784,7 +802,11 @@ static void announce_LockP ( Lock* lk )
          VG_(umsg)( " Lock at %p : no stacktrace for first observation\n",
                     (void*)lk->guestaddr );
       }
-      HG_(get_and_pp_addrdescr) (lk->guestaddr);
+      HG_(get_and_pp_addrdescr)
+         (lk->appeared_at
+          ? VG_(get_ExeContext_epoch)(lk->appeared_at)
+          : VG_(current_DiEpoch)(),
+          lk->guestaddr);
       VG_(umsg)("\n");
    }
 }
@@ -1195,7 +1217,7 @@ void HG_(pp_Error) ( const Error* err )
             if (xe->XE.Race.h1_ct_mbsegendEC) {
                VG_(pp_ExeContext)( xe->XE.Race.h1_ct_mbsegendEC );
             } else {
-               emit( "  <auxwhat>(the end of the the thread)</auxwhat>\n" );
+               emit( "  <auxwhat>(the end of the thread)</auxwhat>\n" );
             }
          }
 
@@ -1239,7 +1261,7 @@ void HG_(pp_Error) ( const Error* err )
             if (xe->XE.Race.h1_ct_mbsegendEC) {
                VG_(pp_ExeContext)( xe->XE.Race.h1_ct_mbsegendEC );
             } else {
-               emit( "   (the end of the the thread)\n" );
+               emit( "   (the end of the thread)\n" );
             }
          }
 
@@ -1251,6 +1273,48 @@ void HG_(pp_Error) ( const Error* err )
    default:
       tl_assert(0);
    } /* switch (VG_(get_error_kind)(err)) */
+}
+
+void HG_(print_access) (StackTrace ips, UInt n_ips,
+                        Thr* thr_a,
+                        Addr  ga,
+                        SizeT SzB,
+                        Bool  isW,
+                        WordSetID locksHeldW )
+{
+   Thread* threadp;
+
+   threadp = libhb_get_Thr_hgthread( thr_a );
+   tl_assert(threadp);
+   if (!threadp->announced) {
+      /* This is for interactive use. We announce the thread if needed,
+         but reset it to not announced afterwards, because we want
+         the thread to be announced on the error output/log if needed. */
+      announce_one_thread (threadp);
+      threadp->announced = False;
+   }
+
+   announce_one_thread (threadp);
+   VG_(printf) ("%s of size %d at %p by thread #%d",
+                isW ? "write" : "read",
+                (int)SzB, (void*)ga, threadp->errmsg_index);
+   if (threadp->coretid == VG_INVALID_THREADID) 
+      VG_(printf)(" tid (exited)\n");
+   else
+      VG_(printf)(" tid %u\n", threadp->coretid);
+   {
+      Lock** locksHeldW_P;
+      locksHeldW_P = enumerate_WordSet_into_LockP_vector(
+                       HG_(get_univ_lsets)(),
+                       locksHeldW,
+                       True/*allowed_to_be_invalid*/
+                    );
+      show_LockP_summary_textmode( locksHeldW_P, "" );
+      HG_(free) (locksHeldW_P);
+   }
+   // FIXME PW EPOCH : need the real ips epoch.
+   VG_(pp_StackTrace)( VG_(current_DiEpoch)(), ips, n_ips );
+   VG_(printf) ("\n");
 }
 
 const HChar* HG_(get_error_name) ( const Error* err )

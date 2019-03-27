@@ -9,7 +9,7 @@
    This file is part of Ptrcheck, a Valgrind tool for checking pointer
    use in programs.
 
-   Copyright (C) 2008-2013 OpenWorks Ltd
+   Copyright (C) 2008-2017 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -631,7 +631,7 @@ typedef
 
 static void GlobalTreeNode__pp ( GlobalTreeNode* nd ) {
    tl_assert(nd->descr);
-   VG_(printf)("GTNode [%#lx,+%ld) %s", 
+   VG_(printf)("GTNode [%#lx,+%lu) %s", 
                nd->addr, nd->szB, nd->descr->name);
 }
 
@@ -1648,7 +1648,7 @@ static void classify_address ( /*OUT*/Invar* inv,
            sKey.szB  = szB;
            gKey.addr = ea;
            gKey.szB  = szB;
-           if (0) VG_(printf)("Tree sizes %ld %ld\n",
+           if (0) VG_(printf)("Tree sizes %lu %lu\n",
                               VG_(sizeFM)(siTrees[tid]), VG_(sizeFM)(giTree));
            sOK = VG_(findBoundsFM)( siTrees[tid], 
                                     (UWord*)&sLB,    NULL/*unused*/,
@@ -1896,7 +1896,7 @@ void shadowStack_new_frame ( ThreadId tid,
          if (0 && (sb || gb))
             VG_(message)(Vg_DebugMsg, 
                          "exp-sgcheck: new max tree sizes: "
-                         "StackTree %ld, GlobalTree %ld\n",
+                         "StackTree %lu, GlobalTree %lu\n",
                          stats__max_sitree_size, stats__max_gitree_size );
       }
    } else {
@@ -1936,7 +1936,8 @@ void shadowStack_new_frame ( ThreadId tid,
      const HChar *fnname;
      Bool ok;
      Addr ip = ip_post_call_insn;
-     ok = VG_(get_fnname_w_offset)( ip, &fnname );
+     DiEpoch ep = VG_(current_DiEpoch)();
+     ok = VG_(get_fnname_w_offset)( ep, ip, &fnname );
      while (d > 0) {
         VG_(printf)(" ");
         d--;
@@ -2325,6 +2326,20 @@ void sg_instrument_IRStmt ( /*MOD*/struct _SGEnv * env,
             );
             env->firstRef = False;
          }
+         break;
+      }
+
+      case Ist_LoadG: {
+         IRLoadG* lg       = st->Ist.LoadG.details;
+         IRType   type     = Ity_INVALID; /* loaded type */
+         IRType   typeWide = Ity_INVALID; /* after implicit widening */
+         IRExpr*  addr     = lg->addr;
+         typeOfIRLoadGOp(lg->cvt, &typeWide, &type);
+         tl_assert(type != Ity_INVALID);
+         instrument_mem_access(
+            env, sbOut, addr, sizeofIRType(type), False/*isStore*/,
+            sizeofIRType(hWordTy), env->curr_IP, layout
+         );
          break;
       }
 

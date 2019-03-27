@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -242,6 +242,8 @@ typedef		__vki_u64	vki_uint64_t;
 
 typedef		__vki_u16	__vki_le16;
 
+#define __vki_aligned_u64 __vki_u64 __attribute__((aligned(8)))
+
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/limits.h
 //----------------------------------------------------------------------
@@ -282,6 +284,10 @@ struct vki_timespec {
 	vki_time_t	tv_sec;		/* seconds */
 	long		tv_nsec;	/* nanoseconds */
 };
+
+/* Special values for vki_timespec.tv_nsec when used with utimensat.  */
+#define VKI_UTIME_NOW  ((1l << 30) - 1l)
+#define VKI_UTIME_OMIT ((1l << 30) - 2l)
 
 struct vki_timeval {
 	vki_time_t	tv_sec;		/* seconds */
@@ -523,7 +529,7 @@ typedef struct vki_siginfo {
  * SIGBUS si_codes
  */
 #define VKI_BUS_ADRALN	(__VKI_SI_FAULT|1)	/* invalid address alignment */
-#define VKI_BUS_ADRERR	(__VKI_SI_FAULT|2)	/* non-existant physical address */
+#define VKI_BUS_ADRERR	(__VKI_SI_FAULT|2)	/* non-existent physical address */
 #define VKI_BUS_OBJERR	(__VKI_SI_FAULT|3)	/* object specific hardware error */
 
 /*
@@ -670,7 +676,8 @@ __KINLINE struct vki_cmsghdr * __vki_cmsg_nxthdr(void *__ctl, __vki_kernel_size_
 {
 	struct vki_cmsghdr * __ptr;
 
-	__ptr = (struct vki_cmsghdr*)(((unsigned char *) __cmsg) +  VKI_CMSG_ALIGN(__cmsg->cmsg_len));
+	__ptr = ASSUME_ALIGNED(struct vki_cmsghdr *,
+        	((unsigned char *) __cmsg) +  VKI_CMSG_ALIGN(__cmsg->cmsg_len));
 	if ((unsigned long)((char*)(__ptr+1) - (char *) __ctl) > __size)
 		return (struct vki_cmsghdr *)0;
 
@@ -834,22 +841,22 @@ struct vki_ifreq
 };
 
 #define vki_ifr_name	ifr_ifrn.ifrn_name	/* interface name 	*/
-#define ifr_hwaddr	ifr_ifru.ifru_hwaddr	/* MAC address 		*/
-#define	ifr_addr	ifr_ifru.ifru_addr	/* address		*/
-#define	ifr_dstaddr	ifr_ifru.ifru_dstaddr	/* other end of p-p lnk	*/
-#define	ifr_broadaddr	ifr_ifru.ifru_broadaddr	/* broadcast address	*/
-#define	ifr_netmask	ifr_ifru.ifru_netmask	/* interface net mask	*/
+#define vki_ifr_hwaddr	ifr_ifru.ifru_hwaddr	/* MAC address 		*/
+#define	vki_ifr_addr	ifr_ifru.ifru_addr	/* address		*/
+#define	vki_ifr_dstaddr	ifr_ifru.ifru_dstaddr	/* other end of p-p lnk	*/
+#define	vki_ifr_broadaddr ifr_ifru.ifru_broadaddr /* broadcast address	*/
+#define	vki_ifr_netmask	ifr_ifru.ifru_netmask	/* interface net mask	*/
 #define	vki_ifr_flags	ifr_ifru.ifru_flags	/* flags		*/
 #define	vki_ifr_metric	ifr_ifru.ifru_ivalue	/* metric		*/
-#define	vki_ifr_mtu		ifr_ifru.ifru_mtu	/* mtu			*/
-#define ifr_map		ifr_ifru.ifru_map	/* device map		*/
-#define ifr_slave	ifr_ifru.ifru_slave	/* slave device		*/
+#define	vki_ifr_mtu	ifr_ifru.ifru_mtu	/* mtu			*/
+#define vki_ifr_map	ifr_ifru.ifru_map	/* device map		*/
+#define vki_ifr_slave	ifr_ifru.ifru_slave	/* slave device		*/
 #define	vki_ifr_data	ifr_ifru.ifru_data	/* for use by interface	*/
 #define vki_ifr_ifindex	ifr_ifru.ifru_ivalue	/* interface index	*/
-#define ifr_bandwidth	ifr_ifru.ifru_ivalue    /* link bandwidth	*/
-#define ifr_qlen	ifr_ifru.ifru_ivalue	/* Queue length 	*/
-#define ifr_newname	ifr_ifru.ifru_newname	/* New name		*/
-#define ifr_settings	ifr_ifru.ifru_settings	/* Device/proto settings*/
+#define vki_ifr_bandwidth ifr_ifru.ifru_ivalue  /* link bandwidth	*/
+#define vki_ifr_qlen	ifr_ifru.ifru_ivalue	/* Queue length 	*/
+#define vki_ifr_newname	ifr_ifru.ifru_newname	/* New name		*/
+#define vki_ifr_settings ifr_ifru.ifru_settings	/* Device/proto settings*/
 
 struct vki_ifconf 
 {
@@ -969,6 +976,11 @@ struct vki_sctp_getaddrs {
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/resource.h
 //----------------------------------------------------------------------
+
+#define VKI_RUSAGE_SELF     0
+#define VKI_RUSAGE_CHILDREN (-1)
+#define VKI_RUSAGE_BOTH     (-2)        /* sys_wait4() uses this */
+#define VKI_RUSAGE_THREAD   1           /* only the calling thread */
 
 struct	vki_rusage {
 	struct vki_timeval ru_utime;	/* user time used */
@@ -1199,6 +1211,7 @@ struct vki_sembuf {
 union vki_semun {
 	int val;			/* value for SETVAL */
 	struct vki_semid_ds __user *buf;	/* buffer for IPC_STAT & IPC_SET */
+	struct vki_semid64_ds __user *buf64;	/* buffer for IPC_STAT & IPC_SET */
 	unsigned short __user *array;	/* array for GETALL & SETALL */
 	struct vki_seminfo __user *__buf;	/* buffer for IPC_INFO */
 	void __user *__pad;
@@ -1374,6 +1387,44 @@ struct vki_robust_list_head {
 #define VKI_S_IWOTH 00002
 #define VKI_S_IXOTH 00001
 
+struct vki_statx_timestamp {
+        __vki_s64   tv_sec;
+        __vki_u32   tv_nsec;
+        __vki_s32   __reserved;
+};
+
+struct vki_statx {
+        /* 0x00 */
+        __vki_u32   stx_mask;       /* What results were written [uncond] */
+        __vki_u32   stx_blksize;    /* Preferred general I/O size [uncond] */
+        __vki_u64   stx_attributes; /* Flags conveying information about the file [uncond] */
+        /* 0x10 */
+        __vki_u32   stx_nlink;      /* Number of hard links */
+        __vki_u32   stx_uid;        /* User ID of owner */
+        __vki_u32   stx_gid;        /* Group ID of owner */
+        __vki_u16   stx_mode;       /* File mode */
+        __vki_u16   __spare0[1];
+        /* 0x20 */
+        __vki_u64   stx_ino;        /* Inode number */
+        __vki_u64   stx_size;       /* File size */
+        __vki_u64   stx_blocks;     /* Number of 512-byte blocks allocated */
+        __vki_u64   stx_attributes_mask; /* Mask to show what's supported in stx_attributes */
+        /* 0x40 */
+        struct vki_statx_timestamp  stx_atime;      /* Last access time */
+        struct vki_statx_timestamp  stx_btime;      /* File creation time */
+        struct vki_statx_timestamp  stx_ctime;      /* Last attribute change time */
+        struct vki_statx_timestamp  stx_mtime;      /* Last data modification time */
+        /* 0x80 */
+        __vki_u32   stx_rdev_major; /* Device ID of special file [if bdev/cdev] */
+        __vki_u32   stx_rdev_minor;
+        __vki_u32   stx_dev_major;  /* ID of device containing file [uncond] */
+        __vki_u32   stx_dev_minor;
+        /* 0x90 */
+        __vki_u64   __spare2[14];   /* Spare space for future expansion */
+        /* 0x100 */
+};
+
+
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/dirent.h
 //----------------------------------------------------------------------
@@ -1410,6 +1461,22 @@ struct vki_dirent64 {
 
 #define VKI_F_SETPIPE_SZ    (VKI_F_LINUX_SPECIFIC_BASE + 7)
 #define VKI_F_GETPIPE_SZ    (VKI_F_LINUX_SPECIFIC_BASE + 8)
+
+struct vki_flock {
+	short			l_type;
+	short			l_whence;
+	__vki_kernel_off_t	l_start;
+	__vki_kernel_off_t	l_len;
+	__vki_kernel_pid_t	l_pid;
+};
+
+struct vki_flock64 {
+	short			l_type;
+	short			l_whence;
+	__vki_kernel_loff_t	l_start;
+	__vki_kernel_loff_t	l_len;
+	__vki_kernel_pid_t	l_pid;
+};
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/sysctl.h
@@ -1753,18 +1820,23 @@ struct vki_ppdev_frob_struct {
 
 #define VKI_BLKROSET   _VKI_IO(0x12,93)	/* set device read-only (0 = read-write) */
 #define VKI_BLKROGET   _VKI_IO(0x12,94)	/* get read-only status (0 = read_write) */
+#define VKI_BLKRRPART  _VKI_IO(0x12,95) /* re-read partition table */
 #define VKI_BLKGETSIZE _VKI_IO(0x12,96) /* return device size /512 (long *arg) */
+#define VKI_BLKFLSBUF  _VKI_IO(0x12,97) /* flush buffer cache */
 #define VKI_BLKRASET   _VKI_IO(0x12,98)	/* set read ahead for block device */
 #define VKI_BLKRAGET   _VKI_IO(0x12,99)	/* get current read ahead setting */
 #define VKI_BLKFRASET  _VKI_IO(0x12,100)/* set filesystem (mm/filemap.c) read-ahead */
 #define VKI_BLKFRAGET  _VKI_IO(0x12,101)/* get filesystem (mm/filemap.c) read-ahead */
+#define VKI_BLKSECTSET _VKI_IO(0x12,102)/* set max sectors per request (ll_rw_blk.c) */
 #define VKI_BLKSECTGET _VKI_IO(0x12,103)/* get max sectors per request (ll_rw_blk.c) */
 #define VKI_BLKSSZGET  _VKI_IO(0x12,104)/* get block device sector size */
 #define VKI_BLKBSZGET  _VKI_IOR(0x12,112,vki_size_t)
 #define VKI_BLKBSZSET  _VKI_IOW(0x12,113,vki_size_t)
 #define VKI_BLKGETSIZE64 _VKI_IOR(0x12,114,vki_size_t) /* return device size in bytes (u64 *arg) */
+#define VKI_BLKDISCARD _VKI_IO(0x12,119)
 #define VKI_BLKPBSZGET _VKI_IO(0x12,123)
 #define VKI_BLKDISCARDZEROES _VKI_IO(0x12,124)
+#define VKI_BLKZEROOUT _VKI_IO(0x12,127)
 
 #define VKI_FIBMAP	_VKI_IO(0x00,1)	/* bmap access */
 #define VKI_FIGETBSZ    _VKI_IO(0x00,2)	/* get the block size used for bmap */
@@ -1861,10 +1933,13 @@ struct vki_scsi_idlun {
                                 	           (struct cdrom_tochdr) */
 #define VKI_CDROMREADTOCENTRY		0x5306 /* Read TOC entry 
                                 	           (struct cdrom_tocentry) */
+#define VKI_CDROMSTOP			0x5307 /* Stop the cdrom drive */
 #define VKI_CDROMSUBCHNL		0x530b /* Read subchannel data 
                                 	           (struct cdrom_subchnl) */
 #define VKI_CDROMREADMODE2		0x530c /* Read CDROM mode 2 data (2336 Bytes) 
                                 	           (struct cdrom_read) */
+#define VKI_CDROMREADMODE1		0x530d /* Read CDROM mode 1 data (2048 Bytes)
+                                                   (struct cdrom_read) */
 #define VKI_CDROMREADAUDIO		0x530e /* (struct cdrom_read_audio) */
 #define VKI_CDROMMULTISESSION		0x5310 /* Obtain the start-of-last-session 
                                 	           address of multi session disks 
@@ -1880,6 +1955,7 @@ struct vki_scsi_idlun {
 #define VKI_CDROM_DISC_STATUS		0x5327	/* get CD type information */
 #define VKI_CDROM_GET_CAPABILITY	0x5331	/* get capabilities */
 
+#define VKI_DVD_READ_STRUCT		0x5390  /* read structure */
 #define VKI_CDROM_SEND_PACKET		0x5393	/* send a packet to the drive */
 
 struct vki_cdrom_msf0		
@@ -1990,6 +2066,7 @@ struct vki_cdrom_generic_command
 #define VKI_CD_HEAD_SIZE          4 /* header (address) bytes per raw data frame */
 #define VKI_CD_FRAMESIZE_RAW   2352 /* bytes per frame, "raw" mode */
 #define VKI_CD_FRAMESIZE_RAW0 (VKI_CD_FRAMESIZE_RAW-VKI_CD_SYNC_SIZE-VKI_CD_HEAD_SIZE) /*2336*/
+#define VKI_CD_FRAMESIZE_RAW1  2048 /* bytes per frame, mode 1*/
 
 //----------------------------------------------------------------------
 // From linux-2.6.8.1/include/linux/soundcard.h
@@ -2317,6 +2394,8 @@ typedef __vki_kernel_uid32_t vki_qid_t; /* Type in which we store ids in memory 
 #define VKI_PTRACE_GETREGSET	0x4204
 #define VKI_PTRACE_SETREGSET	0x4205
 
+#define VKI_PT_PTRACED 0x00000001
+
 //----------------------------------------------------------------------
 // From linux-2.6.14/include/sound/asound.h
 //----------------------------------------------------------------------
@@ -2508,6 +2587,9 @@ struct vki_vt_consize {
 # define VKI_PR_ENDIAN_BIG		0
 # define VKI_PR_ENDIAN_LITTLE	1	/* True little endian mode */
 # define VKI_PR_ENDIAN_PPC_LITTLE	2	/* "PowerPC" pseudo little endian */
+
+#define VKI_PR_SET_SECCOMP 22
+
 #define VKI_PR_SET_PTRACER 0x59616d61
 
 //----------------------------------------------------------------------
@@ -2766,7 +2848,7 @@ typedef vki_uint32_t vki_key_perm_t;
 #define VKI_SIOCSIWPOWER	0x8B2C	/* set Power Management settings */
 #define VKI_SIOCGIWPOWER	0x8B2D	/* get Power Management settings */
 
-/* WPA : Generic IEEE 802.11 informatiom element (e.g., for WPA/RSN/WMM). */
+/* WPA : Generic IEEE 802.11 information element (e.g., for WPA/RSN/WMM). */
 #define VKI_SIOCSIWGENIE	0x8B30		/* set generic IE */
 #define VKI_SIOCGIWGENIE	0x8B31		/* get generic IE */
 
@@ -2793,7 +2875,7 @@ struct	vki_iw_param
   __vki_s32	value;		/* The value of the parameter itself */
   __vki_u8	fixed;		/* Hardware should not use auto select */
   __vki_u8	disabled;	/* Disable the feature */
-  __vki_u16	flags;		/* Various specifc flags (if any) */
+  __vki_u16	flags;		/* Various specific flags (if any) */
 };
 
 struct	vki_iw_point
@@ -2939,6 +3021,16 @@ struct vki_perf_event_attr {
 	};
 };
 
+#define VKI_PERF_EVENT_IOC_ENABLE       _VKI_IO ('$', 0)
+#define VKI_PERF_EVENT_IOC_DISABLE      _VKI_IO ('$', 1)
+#define VKI_PERF_EVENT_IOC_REFRESH      _VKI_IO ('$', 2)
+#define VKI_PERF_EVENT_IOC_RESET        _VKI_IO ('$', 3)
+#define VKI_PERF_EVENT_IOC_PERIOD       _VKI_IOW('$', 4, __vki_u64)
+#define VKI_PERF_EVENT_IOC_SET_OUTPUT   _VKI_IO ('$', 5)
+#define VKI_PERF_EVENT_IOC_SET_FILTER   _VKI_IOW('$', 6, char *)
+#define VKI_PERF_EVENT_IOC_ID           _VKI_IOR('$', 7, __vki_u64 *)
+#define VKI_PERF_EVENT_IOC_SET_BPF      _VKI_IOW('$', 8, __vki_u32)
+
 /*--------------------------------------------------------------------*/
 // From linux-2.6.32.4/include/linux/getcpu.h
 /*--------------------------------------------------------------------*/
@@ -3002,7 +3094,8 @@ struct vki_getcpu_cache {
 //----------------------------------------------------------------------
 
 #if defined(VGPV_arm_linux_android) || defined(VGPV_x86_linux_android) \
-    || defined(VGPV_mips32_linux_android)
+    || defined(VGPV_mips32_linux_android) \
+    || defined(VGPV_arm64_linux_android)
 
 #define VKI_ASHMEM_NAME_LEN 256
 
@@ -3160,6 +3253,24 @@ struct vki_sockaddr_rc {
 #define VKI_KVM_NMI                   _VKI_IO(KVMIO,   0x9a)
 #define VKI_KVM_KVMCLOCK_CTRL         _VKI_IO(KVMIO,   0xad)
 
+struct vki_kvm_s390_mem_op {
+        /* in */
+        __vki_u64 gaddr;            /* the guest address */
+        __vki_u64 flags;            /* flags */
+        __vki_u32 size;             /* amount of bytes */
+        __vki_u32 op;               /* type of operation */
+        __vki_u64 buf;              /* buffer in userspace */
+        __vki_u8 ar;                /* the access register number */
+        __vki_u8 reserved[31];      /* should be set to 0 */
+};
+
+#define VKI_KVM_S390_MEMOP_LOGICAL_READ		0
+#define VKI_KVM_S390_MEMOP_LOGICAL_WRITE	1
+#define VKI_KVM_S390_MEMOP_F_CHECK_ONLY		(1ULL << 0)
+#define VKI_KVM_S390_MEMOP_F_INJECT_EXCEPTION	(1ULL << 1)
+
+#define VKI_KVM_S390_MEM_OP           _VKI_IOW(KVMIO,  0xb1, struct vki_kvm_s390_mem_op)
+
 //----------------------------------------------------------------------
 // From linux-2.6/include/linux/net_stamp.h
 //----------------------------------------------------------------------
@@ -3287,7 +3398,6 @@ struct vki_xen_privcmd_mmapbatch_v2 {
 	_VKI_IOC(_VKI_IOC_NONE, 'E', 0, sizeof(struct vki_xen_ioctl_evtchn_bind_virq))
 struct vki_xen_ioctl_evtchn_bind_virq {
 	vki_uint32_t virq;
-	vki_uint32_t port;
 };
 
 #define VKI_XEN_IOCTL_EVTCHN_BIND_INTERDOMAIN			\
@@ -3651,6 +3761,30 @@ struct vki_getinfo_fid2path {
 
 #define VKI_OBD_IOC_FID2PATH \
            _VKI_IOWR ('f', 150, VKI_OBD_IOC_DATA_TYPE)
+#define VKI_LL_IOC_PATH2FID \
+           _VKI_IOR ('f', 173, long)
+
+//----------------------------------------------------------------------
+// From lustre/include/lustre/lustre_idl.h
+//----------------------------------------------------------------------
+
+struct vki_getparent {
+    struct vki_lu_fid   gp_fid;
+    __vki_u32       gp_linkno;
+    __vki_u32       gp_name_size;
+    char            gp_name[0];
+} __attribute__((packed));
+
+//----------------------------------------------------------------------
+// From Lustre's lustre/include/lustre/lustre_user.h
+//----------------------------------------------------------------------
+#define VKI_LL_IOC_GROUP_LOCK \
+           _VKI_IOW('f', 158, long)
+#define VKI_LL_IOC_GROUP_UNLOCK \
+           _VKI_IOW('f', 159, long)
+#define VKI_LL_IOC_GETPARENT \
+           _VKI_IOWR('f', 249, struct vki_getparent)
+
 
 struct vki_v4l2_rect {
 	__vki_s32   left;
@@ -4196,8 +4330,8 @@ struct vki_v4l2_sliced_vbi_data {
 
 struct vki_v4l2_plane_pix_format {
 	__vki_u32		sizeimage;
-	__vki_u16		bytesperline;
-	__vki_u16		reserved[7];
+	__vki_u32		bytesperline;
+	__vki_u16		reserved[6];
 } __attribute__ ((packed));
 
 #define VKI_VIDEO_MAX_PLANES               8
@@ -4465,7 +4599,8 @@ struct vki_v4l2_subdev_mbus_code_enum {
 	__vki_u32 pad;
 	__vki_u32 index;
 	__vki_u32 code;
-	__vki_u32 reserved[9];
+	__vki_u32 which;
+	__vki_u32 reserved[8];
 };
 
 struct vki_v4l2_subdev_frame_size_enum {
@@ -4476,7 +4611,8 @@ struct vki_v4l2_subdev_frame_size_enum {
 	__vki_u32 max_width;
 	__vki_u32 min_height;
 	__vki_u32 max_height;
-	__vki_u32 reserved[9];
+	__vki_u32 which;
+	__vki_u32 reserved[8];
 };
 
 struct vki_v4l2_subdev_frame_interval {
@@ -4492,7 +4628,8 @@ struct vki_v4l2_subdev_frame_interval_enum {
 	__vki_u32 width;
 	__vki_u32 height;
 	struct vki_v4l2_fract interval;
-	__vki_u32 reserved[9];
+	__vki_u32 which;
+	__vki_u32 reserved[8];
 };
 
 struct vki_v4l2_subdev_selection {
@@ -4588,6 +4725,9 @@ struct vki_media_links_enum {
 #define VKI_MEDIA_IOC_ENUM_LINKS		_VKI_IOWR('|', 0x02, struct vki_media_links_enum)
 #define VKI_MEDIA_IOC_SETUP_LINK		_VKI_IOWR('|', 0x03, struct vki_media_link_desc)
 
+/* DVB demux API */
+#define	VKI_DMX_STOP	_VKI_IO('o', 42)
+
 /* Comparison type */
 enum vki_kcmp_type {
    VKI_KCMP_FILE,
@@ -4601,7 +4741,386 @@ enum vki_kcmp_type {
    VKI_KCMP_TYPES
 };
 
+//----------------------------------------------------------------------
+// From linux-3.19-rc5/include/uapi/linux/seccomp.h
+//----------------------------------------------------------------------
+
+#define VKI_SECCOMP_MODE_FILTER 2
+
+//----------------------------------------------------------------------
+// From linux-3.19.3/include/uapi/linux/binfmts.h
+//----------------------------------------------------------------------
+#define VKI_BINPRM_BUF_SIZE 128
+
+//----------------------------------------------------------------------
+// From linux-3.19.0/include/linux/serial.h
+//----------------------------------------------------------------------
+
+struct vki_serial_struct {
+	int	type;
+	int	line;
+	unsigned int	port;
+	int	irq;
+	int	flags;
+	int	xmit_fifo_size;
+	int	custom_divisor;
+	int	baud_base;
+	unsigned short	close_delay;
+	char	io_type;
+	char	reserved_char[1];
+	int	hub6;
+	unsigned short	closing_wait; /* time to wait before closing */
+	unsigned short	closing_wait2; /* no longer used... */
+	unsigned char	*iomem_base;
+	unsigned short	iomem_reg_shift;
+	unsigned int	port_high;
+	unsigned long	iomap_base;	/* cookie passed into ioremap */
+};
+
+//----------------------------------------------------------------------
+// From linux-3.19.0/fs/binfmt_elf.c
+//----------------------------------------------------------------------
+
+#if !defined(VKI_INIT_ARCH_ELF_STATE)
+   /* This structure is used to preserve architecture specific data during
+      the loading of an ELF file, throughout the checking of architecture
+      specific ELF headers & through to the point where the ELF load is
+      known to be proceeding. This implementation is a dummy for
+      architectures which require no specific state. */
+   struct vki_arch_elf_state {
+   };
+
+#  define VKI_INIT_ARCH_ELF_STATE { }
+
+#endif
+
+//----------------------------------------------------------------------
+// From linux-4.0/include/uapi/linux/prctl.h
+//----------------------------------------------------------------------
+
+#define VKI_PR_SET_FP_MODE          45
+#define VKI_PR_GET_FP_MODE          46
+# define VKI_PR_FP_MODE_FR          (1 << 0)     /* 64b FP registers  */
+# define VKI_PR_FP_MODE_FRE         (1 << 1)     /* 32b compatibility */
+
 #endif // __VKI_LINUX_H
+
+//----------------------------------------------------------------------
+// From linux-4.10/include/uapi/linux/blkzoned.h
+//----------------------------------------------------------------------
+
+struct vki_blk_zone {
+	__vki_u64	start;
+	__vki_u64	len;
+	__vki_u64	wp;
+	__vki_u8	type;
+	__vki_u8	cond;
+	__vki_u8	non_seq;
+	__vki_u8	reset;
+	__vki_u8	reserved[36];
+};
+
+struct vki_blk_zone_report {
+	__vki_u64		sector;
+	__vki_u32		nr_zones;
+	__vki_u8		reserved[4];
+	struct vki_blk_zone	zones[0];
+};
+
+struct vki_blk_zone_range {
+	__vki_u64		sector;
+	__vki_u64		nr_sectors;
+};
+
+#define VKI_BLKREPORTZONE	_VKI_IOWR(0x12, 130, struct vki_blk_zone_report)
+#define VKI_BLKRESETZONE	_VKI_IOW(0x12, 131, struct vki_blk_zone_range)
+
+//----------------------------------------------------------------------
+// From linux-4.18/include/uapi/linux/bpf.h
+//----------------------------------------------------------------------
+
+struct vki_bpf_insn {
+	__vki_u8	code;		/* opcode */
+	__vki_u8	dst_reg:4;	/* dest register */
+	__vki_u8	src_reg:4;	/* source register */
+	__vki_s16	off;		/* signed offset */
+	__vki_s32	imm;		/* signed immediate constant */
+};
+
+enum vki_bpf_cmd {
+	VKI_BPF_MAP_CREATE,
+	VKI_BPF_MAP_LOOKUP_ELEM,
+	VKI_BPF_MAP_UPDATE_ELEM,
+	VKI_BPF_MAP_DELETE_ELEM,
+	VKI_BPF_MAP_GET_NEXT_KEY,
+	VKI_BPF_PROG_LOAD,
+	VKI_BPF_OBJ_PIN,
+	VKI_BPF_OBJ_GET,
+	VKI_BPF_PROG_ATTACH,
+	VKI_BPF_PROG_DETACH,
+	VKI_BPF_PROG_TEST_RUN,
+	VKI_BPF_PROG_GET_NEXT_ID,
+	VKI_BPF_MAP_GET_NEXT_ID,
+	VKI_BPF_PROG_GET_FD_BY_ID,
+	VKI_BPF_MAP_GET_FD_BY_ID,
+	VKI_BPF_OBJ_GET_INFO_BY_FD,
+	VKI_BPF_PROG_QUERY,
+	VKI_BPF_RAW_TRACEPOINT_OPEN,
+	VKI_BPF_BTF_LOAD,
+	VKI_BPF_BTF_GET_FD_BY_ID,
+	VKI_BPF_TASK_FD_QUERY,
+};
+
+enum vki_bpf_map_type {
+	VKI_BPF_MAP_TYPE_UNSPEC,
+	VKI_BPF_MAP_TYPE_HASH,
+	VKI_BPF_MAP_TYPE_ARRAY,
+	VKI_BPF_MAP_TYPE_PROG_ARRAY,
+	VKI_BPF_MAP_TYPE_PERF_EVENT_ARRAY,
+	VKI_BPF_MAP_TYPE_PERCPU_HASH,
+	VKI_BPF_MAP_TYPE_PERCPU_ARRAY,
+	VKI_BPF_MAP_TYPE_STACK_TRACE,
+	VKI_BPF_MAP_TYPE_CGROUP_ARRAY,
+	VKI_BPF_MAP_TYPE_LRU_HASH,
+	VKI_BPF_MAP_TYPE_LRU_PERCPU_HASH,
+	VKI_BPF_MAP_TYPE_LPM_TRIE,
+	VKI_BPF_MAP_TYPE_ARRAY_OF_MAPS,
+	VKI_BPF_MAP_TYPE_HASH_OF_MAPS,
+	VKI_BPF_MAP_TYPE_DEVMAP,
+	VKI_BPF_MAP_TYPE_SOCKMAP,
+	VKI_BPF_MAP_TYPE_CPUMAP,
+	VKI_BPF_MAP_TYPE_XSKMAP,
+	VKI_BPF_MAP_TYPE_SOCKHASH,
+};
+
+enum vki_bpf_prog_type {
+	VKI_BPF_PROG_TYPE_UNSPEC,
+	VKI_BPF_PROG_TYPE_SOCKET_FILTER,
+	VKI_BPF_PROG_TYPE_KPROBE,
+	VKI_BPF_PROG_TYPE_SCHED_CLS,
+	VKI_BPF_PROG_TYPE_SCHED_ACT,
+	VKI_BPF_PROG_TYPE_TRACEPOINT,
+	VKI_BPF_PROG_TYPE_XDP,
+	VKI_BPF_PROG_TYPE_PERF_EVENT,
+	VKI_BPF_PROG_TYPE_CGROUP_SKB,
+	VKI_BPF_PROG_TYPE_CGROUP_SOCK,
+	VKI_BPF_PROG_TYPE_LWT_IN,
+	VKI_BPF_PROG_TYPE_LWT_OUT,
+	VKI_BPF_PROG_TYPE_LWT_XMIT,
+	VKI_BPF_PROG_TYPE_SOCK_OPS,
+	VKI_BPF_PROG_TYPE_SK_SKB,
+	VKI_BPF_PROG_TYPE_CGROUP_DEVICE,
+	VKI_BPF_PROG_TYPE_SK_MSG,
+	VKI_BPF_PROG_TYPE_RAW_TRACEPOINT,
+	VKI_BPF_PROG_TYPE_CGROUP_SOCK_ADDR,
+	VKI_BPF_PROG_TYPE_LWT_SEG6LOCAL,
+	VKI_BPF_PROG_TYPE_LIRC_MODE2,
+};
+
+enum vki_bpf_attach_type {
+	VKI_BPF_CGROUP_INET_INGRESS,
+	VKI_BPF_CGROUP_INET_EGRESS,
+	VKI_BPF_CGROUP_INET_SOCK_CREATE,
+	VKI_BPF_CGROUP_SOCK_OPS,
+	VKI_BPF_SK_SKB_STREAM_PARSER,
+	VKI_BPF_SK_SKB_STREAM_VERDICT,
+	VKI_BPF_CGROUP_DEVICE,
+	VKI_BPF_SK_MSG_VERDICT,
+	VKI_BPF_CGROUP_INET4_BIND,
+	VKI_BPF_CGROUP_INET6_BIND,
+	VKI_BPF_CGROUP_INET4_CONNECT,
+	VKI_BPF_CGROUP_INET6_CONNECT,
+	VKI_BPF_CGROUP_INET4_POST_BIND,
+	VKI_BPF_CGROUP_INET6_POST_BIND,
+	VKI_BPF_CGROUP_UDP4_SENDMSG,
+	VKI_BPF_CGROUP_UDP6_SENDMSG,
+	VKI_BPF_LIRC_MODE2,
+	__VKI_MAX_BPF_ATTACH_TYPE
+};
+
+/* Specify numa node during map creation */
+#define VKI_BPF_F_NUMA_NODE		(1U << 2)
+
+#define VKI_BPF_OBJ_NAME_LEN 16U
+
+union vki_bpf_attr {
+	struct { /* anonymous struct used by BPF_MAP_CREATE command */
+		__vki_u32	map_type;	/* one of enum bpf_map_type */
+		__vki_u32	key_size;	/* size of key in bytes */
+		__vki_u32	value_size;	/* size of value in bytes */
+		__vki_u32	max_entries;	/* max number of entries in a map */
+		__vki_u32	map_flags;	/* BPF_MAP_CREATE related
+					 * flags defined above.
+					 */
+		__vki_u32	inner_map_fd;	/* fd pointing to the inner map */
+		__vki_u32	numa_node;	/* numa node (effective only if
+					 * BPF_F_NUMA_NODE is set).
+					 */
+		char	map_name[VKI_BPF_OBJ_NAME_LEN];
+		__vki_u32	map_ifindex;	/* ifindex of netdev to create on */
+		__vki_u32	btf_fd;		/* fd pointing to a BTF type data */
+		__vki_u32	btf_key_type_id;	/* BTF type_id of the key */
+		__vki_u32	btf_value_type_id;	/* BTF type_id of the value */
+	};
+
+	struct { /* anonymous struct used by BPF_MAP_*_ELEM commands */
+		__vki_u32		map_fd;
+		__vki_aligned_u64	key;
+		union {
+			__vki_aligned_u64 value;
+			__vki_aligned_u64 next_key;
+		};
+		__vki_u64		flags;
+	};
+
+	struct { /* anonymous struct used by BPF_PROG_LOAD command */
+		__vki_u32		prog_type;	/* one of enum bpf_prog_type */
+		__vki_u32		insn_cnt;
+		__vki_aligned_u64	insns;
+		__vki_aligned_u64	license;
+		__vki_u32		log_level;	/* verbosity level of verifier */
+		__vki_u32		log_size;	/* size of user buffer */
+		__vki_aligned_u64	log_buf;	/* user supplied buffer */
+		__vki_u32		kern_version;	/* checked when prog_type=kprobe */
+		__vki_u32		prog_flags;
+		char		prog_name[VKI_BPF_OBJ_NAME_LEN];
+		__vki_u32		prog_ifindex;	/* ifindex of netdev to prep for */
+		/* For some prog types expected attach type must be known at
+		 * load time to verify attach type specific parts of prog
+		 * (context accesses, allowed helpers, etc).
+		 */
+		__vki_u32		expected_attach_type;
+	};
+
+	struct { /* anonymous struct used by BPF_OBJ_* commands */
+		__vki_aligned_u64	pathname;
+		__vki_u32		bpf_fd;
+		__vki_u32		file_flags;
+	};
+
+	struct { /* anonymous struct used by BPF_PROG_ATTACH/DETACH commands */
+		__vki_u32		target_fd;	/* container object to attach to */
+		__vki_u32		attach_bpf_fd;	/* eBPF program to attach */
+		__vki_u32		attach_type;
+		__vki_u32		attach_flags;
+	};
+
+	struct { /* anonymous struct used by BPF_PROG_TEST_RUN command */
+		__vki_u32		prog_fd;
+		__vki_u32		retval;
+		__vki_u32		data_size_in;
+		__vki_u32		data_size_out;
+		__vki_aligned_u64	data_in;
+		__vki_aligned_u64	data_out;
+		__vki_u32		repeat;
+		__vki_u32		duration;
+	} test;
+
+	struct { /* anonymous struct used by BPF_*_GET_*_ID */
+		union {
+			__vki_u32		start_id;
+			__vki_u32		prog_id;
+			__vki_u32		map_id;
+			__vki_u32		btf_id;
+		};
+		__vki_u32		next_id;
+		__vki_u32		open_flags;
+	};
+
+	struct { /* anonymous struct used by BPF_OBJ_GET_INFO_BY_FD */
+		__vki_u32		bpf_fd;
+		__vki_u32		info_len;
+		__vki_aligned_u64	info;
+	} info;
+
+	struct { /* anonymous struct used by BPF_PROG_QUERY command */
+		__vki_u32		target_fd;	/* container object to query */
+		__vki_u32		attach_type;
+		__vki_u32		query_flags;
+		__vki_u32		attach_flags;
+		__vki_aligned_u64	prog_ids;
+		__vki_u32		prog_cnt;
+	} query;
+
+	struct {
+		__vki_u64 name;
+		__vki_u32 prog_fd;
+	} raw_tracepoint;
+
+	struct { /* anonymous struct for BPF_BTF_LOAD */
+		__vki_aligned_u64	btf;
+		__vki_aligned_u64	btf_log_buf;
+		__vki_u32		btf_size;
+		__vki_u32		btf_log_size;
+		__vki_u32		btf_log_level;
+	};
+
+	struct {
+		__vki_u32		pid;		/* input: pid */
+		__vki_u32		fd;		/* input: fd */
+		__vki_u32		flags;		/* input: flags */
+		__vki_u32		buf_len;	/* input/output: buf len */
+		__vki_aligned_u64	buf;		/* input/output:
+						 *   tp_name for tracepoint
+						 *   symbol for kprobe
+						 *   filename for uprobe
+						 */
+		__vki_u32		prog_id;	/* output: prod_id */
+		__vki_u32		fd_type;	/* output: BPF_FD_TYPE_* */
+		__vki_u64		probe_offset;	/* output: probe_offset */
+		__vki_u64		probe_addr;	/* output: probe_addr */
+	} task_fd_query;
+} __attribute__((aligned(8)));
+
+#define VKI_XDP_PACKET_HEADROOM 256
+
+#define VKI_BPF_TAG_SIZE	8
+
+struct vki_bpf_prog_info {
+	__vki_u32 type;
+	__vki_u32 id;
+	__vki_u8  tag[VKI_BPF_TAG_SIZE];
+	__vki_u32 jited_prog_len;
+	__vki_u32 xlated_prog_len;
+	__vki_aligned_u64 jited_prog_insns;
+	__vki_aligned_u64 xlated_prog_insns;
+	__vki_u64 load_time;	/* ns since boottime */
+	__vki_u32 created_by_uid;
+	__vki_u32 nr_map_ids;
+	__vki_aligned_u64 map_ids;
+	char name[VKI_BPF_OBJ_NAME_LEN];
+	__vki_u32 ifindex;
+	__vki_u32 gpl_compatible:1;
+	__vki_u64 netns_dev;
+	__vki_u64 netns_ino;
+	__vki_u32 nr_jited_ksyms;
+	__vki_u32 nr_jited_func_lens;
+	__vki_aligned_u64 jited_ksyms;
+	__vki_aligned_u64 jited_func_lens;
+} __attribute__((aligned(8)));
+
+struct vki_bpf_map_info {
+	__vki_u32 type;
+	__vki_u32 id;
+	__vki_u32 key_size;
+	__vki_u32 value_size;
+	__vki_u32 max_entries;
+	__vki_u32 map_flags;
+	char  name[VKI_BPF_OBJ_NAME_LEN];
+	__vki_u32 ifindex;
+	__vki_u32 :32;
+	__vki_u64 netns_dev;
+	__vki_u64 netns_ino;
+	__vki_u32 btf_id;
+	__vki_u32 btf_key_type_id;
+	__vki_u32 btf_value_type_id;
+} __attribute__((aligned(8)));
+
+struct vki_bpf_btf_info {
+	__vki_aligned_u64 btf;
+	__vki_u32 btf_size;
+	__vki_u32 id;
+} __attribute__((aligned(8)));
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

@@ -4,16 +4,19 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %1\n\t" \
       "b end"#RSval"\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end"#RSval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval) \
-      : #RD, "cc", "memory" \
+      : #RD, "memory" \
         ); \
         printf("B :: %d, RSval: %d\n", \
         out, RSval); \
@@ -23,16 +26,19 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %1\n\t" \
       "b end12"#RSval"\n\t" \
-      "addi $" #RD ", $" #RD", 3\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 3\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end12"#RSval":\n\t" \
-      "addi $" #RD ", $" #RD", 3\n\t" \
+      "addiu $" #RD ", $" #RD", 3\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval) \
-      : #RD, "cc", "memory" \
+      : #RD, "memory" \
         ); \
         printf("B :: %d, RSval: %d\n", \
         out, RSval); \
@@ -42,20 +48,23 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %1\n\t" \
       "bal end21"#RSval"\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "b r_end"#RSval"\n\t" \
       "nop\n\t" \
       "end21"#RSval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "jr $ra\n\t"  \
       "r_end"#RSval":\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval) \
-      : #RD, "cc", "memory" \
+      : #RD, "memory" \
         ); \
         printf("B BAL JR :: %d, RSval: %d\n", \
         out, RSval); \
@@ -65,22 +74,25 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %1\n\t" \
       "la $t0, end31"#RSval"\n\t" \
       "jal $t0\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "la $t0, r_end11"#RSval"\n\t" \
       "j $t0\n\t" \
       "nop\n\t" \
       "end31"#RSval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "jr $ra\n\t"  \
       "r_end11"#RSval":\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval) \
-      : #RD, "t0", "cc", "memory" \
+      : #RD, "t0", "memory" \
         ); \
         printf("J JAL JR :: %d, RSval: %d\n", \
         out, RSval); \
@@ -90,22 +102,25 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %1\n\t" \
       "la $t0, end41"#RSval"\n\t" \
       "jalr $t1, $t0\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "la $t0, r_end21"#RSval"\n\t" \
       "j $t0\n\t" \
       "nop\n\t" \
       "end41"#RSval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "jr $t1\n\t"  \
       "r_end21"#RSval":\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval) \
-      : #RD, "t0", "t1", "cc", "memory" \
+      : #RD, "t0", "t1", "memory" \
         ); \
         printf("J JALR JR :: %d, RSval: %d\n", \
         out, RSval); \
@@ -115,18 +130,21 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RS ", %1\n\t" \
       "move $" #RT ", %2\n\t" \
       "move $" #RD ", %3\n\t" \
       instruction" $" #RS ", $" #RT ", end"instruction#RDval"\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RTval), "r" (RDval) \
-      : #RD, #RS, #RT, "cc", "memory" \
+      : #RD, #RS, #RT, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d, RTval: %d\n", \
         out, RSval, RTval); \
@@ -136,17 +154,20 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RS ", %1\n\t" \
       "move $" #RD ", %2\n\t" \
       instruction" $" #RS ", end"instruction#RDval"\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RDval) \
-      : #RD, #RS, "cc", "memory" \
+      : #RD, #RS, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d\n", \
         out, RSval); \
@@ -156,21 +177,24 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %2\n\t" \
       "move $" #RS ", %1\n\t" \
       instruction" $" #RS ", end21"instruction#RDval"\n\t" \
       "nop\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "b r_end"instruction#RDval"\n\t" \
       "nop\n\t" \
       "end21"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "jr $ra\n\t"  \
       "r_end"instruction#RDval":\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RDval) \
-      : #RD, #RS, "cc", "memory" \
+      : #RD, #RS, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d\n", \
         out, RSval); \
@@ -180,18 +204,21 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RS ", %1\n\t" \
       "move $" #RT ", %2\n\t" \
       "move $" #RD ", %3\n\t" \
       instruction" $" #RS ", $" #RT ", end"instruction#RDval"\n\t" \
-      "addi $" #RD ", $" #RD", 3\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 3\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RTval), "r" (RDval) \
-      : #RD, #RS, #RT, "cc", "memory" \
+      : #RD, #RS, #RT, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d, RTval: %d\n", \
         out, RSval, RTval); \
@@ -201,17 +228,20 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RS ", %1\n\t" \
       "move $" #RD ", %2\n\t" \
       instruction" $" #RS ", end"instruction#RDval"\n\t" \
-      "addi $" #RD ", $" #RD", 3\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 3\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "end"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RDval) \
-      : #RD, #RS, "cc", "memory" \
+      : #RD, #RS, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d\n", \
         out, RSval); \
@@ -221,21 +251,24 @@
 { \
    unsigned int out = 0; \
    __asm__ volatile( \
+      ".set push \n\t" \
+      ".set noreorder \n\t" \
       "move $" #RD ", %2\n\t" \
       "move $" #RS ", %1\n\t" \
       instruction" $" #RS ", end21"instruction#RDval"\n\t" \
-      "addi $" #RD ", $" #RD", 3\n\t" \
-      "addi $" #RD ", $" #RD", 5\n\t" \
+      "addiu $" #RD ", $" #RD", 3\n\t" \
+      "addiu $" #RD ", $" #RD", 5\n\t" \
       "b r_end"instruction#RDval"\n\t" \
       "nop\n\t" \
       "end21"instruction#RDval":\n\t" \
-      "addi $" #RD ", $" #RD", 1\n\t" \
+      "addiu $" #RD ", $" #RD", 1\n\t" \
       "jr $ra\n\t"  \
       "r_end"instruction#RDval":\n\t" \
       "move %0, $" #RD "\n\t" \
+      ".set pop \n\t" \
       : "=&r" (out) \
       : "r" (RSval), "r" (RDval) \
-      : #RD, #RS, "cc", "memory" \
+      : #RD, #RS, "memory" \
         ); \
         printf(instruction" :: %d, RSval: %d\n", \
         out, RSval); \
@@ -243,7 +276,7 @@
 
 int main()
 {
-   printf("b \n");
+   printf("b\n");
    TESTINST1(0, v0);
    TESTINST1(1, v1);
    TESTINST1(2, a0);
@@ -269,7 +302,7 @@ int main()
    TESTINST1(22, t8);
    TESTINST1(23, t9);
 
-   printf("b \n");
+   printf("b\n");
    TESTINST2(0, v0);
    TESTINST2(1, v1);
    TESTINST2(2, a0);
@@ -295,7 +328,7 @@ int main()
    TESTINST2(22, t8);
    TESTINST2(23, t9);
 
-   printf("b, bal, jr \n");
+   printf("b, bal, jr\n");
    TESTINST3(0, v0);
    TESTINST3(1, v1);
    TESTINST3(2, a0);
@@ -447,6 +480,7 @@ int main()
    TESTINST5("bltz", 14, -1, v0, t9);
    TESTINST5("bltz", 15, -1, t9, t8);
 
+#if (__mips_isa_rev < 6)
    printf("BGEZAL\n");
    TESTINST6("bgezal", 0, 0, v0, v1);
    TESTINST6("bgezal", 1, 1, v1, a0);
@@ -482,6 +516,7 @@ int main()
    TESTINST6("bltzal", 13, 0xfff, s0, s1);
    TESTINST6("bltzal", 14, -1, v0, t9);
    TESTINST6("bltzal", 15, -1, t9, t8);
+#endif
 
    printf("BNEZ\n");
    TESTINST5("bnez", 0, 0, v0, v1);
@@ -501,6 +536,7 @@ int main()
    TESTINST5("bnez", 14, -1, v0, t9);
    TESTINST5("bnez", 15, -1, t9, t8);
 
+#if (__mips_isa_rev < 6)
    printf("beql\n");
    TESTINST4l("beql", 0, 0, 1, v0, v1, a0);
    TESTINST4l("beql", 1, 1, 1, v1, a0, a1);
@@ -644,8 +680,9 @@ int main()
    TESTINST4l("bnel", 13, 0xfff, 0xdd, s0, s1, s2);
    TESTINST4l("bnel", 14, -1, 0x5, v0, t9, t8);
    TESTINST4l("bnel", 15, -1, -1, t9, t8, a3);
+#endif
 
-   printf("j, jal, jr \n");
+   printf("j, jal, jr\n");
    TESTINST3j(0, v0);
    TESTINST3j(1, v1);
    TESTINST3j(2, a0);
@@ -671,7 +708,7 @@ int main()
    TESTINST3j(22, t8);
    TESTINST3j(23, t9);
 
-   printf("j, jalr, jr \n");
+   printf("j, jalr, jr\n");
    TESTINST3ja(0, v0);
    TESTINST3ja(1, v1);
    TESTINST3ja(2, a0);

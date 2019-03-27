@@ -11,7 +11,7 @@
       derived from readelf.c and valgrind-20031012-wine/vg_symtab2.c
       derived from wine-1.0/tools/winedump/pdb.c and msc.c
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
    Copyright 2006 Eric Pouech (winedump/pdb.c and msc.c)
       GNU Lesser General Public License version 2.1 or later applies.
@@ -35,7 +35,7 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
-#if defined(VGO_linux) || defined(VGO_darwin)
+#if defined(VGO_linux) || defined(VGO_darwin) || defined(VGO_solaris)
 
 #include "pub_core_basics.h"
 #include "pub_core_debuginfo.h"
@@ -1019,10 +1019,17 @@ static void* find_pdb_header( void* pdbimage,
 {
    static const HChar pdbtxt[]= "Microsoft C/C++";
    HChar* txteof = VG_(strchr)(pdbimage, '\032');
-   if (! txteof)
+   if (! txteof) {
+      VG_(umsg)("LOAD_PDB_DEBUGINFO: \\032 header character not found. "
+                " possible invalid/unsupported pdb file format?\n");
       return NULL;
-   if (0!=VG_(strncmp)(pdbimage, pdbtxt, -1+ sizeof(pdbtxt)))
+   }
+   if (0!=VG_(strncmp)(pdbimage, pdbtxt, -1+ sizeof(pdbtxt))) {
+      VG_(umsg)("LOAD_PDB_DEBUGINFO: %s header string not found. "
+                " possible invalid/unsupported pdb file format?\n",
+                pdbtxt);;
       return NULL;
+   }
 
    *signature = *(unsigned*)(1+ txteof);
    HChar *img_addr = pdbimage;    // so we can do address arithmetic
@@ -1113,7 +1120,7 @@ static void pdb_jg_init( struct pdb_reader* reader,
 static 
 void pdb_check_root_version_and_timestamp( const HChar* pdbname,
                                            ULong  pdbmtime,
-                                           unsigned  version,
+                                           UInt  version,
                                            UInt TimeDateStamp )
 {
    switch ( version ) {
@@ -1126,7 +1133,7 @@ void pdb_check_root_version_and_timestamp( const HChar* pdbname,
       default:
          if (VG_(clo_verbosity) > 1)
             VG_(umsg)("LOAD_PDB_DEBUGINFO: "
-                      "Unknown .pdb root block version %d\n", version );
+                      "Unknown .pdb root block version %u\n", version );
    }
    if ( TimeDateStamp != pdbmtime ) {
       if (VG_(clo_verbosity) > 1)
@@ -1238,9 +1245,9 @@ static ULong DEBUG_SnarfCodeView(
 
       default:
          if (0) {
-            const int *isym = (const int *)sym;
+            const UInt *isym = (const UInt *)sym;
             VG_(printf)("unknown id 0x%x len=0x%x at %p\n",
-                        sym->generic.id, sym->generic.len, sym);
+                        (UInt)sym->generic.id, (UInt)sym->generic.len, sym);
             VG_(printf)("  %8x  %8x  %8x  %8x\n", 
                         isym[1], isym[2], isym[3], isym[4]);
             VG_(printf)("  %8x  %8x  %8x  %8x\n",
@@ -1272,6 +1279,7 @@ static ULong DEBUG_SnarfCodeView(
                              // FIXME: .namelen is sizeof(.data) including .name[]
             vsym.isText    = (sym->generic.id == S_PUB_V1);
             vsym.isIFunc   = False;
+            vsym.isGlobal  = True;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1299,6 +1307,7 @@ static ULong DEBUG_SnarfCodeView(
             vsym.isText    = !!(IMAGE_SCN_CNT_CODE 
                                 & sectp[sym->data_v2.segment-1].Characteristics);
             vsym.isIFunc   = False;
+            vsym.isGlobal  = True;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1332,6 +1341,7 @@ static ULong DEBUG_SnarfCodeView(
             vsym.isText    = !!(IMAGE_SCN_CNT_CODE
                                 & sectp[sym->data_v2.segment-1].Characteristics);
             vsym.isIFunc   = False;
+            vsym.isGlobal  = True;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1365,8 +1375,9 @@ static ULong DEBUG_SnarfCodeView(
          vsym.size      = sym->proc_v1.proc_len;
          vsym.isText    = True;
          vsym.isIFunc   = False;
+         vsym.isGlobal  = sym->generic.id == S_GPROC_V1;
          if (debug)
-            VG_(umsg)("  Adding function %s addr=%#lx length=%d\n",
+            VG_(umsg)("  Adding function %s addr=%#lx length=%u\n",
                       symname, vsym.avmas.main, vsym.size );
          ML_(addSym)( di, &vsym );
          n_syms_read++;
@@ -1386,8 +1397,9 @@ static ULong DEBUG_SnarfCodeView(
          vsym.size      = sym->proc_v2.proc_len;
          vsym.isText    = True;
          vsym.isIFunc   = False;
+         vsym.isGlobal  = sym->generic.id == S_GPROC_V2;
          if (debug)
-            VG_(umsg)("  Adding function %s addr=%#lx length=%d\n",
+            VG_(umsg)("  Adding function %s addr=%#lx length=%u\n",
                       symname, vsym.avmas.main, vsym.size );
          ML_(addSym)( di, &vsym );
          n_syms_read++;
@@ -1408,6 +1420,7 @@ static ULong DEBUG_SnarfCodeView(
             vsym.size      = sym->proc_v3.proc_len;
             vsym.isText    = 1;
             vsym.isIFunc   = False;
+            vsym.isGlobal  = sym->generic.id == S_GPROC_V3;
             ML_(addSym)( di, &vsym );
             n_syms_read++;
          }
@@ -1756,7 +1769,7 @@ static ULong codeview_dump_linetab2(
 
       for (i = 0; i < lbh->nlines; i++) {
          if (debug)
-            VG_(printf)("%s  offset=%08x line=%d\n",
+            VG_(printf)("%s  offset=%08x line=%u\n",
                         pfx, lbh->l[i].offset, lbh->l[i].lineno ^ 0x80000000);
       }
 
@@ -1767,7 +1780,7 @@ static ULong codeview_dump_linetab2(
             svma_e = sectp[lbh->seg - 1].VirtualAddress + lbh->start
                      + lbh->l[i+1].offset-1;
             if (debug)
-               VG_(printf)("%s  line %d: %08lx to %08lx\n",
+               VG_(printf)("%s  line %u: %08lx to %08lx\n",
                            pfx, lbh->l[i].lineno ^ 0x80000000, svma_s, svma_e);
             ML_(addLineInfo)( di, 
                               filedirname_ix,
@@ -1781,7 +1794,7 @@ static ULong codeview_dump_linetab2(
          svma_e = sectp[lbh->seg - 1].VirtualAddress + lbh->start
                   + lbh->size - 1;
          if (debug)
-            VG_(printf)("%s  line %d: %08lx to %08lx\n",
+            VG_(printf)("%s  line %u: %08lx to %08lx\n",
                         pfx, lbh->l[ lbh->nlines-1  ].lineno ^ 0x80000000,
                         svma_s, svma_e);
           ML_(addLineInfo)( di, 
@@ -2099,7 +2112,7 @@ static void pdb_dump( const struct pdb_reader* pdb,
       default:
          if (VG_(clo_verbosity) > 1)
             VG_(umsg)("LOAD_PDB_DEBUGINFO: "
-                      "Unknown .pdb type info version %ld\n", types.version );
+                      "Unknown .pdb type info version %lu\n", types.version );
    }
 
    header_size = 0;
@@ -2113,7 +2126,7 @@ static void pdb_dump( const struct pdb_reader* pdb,
       default:
          if (VG_(clo_verbosity) > 1)
             VG_(umsg)("LOAD_PDB_DEBUGINFO: "
-                      "Unknown .pdb symbol info version %ld\n",
+                      "Unknown .pdb symbol info version %lu\n",
                       symbols.version );
    }
 
@@ -2264,13 +2277,19 @@ Bool ML_(read_pdb_debug_info)(
        VG_(umsg)("LOAD_PDB_DEBUGINFO: Processing PDB file %s\n", pdbname );
 
    dos_avma = (IMAGE_DOS_HEADER *)obj_avma;
-   if (dos_avma->e_magic != IMAGE_DOS_SIGNATURE)
-      return False;
+   if (dos_avma->e_magic != IMAGE_DOS_SIGNATURE) {
+      VG_(umsg)("LOAD_PDB_DEBUGINFO: IMAGE_DOS_SIGNATURE not found. "
+                " possible invalid/unsupported pdb file format?\n");
+       return False;
+   }
 
    ntheaders_avma
       = (IMAGE_NT_HEADERS *)((Char*)dos_avma + dos_avma->e_lfanew);
-   if (ntheaders_avma->Signature != IMAGE_NT_SIGNATURE)
+   if (ntheaders_avma->Signature != IMAGE_NT_SIGNATURE) {
+      VG_(umsg)("LOAD_PDB_DEBUGINFO: IMAGE_NT_SIGNATURE not found. "
+                " possible invalid/unsupported pdb file format?\n");
       return False;
+   }
 
    sectp_avma
       = (IMAGE_SECTION_HEADER *)(
@@ -2384,21 +2403,21 @@ Bool ML_(read_pdb_debug_info)(
          const DebugInfoMapping* map = VG_(indexXA)(di->fsm.maps, i);
          if (map->rx)
             VG_(dmsg)("LOAD_PDB_DEBUGINFO: "
-                      "rx_map: avma %#lx size %7lu foff %llu\n",
-                      map->avma, map->size, (Off64T)map->foff);
+                      "rx_map: avma %#lx size %7lu foff %lld\n",
+                      map->avma, map->size, (Long)map->foff);
       }
       for (i = 0; i < VG_(sizeXA)(di->fsm.maps); i++) {
          const DebugInfoMapping* map = VG_(indexXA)(di->fsm.maps, i);
          if (map->rw)
             VG_(dmsg)("LOAD_PDB_DEBUGINFO: "
-                      "rw_map: avma %#lx size %7lu foff %llu\n",
-                      map->avma, map->size, (Off64T)map->foff);
+                      "rw_map: avma %#lx size %7lu foff %lld\n",
+                      map->avma, map->size, (Long)map->foff);
       }
 
       VG_(dmsg)("LOAD_PDB_DEBUGINFO: "
                 "  text: avma %#lx svma %#lx size %7lu bias %#lx\n",
                 di->text_avma, di->text_svma,
-                di->text_size, di->text_bias);
+                di->text_size, (UWord)di->text_bias);
    }
 
    /*
@@ -2406,8 +2425,11 @@ Bool ML_(read_pdb_debug_info)(
     */
    signature = 0;
    hdr = find_pdb_header( pdbimage, &signature );
-   if (0==hdr)
+   if (0==hdr) {
+      VG_(umsg)("LOAD_PDB_DEBUGINFO: find_pdb_header found no hdr. "
+                " possible invalid/unsupported pdb file format?\n");
       return False; /* JRS: significance? no pdb header? */
+   }
 
    VG_(memset)(&reader, 0, sizeof(reader));
    reader.u.jg.header = hdr;
@@ -2503,8 +2525,8 @@ HChar* ML_(find_name_of_pdb_file)( const HChar* pename )
       sh -c "strings (pename) | egrep '\.pdb$|\.PDB$' > (tmpname)"
    */
    const HChar* sh      = "/bin/sh";
-   const HChar* strings = "/usr/bin/strings";
-   const HChar* egrep   = "/usr/bin/egrep";
+   const HChar* strings = "strings";
+   const HChar* egrep   = "grep -E";
 
    /* (sh) -c "(strings) (pename) | (egrep) 'pdb' > (tmpname) */
    Int cmdlen = VG_(strlen)(strings) + VG_(strlen)(pename)
@@ -2584,7 +2606,7 @@ HChar* ML_(find_name_of_pdb_file)( const HChar* pename )
    return res;
 }
 
-#endif // defined(VGO_linux) || defined(VGO_darwin)
+#endif // defined(VGO_linux) || defined(VGO_darwin) || defined(VGO_solaris)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

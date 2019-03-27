@@ -2309,7 +2309,7 @@ static struct BufferedFile *file;
 static int ch, tok;
 static CValue tokc;
 static CString tokcstr; /* current parsed string, if any */
-/* additional informations about token */
+/* additional information about token */
 static int tok_flags;
 #define TOK_FLAG_BOL   0x0001 /* beginning of line before */
 #define TOK_FLAG_BOF   0x0002 /* beginning of file before */
@@ -2435,7 +2435,7 @@ struct TCCState {
     Section *plt;
     unsigned long *got_offsets;
     int nb_got_offsets;
-    /* give the correspondance from symtab indexes to dynsym indexes */
+    /* give the correspondence from symtab indexes to dynsym indexes */
     int *symtab_to_dynsym;
 
     /* temporary dynamic symbol sections (for dll loading) */
@@ -3080,7 +3080,7 @@ enum tcc_token {
  DEF_FP(mul)
 
  DEF_ASM(fcom)
- DEF_ASM(fcom_1) /* non existant op, just to have a regular table */
+ DEF_ASM(fcom_1) /* non existent op, just to have a regular table */
  DEF_FP1(com)
 
  DEF_FP(comp)
@@ -4412,7 +4412,7 @@ static const char tcc_keywords[] =
  DEF_FP(mul)
 
  DEF_ASM(fcom)
- DEF_ASM(fcom_1) /* non existant op, just to have a regular table */
+ DEF_ASM(fcom_1) /* non existent op, just to have a regular table */
  DEF_FP1(com)
 
  DEF_FP(comp)
@@ -5508,7 +5508,7 @@ typedef struct ExprValue {
 #define MAX_ASM_OPERANDS 30
 
 typedef struct ASMOperand {
-    int id; /* GCC 3 optionnal identifier (0 if number only supported */
+    int id; /* GCC 3 optional identifier (0 if number only supported */
     char *constraint;
     char asm_str[16]; /* computed asm string for operand */
     SValue *vt; /* C value of the expression */
@@ -10433,7 +10433,7 @@ int gv(int rc)
         bit_pos = (vtop->type.t >> VT_STRUCT_SHIFT) & 0x3f;
         bit_size = (vtop->type.t >> (VT_STRUCT_SHIFT + 6)) & 0x3f;
         /* remove bit field info to avoid loops */
-        vtop->type.t &= ~(VT_BITFIELD | (-1 << VT_STRUCT_SHIFT));
+        vtop->type.t &= ~(VT_BITFIELD | (~0U << VT_STRUCT_SHIFT));
         /* generate shifts */
         vpushi(32 - (bit_pos + bit_size));
         gen_op(TOK_SHL);
@@ -10846,7 +10846,7 @@ void gen_opl(int op)
             c = (int)vtop->c.i;
             /* constant: simpler */
             /* NOTE: all comments are for SHL. the other cases are
-               done by swaping words */
+               done by swapping words */
             vpop();
             if (op != TOK_SHL)
                 vswap();
@@ -11821,7 +11821,7 @@ static void gen_assign_cast(CType *dt)
             goto type_ok;
         }
         type1 = pointed_type(dt);
-        /* a function is implicitely a function pointer */
+        /* a function is implicitly a function pointer */
         if (sbt == VT_FUNC) {
             if ((type1->t & VT_BTYPE) != VT_VOID &&
                 !is_compatible_types(pointed_type(dt), st))
@@ -11930,7 +11930,7 @@ void vstore(void)
         bit_pos = (ft >> VT_STRUCT_SHIFT) & 0x3f;
         bit_size = (ft >> (VT_STRUCT_SHIFT + 6)) & 0x3f;
         /* remove bit field info to avoid loops */
-        vtop[-1].type.t = ft & ~(VT_BITFIELD | (-1 << VT_STRUCT_SHIFT));
+        vtop[-1].type.t = ft & ~(VT_BITFIELD | (~0U << VT_STRUCT_SHIFT));
 
         /* duplicate destination */
         vdup();
@@ -13365,8 +13365,8 @@ static void expr_eq(void)
                     rc = RC_FLOAT;
                 else
                     rc = RC_INT;
-                    gv(rc);
-                    save_regs(1);
+                gv(rc);
+                save_regs(1);
             }
             if (tok == ':' && gnu_ext) {
                 gv_dup();
@@ -16970,7 +16970,7 @@ static void subst_asm_operand(CString *add_str,
     }
 }
 
-/* generate prolog and epilog code for asm statment */
+/* generate prolog and epilog code for asm statement */
 static void asm_gen_code(ASMOperand *operands, int nb_operands, 
                          int nb_outputs, int is_output,
                          uint8_t *clobber_regs,
@@ -18803,7 +18803,7 @@ static void build_got(TCCState *s1)
 }
 
 /* put a got entry corresponding to a symbol in symtab_section. 'size'
-   and 'info' can be modifed if more precise info comes from the DLL */
+   and 'info' can be modified if more precise info comes from the DLL */
 static void put_got_entry(TCCState *s1,
                           int reloc_type, unsigned long size, int info, 
                           int sym_index)
@@ -19579,7 +19579,7 @@ int tcc_output_file(TCCState *s1, const char *filename)
             }
         }
 
-        /* if interpreter, then add corresponing program header */
+        /* if interpreter, then add corresponding program header */
         if (interp) {
             ph = &phdr[0];
             
@@ -19593,7 +19593,7 @@ int tcc_output_file(TCCState *s1, const char *filename)
             ph->p_align = interp->sh_addralign;
         }
         
-        /* if dynamic section, then add corresponing program header */
+        /* if dynamic section, then add corresponding program header */
         if (dynamic) {
             Elf32_Sym *sym_end;
 
@@ -21285,7 +21285,7 @@ static int64_t getclock_us(void)
 
 void help(void)
 {
-    printf("tcc version " TCC_VERSION " - Tiny C Compiler - Copyright (C) 2001-2013 Fabrice Bellard\n"
+    printf("tcc version " TCC_VERSION " - Tiny C Compiler - Copyright (C) 2001-2017 Fabrice Bellard\n"
            "usage: tcc [-v] [-c] [-o outfile] [-Bdir] [-bench] [-Idir] [-Dsym[=val]] [-Usym]\n"
            "           [-Wwarn] [-g] [-b] [-bt N] [-Ldir] [-llib] [-shared] [-static]\n"
            "           [infile1 infile2...] [-run infile args...]\n"

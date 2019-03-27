@@ -8,10 +8,10 @@
    This file is part of Callgrind, a Valgrind tool for call graph
    profiling programs.
 
-   Copyright (C) 2002-2013, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
+   Copyright (C) 2002-2017, Josef Weidendorfer (Josef.Weidendorfer@gmx.de)
 
    This tool is derived from and contains code from Cachegrind
-   Copyright (C) 2002-2013 Nicholas Nethercote (njn@valgrind.org)
+   Copyright (C) 2002-2017 Nicholas Nethercote (njn@valgrind.org)
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -140,7 +140,7 @@ void log_cond_branch(InstrInfo* ii, Word taken)
     Int fullOffset_Bc;
     ULong* cost_Bc;
 
-    CLG_DEBUG(6, "log_cond_branch:  Ir %#lx, taken %lu\n",
+    CLG_DEBUG(6, "log_cond_branch:  Ir %#lx, taken %ld\n",
               CLG_(bb_base) + ii->instr_offset, taken);
 
     miss = 1 & do_cond_branch_predict(CLG_(bb_base) + ii->instr_offset, taken);
@@ -331,23 +331,23 @@ static void showEvent ( Event* ev )
 {
    switch (ev->tag) {
       case Ev_Ir:
-	 VG_(printf)("Ir (InstrInfo %p) at +%d\n",
+	 VG_(printf)("Ir (InstrInfo %p) at +%u\n",
 		     ev->inode, ev->inode->instr_offset);
 	 break;
       case Ev_Dr:
-	 VG_(printf)("Dr (InstrInfo %p) at +%d %d EA=",
+	 VG_(printf)("Dr (InstrInfo %p) at +%u %d EA=",
 		     ev->inode, ev->inode->instr_offset, ev->Ev.Dr.szB);
 	 ppIRExpr(ev->Ev.Dr.ea);
 	 VG_(printf)("\n");
 	 break;
       case Ev_Dw:
-	 VG_(printf)("Dw (InstrInfo %p) at +%d %d EA=",
+	 VG_(printf)("Dw (InstrInfo %p) at +%u %d EA=",
 		     ev->inode, ev->inode->instr_offset, ev->Ev.Dw.szB);
 	 ppIRExpr(ev->Ev.Dw.ea);
 	 VG_(printf)("\n");
 	 break;
       case Ev_Dm:
-	 VG_(printf)("Dm (InstrInfo %p) at +%d %d EA=",
+	 VG_(printf)("Dm (InstrInfo %p) at +%u %d EA=",
 		     ev->inode, ev->inode->instr_offset, ev->Ev.Dm.szB);
 	 ppIRExpr(ev->Ev.Dm.ea);
 	 VG_(printf)("\n");
@@ -637,7 +637,6 @@ void addEvent_Dr ( ClgState* clgs, InstrInfo* inode, Int datasize, IRAtom* ea )
 static
 void addEvent_Dw ( ClgState* clgs, InstrInfo* inode, Int datasize, IRAtom* ea )
 {
-   Event* lastEvt;
    Event* evt;
    tl_assert(isIRAtom(ea));
    tl_assert(datasize >= 1);
@@ -645,15 +644,16 @@ void addEvent_Dw ( ClgState* clgs, InstrInfo* inode, Int datasize, IRAtom* ea )
    tl_assert(datasize <= CLG_(min_line_size));
 
    /* Is it possible to merge this write with the preceding read? */
-   lastEvt = &clgs->events[clgs->events_used-1];
-   if (clgs->events_used > 0
-       && lastEvt->tag       == Ev_Dr
-       && lastEvt->Ev.Dr.szB == datasize
-       && lastEvt->inode     == inode
-       && eqIRAtom(lastEvt->Ev.Dr.ea, ea))
-   {
-      lastEvt->tag   = Ev_Dm;
-      return;
+   if (clgs->events_used > 0) {
+      Event* lastEvt = &clgs->events[clgs->events_used-1];
+      if (   lastEvt->tag       == Ev_Dr
+          && lastEvt->Ev.Dr.szB == datasize
+          && lastEvt->inode     == inode
+          && eqIRAtom(lastEvt->Ev.Dr.ea, ea))
+      {
+         lastEvt->tag   = Ev_Dm;
+         return;
+      }
    }
 
    /* No.  Add as normal. */
@@ -719,7 +719,7 @@ void addEvent_Bc ( ClgState* clgs, InstrInfo* inode, IRAtom* guard )
    Event* evt;
    tl_assert(isIRAtom(guard));
    tl_assert(typeOfIRExpr(clgs->sbOut->tyenv, guard)
-             == (sizeof(HWord)==4 ? Ity_I32 : Ity_I64));
+             == (sizeof(RegWord)==4 ? Ity_I32 : Ity_I64));
    if (!CLG_(clo).simulate_branch) return;
 
    if (clgs->events_used == N_EVENTS)
@@ -739,7 +739,7 @@ void addEvent_Bi ( ClgState* clgs, InstrInfo* inode, IRAtom* whereTo )
    Event* evt;
    tl_assert(isIRAtom(whereTo));
    tl_assert(typeOfIRExpr(clgs->sbOut->tyenv, whereTo)
-             == (sizeof(HWord)==4 ? Ity_I32 : Ity_I64));
+             == (sizeof(RegWord)==4 ? Ity_I32 : Ity_I64));
    if (!CLG_(clo).simulate_branch) return;
 
    if (clgs->events_used == N_EVENTS)
@@ -839,11 +839,11 @@ Addr IRConst2Addr(IRConst* con)
 {
     Addr addr;
 
-    if (sizeof(Addr) == 4) {
+    if (sizeof(RegWord) == 4) {
 	CLG_ASSERT( con->tag == Ico_U32 );
 	addr = con->Ico.U32;
     }
-    else if (sizeof(Addr) == 8) {
+    else if (sizeof(RegWord) == 8) {
 	CLG_ASSERT( con->tag == Ico_U64 );
 	addr = con->Ico.U64;
     }
@@ -1353,7 +1353,7 @@ IRSB* CLG_(instrument)( VgCallbackClosure* closure,
    if (cJumps>0) {
        CLG_DEBUG(3, "                     [ ");
        for (i=0;i<cJumps;i++)
-	   CLG_DEBUG(3, "%d ", clgs.bb->jmp[i].instr);
+	   CLG_DEBUG(3, "%u ", clgs.bb->jmp[i].instr);
        CLG_DEBUG(3, "], last inverted: %s \n",
 		 clgs.bb->cjmp_inverted ? "yes":"no");
    }
@@ -1576,7 +1576,7 @@ static void print_monitor_help ( void )
 static Bool handle_gdb_monitor_command (ThreadId tid, const HChar *req)
 {
    HChar* wcmd;
-   HChar s[VG_(strlen(req)) + 1]; /* copy for strtok_r */
+   HChar s[VG_(strlen)(req) + 1]; /* copy for strtok_r */
    HChar *ssaveptr;
 
    VG_(strcpy) (s, req);
@@ -1823,7 +1823,7 @@ void clg_print_stats(void)
 		CLG_(stat).distinct_contexts);
    VG_(message)(Vg_DebugMsg, "Distinct BBs:     %d\n",
 		CLG_(stat).distinct_bbs);
-   VG_(message)(Vg_DebugMsg, "Cost entries:     %d (Chunks %d)\n",
+   VG_(message)(Vg_DebugMsg, "Cost entries:     %u (Chunks %u)\n",
 		CLG_(costarray_entries), CLG_(costarray_chunks));
    VG_(message)(Vg_DebugMsg, "Distinct BBCCs:   %d\n",
 		CLG_(stat).distinct_bbccs);
@@ -1975,6 +1975,16 @@ void CLG_(post_clo_init)(void)
                 "sp-at-mem-access\n");
    }
 
+   if (CLG_(clo).collect_systime) {
+      VG_(needs_syscall_wrapper)(CLG_(pre_syscalltime),
+                                 CLG_(post_syscalltime));
+      syscalltime = CLG_MALLOC("cl.main.pci.1",
+                               VG_N_THREADS * sizeof syscalltime[0]);
+      for (UInt i = 0; i < VG_N_THREADS; ++i) {
+         syscalltime[i] = 0;
+      }
+   }
+
    if (VG_(clo_px_file_backed) != VexRegUpdSpAtMemAccess) {
       CLG_DEBUG(1, " Using user specified value for "
                 "--px-file-backed\n");
@@ -1988,13 +1998,13 @@ void CLG_(post_clo_init)(void)
       VG_(message)(Vg_UserMsg, 
                    "callgrind only works with --vex-iropt-unroll-thresh=0\n"
                    "=> resetting it back to 0\n");
-      VG_(clo_vex_control).iropt_unroll_thresh = 0;   // cannot be overriden.
+      VG_(clo_vex_control).iropt_unroll_thresh = 0;   // cannot be overridden.
    }
    if (VG_(clo_vex_control).guest_chase_thresh != 0) {
       VG_(message)(Vg_UserMsg,
                    "callgrind only works with --vex-guest-chase-thresh=0\n"
                    "=> resetting it back to 0\n");
-      VG_(clo_vex_control).guest_chase_thresh = 0; // cannot be overriden.
+      VG_(clo_vex_control).guest_chase_thresh = 0; // cannot be overridden.
    }
    
    CLG_DEBUG(1, "  dump threads: %s\n", CLG_(clo).separate_threads ? "Yes":"No");
@@ -2024,7 +2034,7 @@ void CLG_(post_clo_init)(void)
 
    CLG_(instrument_state) = CLG_(clo).instrument_atstart;
 
-   if (VG_(clo_verbosity > 0)) {
+   if (VG_(clo_verbosity) > 0) {
       VG_(message)(Vg_UserMsg,
                    "For interactive control, run 'callgrind_control%s%s -h'.\n",
                    (VG_(arg_vgdb_prefix) ? " " : ""),
@@ -2038,7 +2048,7 @@ void CLG_(pre_clo_init)(void)
     VG_(details_name)            ("Callgrind");
     VG_(details_version)         (NULL);
     VG_(details_description)     ("a call-graph generating cache profiler");
-    VG_(details_copyright_author)("Copyright (C) 2002-2013, and GNU GPL'd, "
+    VG_(details_copyright_author)("Copyright (C) 2002-2017, and GNU GPL'd, "
 				  "by Josef Weidendorfer et al.");
     VG_(details_bug_reports_to)  (VG_BUGS_TO);
     VG_(details_avg_translation_sizeB) ( 500 );
@@ -2047,8 +2057,8 @@ void CLG_(pre_clo_init)(void)
        = VG_(clo_px_file_backed)
        = VexRegUpdSpAtMemAccess; // overridable by the user.
 
-    VG_(clo_vex_control).iropt_unroll_thresh = 0;   // cannot be overriden.
-    VG_(clo_vex_control).guest_chase_thresh = 0;    // cannot be overriden.
+    VG_(clo_vex_control).iropt_unroll_thresh = 0;   // cannot be overridden.
+    VG_(clo_vex_control).guest_chase_thresh = 0;    // cannot be overridden.
 
     VG_(basic_tool_funcs)        (CLG_(post_clo_init),
                                   CLG_(instrument),
@@ -2063,8 +2073,6 @@ void CLG_(pre_clo_init)(void)
 
     VG_(needs_client_requests)(CLG_(handle_client_request));
     VG_(needs_print_stats)    (clg_print_stats);
-    VG_(needs_syscall_wrapper)(CLG_(pre_syscalltime),
-			       CLG_(post_syscalltime));
 
     VG_(track_start_client_code)  ( & clg_start_client_code_callback );
     VG_(track_pre_deliver_signal) ( & CLG_(pre_signal) );
@@ -2072,11 +2080,6 @@ void CLG_(pre_clo_init)(void)
 
     CLG_(set_clo_defaults)();
 
-    syscalltime = CLG_MALLOC("cl.main.pci.1",
-                             VG_N_THREADS * sizeof syscalltime[0]);
-    for (UInt i = 0; i < VG_N_THREADS; ++i) {
-       syscalltime[i] = 0;
-    }
 }
 
 VG_DETERMINE_INTERFACE_VERSION(CLG_(pre_clo_init))

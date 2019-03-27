@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -102,7 +102,7 @@ typedef  Word                 PtrdiffT;   // 32             64
 // used in those cases.
 // Nb: on Linux, off_t is a signed word-sized int.  On Darwin it's
 // always a signed 64-bit int.  So we defined our own Off64T as well.
-#if defined(VGO_linux)
+#if defined(VGO_linux) || defined(VGO_solaris)
 typedef Word                   OffT;      // 32             64
 #elif defined(VGO_darwin)
 typedef Long                   OffT;      // 64             64
@@ -129,12 +129,49 @@ typedef  struct { UWord uw1; UWord uw2; }  UWordPair;
 /* ThreadIds are simply indices into the VG_(threads)[] array. */
 typedef UInt ThreadId;
 
+
+/* You need a debuginfo epoch in order to convert an address into any source
+   level entity, since that conversion depends on what objects were mapped
+   in at the time.  An epoch is simply a monotonically increasing counter,
+   which we wrap up in a struct so as to enable the C type system to
+   distinguish it from other kinds of numbers.  m_debuginfo holds and
+   maintains the current epoch number. */
+typedef  struct { UInt n; }  DiEpoch;
+
+static inline DiEpoch DiEpoch_INVALID ( void ) {
+   DiEpoch dep; dep.n = 0; return dep;
+}
+
+static inline Bool is_DiEpoch_INVALID ( DiEpoch dep ) {
+   return dep.n == 0;
+}
+
+
+/* Many data structures need to allocate and release memory.
+   The allocation/release functions must be provided by the caller.
+   The Alloc_Fn_t function must allocate a chunk of memory of size szB.
+   cc is the Cost Centre for this allocated memory. This constant string
+   is used to provide Valgrind's heap profiling, activated by
+   --profile-heap=no|yes.
+   The corresponding Free_Fn_t frees the memory chunk p. */
+
+typedef void* (*Alloc_Fn_t)       ( const HChar* cc, SizeT szB );
+typedef void  (*Free_Fn_t)        ( void* p );
+
 /* An abstraction of syscall return values.
-   Linux:
+   Linux/MIPS32 and Linux/MIPS64:
+      When _isError == False, 
+         _val and possible _valEx hold the return value.  Whether
+         _valEx actually holds a valid value depends on which syscall
+         this SysRes holds of the result of.
+      When _isError == True,  
+         _val holds the error code.
+
+   Linux/other:
       When _isError == False, 
          _val holds the return value.
       When _isError == True,  
-         _err holds the error code.
+         _val holds the error code.
 
    Darwin:
       Interpretation depends on _mode:
@@ -149,15 +186,31 @@ typedef UInt ThreadId;
          userspace, but we have to record it, so that we can correctly
          update both {R,E}DX and {R,E}AX (in guest state) given a SysRes,
          if we're required to.
+
+   Solaris:
+      When _isError == False,
+         _val and _val2 hold the return value.
+      When _isError == True,
+         _val holds the error code.
 */
-#if defined(VGO_linux)
+#if defined(VGP_mips32_linux) || defined(VGP_mips64_linux)
 typedef
    struct {
-      UWord _val;
-      UWord _valEx;   // only used on mips-linux
       Bool  _isError;
+      RegWord _val;
+      UWord _valEx;
    }
    SysRes;
+
+#elif defined(VGO_linux) \
+      && !defined(VGP_mips32_linux) && !defined(VGP_mips64_linux)
+typedef
+   struct {
+      Bool  _isError;
+      UWord _val;
+   }
+   SysRes;
+
 #elif defined(VGO_darwin)
 typedef
    enum { 
@@ -174,6 +227,16 @@ typedef
       SysResMode _mode;
    }
    SysRes;
+
+#elif defined(VGO_solaris)
+typedef
+   struct {
+      UWord _val;
+      UWord _val2;
+      Bool  _isError;
+   }
+   SysRes;
+
 #else
 #  error "Unknown OS"
 #endif
@@ -181,7 +244,50 @@ typedef
 
 /* ---- And now some basic accessor functions for it. ---- */
 
-#if defined(VGO_linux)
+#if defined(VGP_mips32_linux) || defined(VGP_mips64_linux)
+
+static inline Bool sr_isError ( SysRes sr ) {
+   return sr._isError;
+}
+static inline RegWord sr_Res ( SysRes sr ) {
+   return sr._isError ? 0 : sr._val;
+}
+static inline UWord sr_ResEx ( SysRes sr ) {
+   return sr._isError ? 0 : sr._valEx;
+}
+static inline UWord sr_Err ( SysRes sr ) {
+   return sr._isError ? sr._val : 0;
+}
+static inline Bool sr_EQ ( UInt sysno, SysRes sr1, SysRes sr2 ) {
+   /* This uglyness of hardcoding syscall numbers is necessary to
+      avoid having this header file be dependent on
+      include/vki/vki-scnums-mips{32,64}-linux.h.  It seems pretty
+      safe given that it is inconceivable that the syscall numbers
+      for such simple syscalls would ever change.  To make it 
+      really safe, coregrind/m_vkiscnums.c static-asserts that these
+      syscall numbers haven't changed, so that the build wil simply
+      fail if they ever do. */
+#  if defined(VGP_mips32_linux)
+   const UInt __nr_Linux = 4000;
+   const UInt __nr_pipe  = __nr_Linux + 42;
+   const UInt __nr_pipe2 = __nr_Linux + 328;
+#  elif defined(VGP_mips64_linux) && defined(VGABI_N32)
+   const UInt __nr_Linux = 6000;
+   const UInt __nr_pipe  = __nr_Linux + 21;
+   const UInt __nr_pipe2 = __nr_Linux + 291;
+#  else
+   const UInt __nr_Linux = 5000;
+   const UInt __nr_pipe  = __nr_Linux + 21;
+   const UInt __nr_pipe2 = __nr_Linux + 287;
+#  endif
+   Bool useEx = sysno == __nr_pipe || sysno == __nr_pipe2;
+   return sr1._val == sr2._val
+          && (useEx ? (sr1._valEx == sr2._valEx) : True)
+          && sr1._isError == sr2._isError;
+}
+
+#elif defined(VGO_linux) \
+      && !defined(VGP_mips32_linux) && !defined(VGP_mips64_linux)
 
 static inline Bool sr_isError ( SysRes sr ) {
    return sr._isError;
@@ -189,19 +295,13 @@ static inline Bool sr_isError ( SysRes sr ) {
 static inline UWord sr_Res ( SysRes sr ) {
    return sr._isError ? 0 : sr._val;
 }
-static inline UWord sr_ResEx ( SysRes sr ) {
-   return sr._isError ? 0 : sr._valEx;
-}
-static inline UWord sr_ResHI ( SysRes sr ) {
-   return 0;
-}
 static inline UWord sr_Err ( SysRes sr ) {
    return sr._isError ? sr._val : 0;
 }
-static inline Bool sr_EQ ( SysRes sr1, SysRes sr2 ) {
-   return sr1._val == sr2._val 
-          && ((sr1._isError && sr2._isError) 
-              || (!sr1._isError && !sr2._isError));
+static inline Bool sr_EQ ( UInt sysno, SysRes sr1, SysRes sr2 ) {
+   /* sysno is ignored for Linux/not-MIPS */
+   return sr1._val == sr2._val
+          && sr1._isError == sr2._isError;
 }
 
 #elif defined(VGO_darwin)
@@ -258,9 +358,31 @@ static inline UWord sr_Err ( SysRes sr ) {
    }
 }
 
-static inline Bool sr_EQ ( SysRes sr1, SysRes sr2 ) {
+static inline Bool sr_EQ ( UInt sysno, SysRes sr1, SysRes sr2 ) {
+   /* sysno is ignored for Darwin */
    return sr1._mode == sr2._mode
           && sr1._wLO == sr2._wLO && sr1._wHI == sr2._wHI;
+}
+
+#elif defined(VGO_solaris)
+
+static inline Bool sr_isError ( SysRes sr ) {
+   return sr._isError;
+}
+static inline UWord sr_Res ( SysRes sr ) {
+   return sr._isError ? 0 : sr._val;
+}
+static inline UWord sr_ResHI ( SysRes sr ) {
+   return sr._isError ? 0 : sr._val2;
+}
+static inline UWord sr_Err ( SysRes sr ) {
+   return sr._isError ? sr._val : 0;
+}
+static inline Bool sr_EQ ( UInt sysno, SysRes sr1, SysRes sr2 ) {
+   /* sysno is ignored for Solaris */
+   return sr1._val == sr2._val
+       && sr1._isError == sr2._isError
+       && (!sr1._isError) ? (sr1._val2 == sr2._val2) : True;
 }
 
 #else
@@ -294,6 +416,10 @@ static inline Bool sr_EQ ( SysRes sr1, SysRes sr2 ) {
 /* Offsetof */
 #if !defined(offsetof)
 #   define offsetof(type,memb) ((SizeT)(HWord)&((type*)0)->memb)
+#endif
+
+#if !defined(container_of)
+#   define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #endif
 
 /* Alignment */
@@ -367,6 +493,25 @@ static inline Bool sr_EQ ( SysRes sr1, SysRes sr2 ) {
          T out;           \
       } var = { .in = x }; var.out;  \
    })
+
+/* Some architectures (eg. mips, arm) do not support unaligned memory access
+   by hardware, so GCC warns about suspicious situations. This macro could
+   be used to avoid these warnings but only after careful examination. */
+#define ASSUME_ALIGNED(D, x)                 \
+   ({                                        \
+      union {                                \
+         void *in;                           \
+         D out;                              \
+      } var;                                 \
+      var.in = (void *) (x); var.out;        \
+   })
+
+// Poor man's static assert
+#define STATIC_ASSERT(x)  extern int VG_(VG_(VG_(unused)))[(x) ? 1 : -1] \
+                                     __attribute__((unused))
+
+#define VG_MAX(a,b) ((a) > (b) ? a : b)
+#define VG_MIN(a,b) ((a) < (b) ? a : b)
 
 #endif /* __PUB_TOOL_BASICS_H */
 

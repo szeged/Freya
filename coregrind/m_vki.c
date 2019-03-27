@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2006-2013 OpenWorks LLP
+   Copyright (C) 2006-2017 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -39,11 +39,12 @@
    describing the kernel interface, so this file is nearly empty. */
 
 
-/* ppc32/64-linux determines page size at startup, hence m_vki is
-   the logical place to store that info. */
+/* ppc32/64, arm64 and mips32/64 (linux) determine page size at startup,
+   hence m_vki is the logical place to store that info. */
 
 #if defined(VGP_ppc32_linux) || defined(VGP_ppc64be_linux) \
-    || defined(VGP_ppc64le_linux) || defined(VGP_arm64_linux)
+    || defined(VGP_ppc64le_linux) || defined(VGP_arm64_linux) \
+    || defined(VGP_mips32_linux)  || defined(VGP_mips64_linux)
 unsigned long VKI_PAGE_SHIFT = 12;
 unsigned long VKI_PAGE_SIZE  = 1UL << 12;
 #endif
@@ -76,7 +77,7 @@ void VG_(vki_do_initial_consistency_checks) ( void )
 
    /* --- Platform-specific checks on signal sets --- */
 
-#  if defined(VGO_linux)
+#  if defined(VGO_linux) || defined(VGO_solaris)
    /* nothing to check */
 #  elif defined(VGP_x86_darwin) || defined(VGP_amd64_darwin)
    vg_assert(_VKI_NSIG == NSIG);
@@ -126,6 +127,14 @@ void VG_(vki_do_initial_consistency_checks) ( void )
    /* also .. */
    /* VKI_SET_SIGMASK is hardwired into syscall-x86-darwin.S and
       syscall-amd64-darwin.S */
+   vg_assert(VKI_SIG_SETMASK == 3);
+
+#  elif defined(VGO_solaris)
+   /* the toK- and fromK- forms are identical */
+   vg_assert(sizeof(vki_sigaction_toK_t)
+             == sizeof(vki_sigaction_fromK_t));
+   /* VKI_SET_SIGMASK is hardwired into syscall-x86-solaris.S
+      and syscall-amd64-solaris.S */
    vg_assert(VKI_SIG_SETMASK == 3);
 
 #  else

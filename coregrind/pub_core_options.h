@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -39,8 +39,13 @@
 #include "pub_tool_options.h"
 #include "pub_core_xarray.h"
 
+/* Valgrind tool name. Defaults to "memcheck". */
+extern const HChar *VG_(clo_toolname);
+
 /* Should we stop collecting errors if too many appear?  default: YES */
 extern Bool  VG_(clo_error_limit);
+/* Should we exit if an error appears?  default: NO */
+extern Bool  VG_(clo_exit_on_first_error);
 /* Alternative exit code to hand to parent if errors were found.
    default: 0 (no, return the application's exit code in the normal
    way. */
@@ -88,10 +93,6 @@ extern const HChar *VG_(clo_vgdb_prefix);
    shadow registers */
 extern Bool  VG_(clo_vgdb_shadow_registers);
 
-/* Enquire about whether to attach to a debugger at errors?   default: NO */
-extern Bool  VG_(clo_db_attach);
-/* The debugger command?  default: whatever gdb ./configure found */
-extern const HChar* VG_(clo_db_command);
 /* Generating a suppression for each error?   default: 0 (NO)
    Other values: 1 (yes, but ask user), 2 (yes, don't ask user) */
 extern Int   VG_(clo_gen_suppressions);
@@ -121,9 +122,9 @@ extern const HChar* VG_(clo_trace_children_skip_by_arg);
 extern Bool  VG_(clo_child_silent_after_fork);
 
 /* If the user specified --log-file=STR and/or --xml-file=STR, these
-   hold STR after expansion of the %p and %q templates. */
-extern const HChar* VG_(clo_log_fname_expanded);
-extern const HChar* VG_(clo_xml_fname_expanded);
+   hold STR before expansion. */
+extern const HChar *VG_(clo_log_fname_unexpanded);
+extern const HChar *VG_(clo_xml_fname_unexpanded);
 
 /* Add timestamps to log messages?  default: NO */
 extern Bool  VG_(clo_time_stamp);
@@ -200,6 +201,8 @@ extern enum FairSchedType VG_(clo_fair_sched);
 extern Bool  VG_(clo_trace_sched);
 /* DEBUG: do heap profiling?  default: NO */
 extern Bool  VG_(clo_profile_heap);
+// DEBUG: report progress every N seconds (1 .. 3600)
+extern UInt VG_(clo_progress_interval);
 #define MAX_REDZONE_SZB 128
 // Maximum for the default values for core arenas and for client
 // arena given by the tool.
@@ -211,7 +214,6 @@ extern Bool  VG_(clo_profile_heap);
 extern Int VG_(clo_core_redzone_size);
 // VG_(clo_redzone_size) has default value -1, indicating to keep
 // the tool provided value.
-extern Int VG_(clo_redzone_size);
 /* DEBUG: display gory details for the k'th most popular error.
    default: Infinity. */
 extern Int   VG_(clo_dump_error);
@@ -220,17 +222,19 @@ extern Int   VG_(clo_dump_error);
 typedef
    enum {
       SimHint_lax_ioctls,
+      SimHint_lax_doors,
       SimHint_fuse_compatible,
       SimHint_enable_outer,
       SimHint_no_inner_prefix,
-      SimHint_no_nptl_pthread_stackcache
+      SimHint_no_nptl_pthread_stackcache,
+      SimHint_fallback_llsc
    }
    SimHint;
 
 // Build mask to check or set SimHint a membership
 #define SimHint2S(a) (1 << (a))
 // SimHint h is member of the Set s ?
-#define SimHintiS(h,s) ((s) & SimHint2S(h))
+#define SimHintiS(h,s) (((s) & SimHint2S(h)) != 0)
 extern UInt VG_(clo_sim_hints);
 
 /* Show symbols in the form 'name+offset' ?  Default: NO */
@@ -284,6 +288,13 @@ extern Bool  VG_(clo_track_fds);
    cannot be overridden from the command line. */
 extern Bool  VG_(clo_run_libc_freeres);
 
+/* Should we run __gnu_cxx::__freeres at exit for C++ programs?
+   Default: YES.  Note this is subservient to VG_(needs).cxx_freeres;
+   if the latter says False, then the setting of VG_(clo_run_cxx_freeres)
+   is ignored.  Ie if a tool says no, I don't want this to run, that
+   cannot be overridden from the command line. */
+extern Bool  VG_(clo_run_cxx_freeres);
+
 /* Should we show VEX emulation warnings?  Default: NO */
 extern Bool VG_(clo_show_emwarns);
 
@@ -310,9 +321,17 @@ extern Int VG_(clo_merge_recursive_frames);
 /* Max number of sectors that will be used by the translation code cache. */
 extern UInt VG_(clo_num_transtab_sectors);
 
+/* Average size of a transtab code entry. 0 means to use the tool
+   provided default. */
+extern UInt VG_(clo_avg_transtab_entry_size);
+
 /* Only client requested fixed mapping can be done below 
    VG_(clo_aspacem_minAddr). */
 extern Addr VG_(clo_aspacem_minAddr);
+
+/* How large the Valgrind thread stacks should be. 
+   Will be rounded up to a page.. */
+extern Word VG_(clo_valgrind_stacksize);
 
 /* Delay startup to allow GDB to be attached?  Default: NO */
 extern Bool VG_(clo_wait_for_gdb);

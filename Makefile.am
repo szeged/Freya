@@ -4,15 +4,15 @@ AUTOMAKE_OPTIONS = foreign 1.10 dist-bzip2
 include $(top_srcdir)/Makefile.all.am 
 
 TOOLS =		memcheck \
+		freya \
+		heimdall \
 		cachegrind \
 		callgrind \
 		massif \
 		lackey \
 		none \
 		helgrind \
-		drd \
-		freya \
-		heimdall
+		drd
 
 EXP_TOOLS = 	exp-sgcheck \
 		exp-bbv \
@@ -34,6 +34,7 @@ SUBDIRS = \
 	memcheck/tests/vbit-test \
 	auxprogs \
 	mpi \
+	solaris \
 	docs
 DIST_SUBDIRS  = $(SUBDIRS)
 
@@ -47,8 +48,10 @@ SUPP_FILES = \
 	exp-sgcheck.supp \
 	darwin9.supp darwin9-drd.supp \
 	darwin10.supp darwin10-drd.supp \
-	darwin11.supp darwin12.supp darwin13.supp darwin14.supp \
-	bionic.supp
+	darwin11.supp darwin12.supp darwin13.supp darwin14.supp darwin15.supp \
+	darwin16.supp darwin17.supp \
+	bionic.supp \
+	solaris11.supp solaris12.supp
 DEFAULT_SUPP_FILES = @DEFAULT_SUPP@
 
 # We include all the base .supp files in the distribution, but not
@@ -61,7 +64,7 @@ vglib_DATA = default.supp
 pkgconfigdir = $(libdir)/pkgconfig
 pkgconfig_DATA = valgrind.pc
 
-BUILT_SOURCES  = default.supp valgrind.pc
+BUILT_SOURCES  = default.supp include/vgversion.h valgrind.pc
 CLEANFILES     = default.supp
 
 default.supp: $(DEFAULT_SUPP_FILES)
@@ -108,22 +111,33 @@ EXTRA_DIST = \
 	README.android_emulator \
 	README.mips \
 	README.aarch64 \
+	README.solaris \
 	NEWS.old \
 	valgrind.pc.in \
 	valgrind.spec.in \
 	valgrind.spec \
 	autogen.sh
 
+dist-hook: include/vgversion.h
+	cp -p include/vgversion.h $(distdir)/include/vgversion_dist.h
+
 dist_noinst_SCRIPTS = \
 	vg-in-place
 
-all-local: default.supp
+all-local: default.supp include/vgversion.h
 	mkdir -p $(inplacedir)
 	rm -f $(inplacedir)/default.supp
 	ln -s ../default.supp $(inplacedir)
 
 clean-local:
-	rm -rf $(inplacedir)
+	rm -rf $(inplacedir) include/vgversion.h
 
 # Need config.h in the installed tree, since some files depend on it
 pkginclude_HEADERS = config.h
+
+# vgversion.h defines accurate versions to report with -v --version
+include/vgversion.h:
+	$(top_srcdir)/auxprogs/make_or_upd_vgversion_h $(top_srcdir)
+
+.PHONY: include/vgversion.h
+

@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -48,7 +48,6 @@
 #include "pub_core_options.h"
 #include "pub_core_syscall.h"
 #include "pub_core_tooliface.h"       /* VG_TRACK */
-#include "pub_core_libcsetjmp.h"      // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"     /* ThreadArchState */
 #include "priv_initimg_pathscan.h"
 #include "pub_core_initimg.h"         /* self */
@@ -67,7 +66,7 @@
 
 /* Load the client whose name is VG_(argv_the_exename). */
 
-static void load_client ( /*OUT*/ExeInfo* info, 
+static void load_client ( /*MOD*/ExeInfo* info, 
                           /*OUT*/Addr*    client_ip,
 			  /*OUT*/Addr*    client_toc)
 {
@@ -83,7 +82,6 @@ static void load_client ( /*OUT*/ExeInfo* info,
       VG_(exit)(127);      // 127 is Posix NOTFOUND
    }
 
-   VG_(memset)(info, 0, sizeof(*info));
    ret = VG_(do_exec)(exe_name, info);
    if (ret < 0) {
       VG_(printf)("valgrind: could not execute '%s'\n", exe_name);
@@ -222,7 +220,7 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
    /* ret[0 .. envc-1] is live now. */
    /* Find and remove a binding for VALGRIND_LAUNCHER. */
    for (i = 0; i < envc; i++)
-      if (0 == VG_(memcmp(ret[i], v_launcher, v_launcher_len)))
+      if (0 == VG_(memcmp)(ret[i], v_launcher, v_launcher_len))
          break;
 
    if (i < envc) {
@@ -246,6 +244,10 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 /*=== Setting up the client's stack                                ===*/
 /*====================================================================*/
 
+#ifndef AT_DCACHEBSIZE
+#define AT_DCACHEBSIZE		19
+#endif /* AT_DCACHEBSIZE */
+
 #ifndef AT_ICACHEBSIZE
 #define AT_ICACHEBSIZE		20
 #endif /* AT_ICACHEBSIZE */
@@ -261,6 +263,10 @@ static HChar** setup_client_env ( HChar** origenv, const HChar* toolname)
 #ifndef AT_RANDOM
 #define AT_RANDOM		25
 #endif /* AT_RANDOM */
+
+#ifndef AT_HWCAP2
+#define AT_HWCAP2		26
+#endif /* AT_HWCAP2 */
 
 #ifndef AT_EXECFN
 #define AT_EXECFN		31
@@ -377,8 +383,14 @@ Addr setup_client_stack( void*  init_sp,
                          const ExeInfo* info,
                          UInt** client_auxv,
                          Addr   clstack_end,
-                         SizeT  clstack_max_size )
+                         SizeT  clstack_max_size,
+                         const VexArchInfo* vex_archinfo )
 {
+  /* The HW configuration setting (hwcaps) of the target can be
+   * checked against the Vex settings of the host platform as given
+   * by the values in vex_archinfo.
+   */
+
    SysRes res;
    HChar **cpp;
    HChar *strtab;		/* string table */
@@ -465,7 +477,7 @@ Addr setup_client_stack( void*  init_sp,
       auxsize +                               /* auxv */
       VG_ROUNDUP(stringsize, sizeof(Word));   /* strings (aligned) */
 
-   if (0) VG_(printf)("stacksize = %d\n", stacksize);
+   if (0) VG_(printf)("stacksize = %u\n", stacksize);
 
    /* client_SP is the client's stack pointer */
    client_SP = clstack_end - stacksize;
@@ -481,10 +493,10 @@ Addr setup_client_stack( void*  init_sp,
    clstack_max_size = VG_PGROUNDUP(clstack_max_size);
 
    if (0)
-      VG_(printf)("stringsize=%d auxsize=%d stacksize=%d maxsize=0x%x\n"
+      VG_(printf)("stringsize=%u auxsize=%u stacksize=%u maxsize=0x%lx\n"
                   "clstack_start %p\n"
                   "clstack_end   %p\n",
-	          stringsize, auxsize, stacksize, (Int)clstack_max_size,
+                  stringsize, auxsize, stacksize, clstack_max_size,
                   (void*)clstack_start, (void*)clstack_end);
 
    /* ==================== allocate space ==================== */
@@ -552,7 +564,7 @@ Addr setup_client_stack( void*  init_sp,
         VG_(printf)("valgrind: "
                     "This may be the result of a very large --main-stacksize=\n");
         VG_(printf)("valgrind: setting.  Cannot continue.  Sorry.\n\n");
-        VG_(exit)(0);
+        VG_(exit)(1);
      }
 
      vg_assert(ok);
@@ -572,14 +584,10 @@ Addr setup_client_stack( void*  init_sp,
    *ptr++ = argc + 1;
 
    /* --- client argv --- */
-   if (info->interp_name) {
+   if (info->interp_name)
       *ptr++ = (Addr)copy_str(&strtab, info->interp_name);
-      VG_(free)(info->interp_name);
-   }
-   if (info->interp_args) {
+   if (info->interp_args)
       *ptr++ = (Addr)copy_str(&strtab, info->interp_args);
-      VG_(free)(info->interp_args);
-   }
 
    *ptr++ = (Addr)copy_str(&strtab, VG_(args_the_exename));
 
@@ -678,8 +686,9 @@ Addr setup_client_stack( void*  init_sp,
                                "ARM has-neon from-auxv: %s\n",
                                has_neon ? "YES" : "NO");
               VG_(machine_arm_set_has_NEON)( has_neon );
-              #define VKI_HWCAP_TLS 32768
+#             define VKI_HWCAP_TLS 32768
               Bool has_tls = (auxv->u.a_val & VKI_HWCAP_TLS) > 0;
+#             undef VKI_HWCAP_TLS
               VG_(debugLog)(2, "initimg",
                                "ARM has-tls from-auxv: %s\n",
                                has_tls ? "YES" : "NO");
@@ -688,10 +697,69 @@ Addr setup_client_stack( void*  init_sp,
                  in syswrap-arm-linux.c rather than to base this on
                  conditional compilation. */
             }
+#           elif defined(VGP_s390x_linux)
+            {
+               /* Advertise hardware features "below" TE only.  TE and VXRS
+                  (and anything above) are not supported by Valgrind. */
+               auxv->u.a_val &= VKI_HWCAP_S390_TE - 1;
+            }
+#           elif defined(VGP_arm64_linux)
+            {
+               /* Limit the AT_HWCAP to just those features we explicitly
+		  support in VEX.  */
+#define ARM64_SUPPORTED_HWCAP (VKI_HWCAP_AES	        \
+                               | VKI_HWCAP_PMULL        \
+                               | VKI_HWCAP_SHA1         \
+                               | VKI_HWCAP_SHA2         \
+                               | VKI_HWCAP_CRC32        \
+                               | VKI_HWCAP_FP           \
+                               | VKI_HWCAP_ASIMD)
+               auxv->u.a_val &= ARM64_SUPPORTED_HWCAP;
+            }
 #           endif
             break;
+#        if defined(VGP_ppc64be_linux) || defined(VGP_ppc64le_linux)
+         case AT_HWCAP2:  {
+            Bool auxv_2_07, hw_caps_2_07;
+	    /* The HWCAP2 field may contain an arch_2_07 entry that indicates
+             * if the processor is compliant with the 2.07 ISA. (i.e. Power 8
+             * or beyond).  The Valgrind vai.hwcaps value
+             * (coregrind/m_machine.c) has the VEX_HWCAPS_PPC64_ISA2_07
+             * flag set so Valgrind knows about Power8.  Need to pass the
+             * HWCAP2 value along so the user level programs can detect that
+             * the processor supports ISA 2.07 and beyond.
+             */
+            /*  Power Architecture 64-Bit ELF V2 ABI Specification
+                July 21, 2014, version 1.0, Page 124
+                www-03.ibm.com/technologyconnect/tgcm/TGCMServlet.wss?alias=OpenPOWER&linkid=1n0000
+
+                AT_HWCAP2
+                The a_val member of this entry is a bit map of hardware
+                capabilities. Some bit mask values include:
+
+                PPC_FEATURE2_ARCH_2_07        0x80000000
+                PPC_FEATURE2_HAS_HTM          0x40000000
+                PPC_FEATURE2_HAS_DSCR         0x20000000
+                PPC_FEATURE2_HAS_EBB          0x10000000
+                PPC_FEATURE2_HAS_ISEL         0x08000000
+                PPC_FEATURE2_HAS_TAR          0x04000000
+                PPC_FEATURE2_HAS_VCRYPTO      0x02000000
+            */
+            auxv_2_07 = (auxv->u.a_val & 0x80000000ULL) == 0x80000000ULL;
+            hw_caps_2_07 = (vex_archinfo->hwcaps & VEX_HWCAPS_PPC64_ISA2_07)
+               == VEX_HWCAPS_PPC64_ISA2_07;
+
+            /* Verify the PPC_FEATURE2_ARCH_2_07 setting in HWCAP2
+	     * matches the setting in VEX HWCAPS.
+	     */
+            vg_assert(auxv_2_07 == hw_caps_2_07);
+            }
+
+            break;
+#           endif
 
          case AT_ICACHEBSIZE:
+         case AT_DCACHEBSIZE:
          case AT_UCACHEBSIZE:
 #           if defined(VGP_ppc32_linux)
             /* acquire cache info */
@@ -734,7 +802,8 @@ Addr setup_client_stack( void*  init_sp,
             break;
 
 #        if !defined(VGP_ppc32_linux) && !defined(VGP_ppc64be_linux) \
-            && !defined(VGP_ppc64le_linux)
+            && !defined(VGP_ppc64le_linux) \
+            && !defined(VGP_mips32_linux) && !defined(VGP_mips64_linux)
          case AT_SYSINFO_EHDR: {
             /* Trash this, because we don't reproduce it */
             const NSegment* ehdrseg = VG_(am_find_nsegment)((Addr)auxv->u.a_ptr);
@@ -762,7 +831,7 @@ Addr setup_client_stack( void*  init_sp,
          default:
             /* stomp out anything we don't know about */
             VG_(debugLog)(2, "initimg",
-                             "stomping auxv entry %lld\n", 
+                             "stomping auxv entry %llu\n", 
                              (ULong)auxv->a_type);
             auxv->a_type = AT_IGNORE;
             break;
@@ -852,13 +921,20 @@ static void setup_client_dataseg ( SizeT max_size )
 /*====================================================================*/
 
 /* Create the client's initial memory image. */
-IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii )
+IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii,
+                                          const VexArchInfo* vex_archinfo )
 {
    ExeInfo info;
    HChar** env = NULL;
 
-   IIFinaliseImageInfo iifii;
-   VG_(memset)( &iifii, 0, sizeof(iifii) );
+   IIFinaliseImageInfo iifii = {
+      .clstack_max_size = 0,
+      .initial_client_SP = 0,
+      .initial_client_IP = 0,
+      .initial_client_TOC = 0,
+      .client_auxv = NULL,
+      .arch_elf_state = VKI_INIT_ARCH_ELF_STATE,
+   };
 
    //--------------------------------------------------------------
    // Load client executable, finding in $PATH if necessary
@@ -869,6 +945,9 @@ IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii )
 
    if (VG_(args_the_exename) == NULL)
       VG_(err_missing_prog)();
+
+   VG_(memset)(&info, 0, sizeof(info));
+   info.arch_elf_state = &iifii.arch_elf_state;
 
    load_client(&info, &iifii.initial_client_IP, &iifii.initial_client_TOC);
 
@@ -906,14 +985,15 @@ IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii )
       if (szB < m1) szB = m1;
       szB = VG_PGROUNDUP(szB);
       VG_(debugLog)(1, "initimg",
-                       "Setup client stack: size will be %ld\n", szB);
+                       "Setup client stack: size will be %lu\n", szB);
 
       iifii.clstack_max_size = szB;
 
       iifii.initial_client_SP
          = setup_client_stack( init_sp, env, 
                                &info, &iifii.client_auxv, 
-                               iicii.clstack_end, iifii.clstack_max_size );
+                               iicii.clstack_end, iifii.clstack_max_size,
+                               vex_archinfo );
 
       VG_(free)(env);
 
@@ -925,9 +1005,9 @@ IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii )
                        (void*)VG_(brk_base) );
       VG_(debugLog)(2, "initimg",
                        "Client info: "
-                       "initial_SP=%p max_stack_size=%ld\n",
+                       "initial_SP=%p max_stack_size=%lu\n",
                        (void*)(iifii.initial_client_SP),
-                       (SizeT)iifii.clstack_max_size );
+                       iifii.clstack_max_size );
    }
 
    //--------------------------------------------------------------
@@ -947,6 +1027,8 @@ IIFinaliseImageInfo VG_(ii_create_image)( IICreateImageInfo iicii )
       setup_client_dataseg( dseg_max_size );
    }
 
+   VG_(free)(info.interp_name); info.interp_name = NULL;
+   VG_(free)(info.interp_args); info.interp_args = NULL;
    return iifii;
 }
 
@@ -969,7 +1051,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
       all other registers zeroed. */
 
 #  if defined(VGP_x86_linux)
-   vg_assert(0 == sizeof(VexGuestX86State) % 16);
+   vg_assert(0 == sizeof(VexGuestX86State) % LibVEX_GUEST_STATE_ALIGN);
 
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
@@ -991,7 +1073,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    asm volatile("movw %%es, %0" : : "m" (arch->vex.guest_ES));
 
 #  elif defined(VGP_amd64_linux)
-   vg_assert(0 == sizeof(VexGuestAMD64State) % 16);
+   vg_assert(0 == sizeof(VexGuestAMD64State) % LibVEX_GUEST_STATE_ALIGN);
 
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
@@ -1006,7 +1088,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    arch->vex.guest_RIP = iifii.initial_client_IP;
 
 #  elif defined(VGP_ppc32_linux)
-   vg_assert(0 == sizeof(VexGuestPPC32State) % 16);
+   vg_assert(0 == sizeof(VexGuestPPC32State) % LibVEX_GUEST_STATE_ALIGN);
 
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
@@ -1021,7 +1103,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    arch->vex.guest_CIA  = iifii.initial_client_IP;
 
 #  elif defined(VGP_ppc64be_linux) || defined(VGP_ppc64le_linux)
-   vg_assert(0 == sizeof(VexGuestPPC64State) % 16);
+   vg_assert(0 == sizeof(VexGuestPPC64State) % LibVEX_GUEST_STATE_ALIGN);
 
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
@@ -1067,7 +1149,7 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    arch->vex.guest_PC  = iifii.initial_client_IP;
 
 #  elif defined(VGP_s390x_linux)
-   vg_assert(0 == sizeof(VexGuestS390XState) % 16);
+   vg_assert(0 == sizeof(VexGuestS390XState) % LibVEX_GUEST_STATE_ALIGN);
 
    /* Zero out the initial state. This also sets the guest_fpc to 0, which
       is also done by the kernel for the fpc during execve. */
@@ -1091,10 +1173,15 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    VG_TRACK(post_reg_write, Vg_CoreStartup, /*tid*/1, VG_O_STACK_PTR, 8);
    VG_TRACK(post_reg_write, Vg_CoreStartup, /*tid*/1, VG_O_FPC_REG,   4);
    VG_TRACK(post_reg_write, Vg_CoreStartup, /*tid*/1, VG_O_INSTR_PTR, 8);
-   return;
+
+   /* At the end of this function there is code to mark all guest state
+      registers as defined. For s390 that would be wrong, because the ABI
+      says that all registers except SP, IA, and FPC are undefined upon
+      process startup. */
+#define PRECISE_GUEST_REG_DEFINEDNESS_AT_STARTUP 1
 
 #  elif defined(VGP_mips32_linux)
-   vg_assert(0 == sizeof(VexGuestMIPS32State) % 16);
+   vg_assert(0 == sizeof(VexGuestMIPS32State) % LibVEX_GUEST_STATE_ALIGN);
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
    LibVEX_GuestMIPS32_initialise(&arch->vex);
@@ -1107,8 +1194,12 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
    arch->vex.guest_PC = iifii.initial_client_IP;
    arch->vex.guest_r31 = iifii.initial_client_SP;
 
+   if (iifii.arch_elf_state.overall_fp_mode == VKI_FP_FR1) {
+      arch->vex.guest_CP0_status |= MIPS_CP0_STATUS_FR;
+   }
+
 #   elif defined(VGP_mips64_linux)
-   vg_assert(0 == sizeof(VexGuestMIPS64State) % 16);
+   vg_assert(0 == sizeof(VexGuestMIPS64State) % LibVEX_GUEST_STATE_ALIGN);
    /* Zero out the initial state, and set up the simulated FPU in a
       sane way. */
    LibVEX_GuestMIPS64_initialise(&arch->vex);
@@ -1125,9 +1216,20 @@ void VG_(ii_finalise_image)( IIFinaliseImageInfo iifii )
 #    error Unknown platform
 #  endif
 
+#  if !defined(PRECISE_GUEST_REG_DEFINEDNESS_AT_STARTUP)
    /* Tell the tool that we just wrote to the registers. */
    VG_TRACK( post_reg_write, Vg_CoreStartup, /*tid*/1, /*offset*/0,
              sizeof(VexGuestArchState));
+#  endif
+
+   /* Tell the tool about the client data segment and then kill it which will
+      make it inaccessible/unaddressable. */
+   const NSegment *seg = VG_(am_find_nsegment)(VG_(brk_base));
+   vg_assert(seg);
+   vg_assert(seg->kind == SkAnonC);
+   VG_TRACK(new_mem_brk, VG_(brk_base), seg->end + 1 - VG_(brk_base),
+            1/*tid*/);
+   VG_TRACK(die_mem_brk, VG_(brk_base), seg->end + 1 - VG_(brk_base));
 }
 
 #endif // defined(VGO_linux)

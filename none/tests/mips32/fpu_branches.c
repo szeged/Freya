@@ -1,3 +1,5 @@
+#if defined(__mips_hard_float) && (__mips_isa_rev<6)
+
 #include <stdio.h>
 
 #define MAX_ARR 24
@@ -172,7 +174,6 @@ const double ft_d[] = {
 int main()
 {
    int i = 0;
-
    printf("--- BC1F ---  if fs != ft then " \
           "out = fs else out = fs + ft\n");
    for (i = 0; i < MAX_ARR; i++) {
@@ -314,4 +315,8 @@ int main()
    }
    return 0;
 }
-
+#else
+int main() {
+   return 0;
+}
+#endif

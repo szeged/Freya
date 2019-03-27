@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -94,7 +94,7 @@ typedef
 typedef
    struct {
       SegKind kind;
-      /* Extent (SkFree, SkAnon{C,V}, SkFile{C,V}, SkResvn) */
+      /* Extent */
       Addr    start;    // lowest address in range
       Addr    end;      // highest address in range
       /* Shrinkable? (SkResvn only) */

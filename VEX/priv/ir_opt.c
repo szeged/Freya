@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -188,12 +188,12 @@ typedef
 
 static HashHW* newHHW ( void )
 {
-   HashHW* h = LibVEX_Alloc(sizeof(HashHW));
+   HashHW* h = LibVEX_Alloc_inline(sizeof(HashHW));
    h->size   = 8;
    h->used   = 0;
-   h->inuse  = LibVEX_Alloc(h->size * sizeof(Bool));
-   h->key    = LibVEX_Alloc(h->size * sizeof(HWord));
-   h->val    = LibVEX_Alloc(h->size * sizeof(HWord));
+   h->inuse  = LibVEX_Alloc_inline(h->size * sizeof(Bool));
+   h->key    = LibVEX_Alloc_inline(h->size * sizeof(HWord));
+   h->val    = LibVEX_Alloc_inline(h->size * sizeof(HWord));
    return h;
 }
 
@@ -233,9 +233,9 @@ static void addToHHW ( HashHW* h, HWord key, HWord val )
    /* Ensure a space is available. */
    if (h->used == h->size) {
       /* Copy into arrays twice the size. */
-      Bool*  inuse2 = LibVEX_Alloc(2 * h->size * sizeof(Bool));
-      HWord* key2   = LibVEX_Alloc(2 * h->size * sizeof(HWord));
-      HWord* val2   = LibVEX_Alloc(2 * h->size * sizeof(HWord));
+      Bool*  inuse2 = LibVEX_Alloc_inline(2 * h->size * sizeof(Bool));
+      HWord* key2   = LibVEX_Alloc_inline(2 * h->size * sizeof(HWord));
+      HWord* val2   = LibVEX_Alloc_inline(2 * h->size * sizeof(HWord));
       for (i = j = 0; i < h->size; i++) {
          if (!h->inuse[i]) continue;
          inuse2[j] = True;
@@ -488,7 +488,7 @@ static void flatten_Stmt ( IRSB* bb, IRStmt* st )
          d2->guard = flatten_Expr(bb, d2->guard);
          for (i = 0; d2->args[i]; i++) {
             IRExpr* arg = d2->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                d2->args[i] = flatten_Expr(bb, arg);
          }
          addStmtToIRSB(bb, IRStmt_Dirty(d2));
@@ -1223,6 +1223,7 @@ static Bool isZeroU ( IRExpr* e )
       case Ico_U16:   return toBool( e->Iex.Const.con->Ico.U16 == 0);
       case Ico_U32:   return toBool( e->Iex.Const.con->Ico.U32 == 0);
       case Ico_U64:   return toBool( e->Iex.Const.con->Ico.U64 == 0);
+      case Ico_V256:  return toBool( e->Iex.Const.con->Ico.V256 == 0x00000000);
       default: vpanic("isZeroU");
    }
 }
@@ -1264,6 +1265,7 @@ static IRExpr* mkZeroOfPrimopResultType ( IROp op )
       case Iop_Xor64: return IRExpr_Const(IRConst_U64(0));
       case Iop_XorV128:
       case Iop_AndV128: return IRExpr_Const(IRConst_V128(0));
+      case Iop_XorV256:
       case Iop_AndV256: return IRExpr_Const(IRConst_V256(0));
       default: vpanic("mkZeroOfPrimopResultType: bad primop");
    }
@@ -1414,17 +1416,17 @@ static IRExpr* fold_Expr ( IRExpr** env, IRExpr* e )
             break;
 
          case Iop_8Sto32: {
-            /* signed */ Int s32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U8;
-            s32 <<= 24;
-            s32 >>= 24;
-            e2 = IRExpr_Const(IRConst_U32((UInt)s32));
+            UInt u32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U8;
+            u32 <<= 24;
+            u32 = (Int)u32 >> 24;   /* signed shift */
+            e2 = IRExpr_Const(IRConst_U32(u32));
             break;
          }
          case Iop_16Sto32: {
-            /* signed */ Int s32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
-            s32 <<= 16;
-            s32 >>= 16;
-            e2 = IRExpr_Const(IRConst_U32( (UInt)s32) );
+            UInt u32 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            u32 <<= 16;
+            u32 = (Int)u32 >> 16;   /* signed shift */
+            e2 = IRExpr_Const(IRConst_U32(u32));
             break;
          }
          case Iop_8Uto64:
@@ -1440,10 +1442,10 @@ static IRExpr* fold_Expr ( IRExpr** env, IRExpr* e )
                     0xFF & e->Iex.Unop.arg->Iex.Const.con->Ico.U8));
             break;
          case Iop_8Sto16: {
-            /* signed */ Short s16 = e->Iex.Unop.arg->Iex.Const.con->Ico.U8;
-            s16 <<= 8;
-            s16 >>= 8;
-            e2 = IRExpr_Const(IRConst_U16( (UShort)s16) );
+            UShort u16 = e->Iex.Unop.arg->Iex.Const.con->Ico.U8;
+            u16 <<= 8;
+            u16 = (Short)u16 >> 8;  /* signed shift */
+            e2 = IRExpr_Const(IRConst_U16(u16));
             break;
          }
          case Iop_8Uto16:
@@ -1529,17 +1531,17 @@ static IRExpr* fold_Expr ( IRExpr** env, IRExpr* e )
                     & e->Iex.Unop.arg->Iex.Const.con->Ico.U32));
             break;
          case Iop_16Sto64: {
-            /* signed */ Long s64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
-            s64 <<= 48;
-            s64 >>= 48;
-            e2 = IRExpr_Const(IRConst_U64((ULong)s64));
+            ULong u64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U16;
+            u64 <<= 48;
+            u64 = (Long)u64 >> 48;   /* signed shift */
+            e2 = IRExpr_Const(IRConst_U64(u64));
             break;
          }
          case Iop_32Sto64: {
-            /* signed */ Long s64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U32;
-            s64 <<= 32;
-            s64 >>= 32;
-            e2 = IRExpr_Const(IRConst_U64((ULong)s64));
+            ULong u64 = e->Iex.Unop.arg->Iex.Const.con->Ico.U32;
+            u64 <<= 32;
+            u64 = (Long)u64 >> 32;   /* signed shift */
+            e2 = IRExpr_Const(IRConst_U64(u64));
             break;
          }
 
@@ -2285,6 +2287,7 @@ static IRExpr* fold_Expr ( IRExpr** env, IRExpr* e )
             case Iop_Xor32:
             case Iop_Xor64:
             case Iop_XorV128:
+            case Iop_XorV256:
                /* Xor8/16/32/64/V128(t,t) ==> 0, for some IRTemp t */
                if (sameIRExprs(env, e->Iex.Binop.arg1, e->Iex.Binop.arg2)) {
                   e2 = mkZeroOfPrimopResultType(e->Iex.Binop.op);
@@ -2699,7 +2702,7 @@ static IRStmt* subst_and_fold_Stmt ( IRExpr** env, IRStmt* st )
          d2->guard = fold_Expr(env, subst_Expr(env, d2->guard));
          for (i = 0; d2->args[i]; i++) {
             IRExpr* arg = d2->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg))) {
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg))) {
                vassert(isIRAtom(arg));
                d2->args[i] = fold_Expr(env, subst_Expr(env, arg));
             }
@@ -2758,7 +2761,7 @@ IRSB* cprop_BB ( IRSB* in )
    IRSB*    out;
    IRStmt*  st2;
    Int      n_tmps = in->tyenv->types_used;
-   IRExpr** env = LibVEX_Alloc(n_tmps * sizeof(IRExpr*));
+   IRExpr** env = LibVEX_Alloc_inline(n_tmps * sizeof(IRExpr*));
    /* Keep track of IRStmt_LoadGs that we need to revisit after
       processing all the other statements. */
    const Int N_FIXUPS = 16;
@@ -2887,6 +2890,8 @@ IRSB* cprop_BB ( IRSB* in )
       typeOfIRLoadGOp(lg->cvt, &cvtRes, &cvtArg);
       IROp cvtOp = Iop_INVALID;
       switch (lg->cvt) {
+         case ILGop_IdentV128:
+         case ILGop_Ident64:
          case ILGop_Ident32: break;
          case ILGop_8Uto32:  cvtOp = Iop_8Uto32;  break;
          case ILGop_8Sto32:  cvtOp = Iop_8Sto32;  break;
@@ -3040,7 +3045,7 @@ static void addUses_Stmt ( Bool* set, IRStmt* st )
          addUses_Expr(set, d->guard);
          for (i = 0; d->args[i] != NULL; i++) {
             IRExpr* arg = d->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                addUses_Expr(set, arg);
          }
          return;
@@ -3094,7 +3099,7 @@ static Bool isOneU1 ( IRExpr* e )
 {
    Int     i, i_unconditional_exit;
    Int     n_tmps = bb->tyenv->types_used;
-   Bool*   set = LibVEX_Alloc(n_tmps * sizeof(Bool));
+   Bool*   set = LibVEX_Alloc_inline(n_tmps * sizeof(Bool));
    IRStmt* st;
 
    for (i = 0; i < n_tmps; i++)
@@ -3405,7 +3410,7 @@ static void irExprVec_to_TmpOrConsts ( /*OUT*/TmpOrConst** outs,
    /* We have to make two passes, one to count, one to copy. */
    for (n = 0; ins[n]; n++)
       ;
-   *outs  = LibVEX_Alloc(n * sizeof(TmpOrConst));
+   *outs  = LibVEX_Alloc_inline(n * sizeof(TmpOrConst));
    *nOuts = n;
    /* and now copy .. */
    for (i = 0; i < n; i++) {
@@ -3580,13 +3585,13 @@ static IRExpr* availExpr_to_IRExpr ( AvailExpr* ae )
                               IRExpr_RdTmp(ae->u.Btt.arg1),
                               IRExpr_RdTmp(ae->u.Btt.arg2) );
       case Btc:
-         con = LibVEX_Alloc(sizeof(IRConst));
+         con = LibVEX_Alloc_inline(sizeof(IRConst));
          *con = ae->u.Btc.con2;
          return IRExpr_Binop( ae->u.Btc.op,
                               IRExpr_RdTmp(ae->u.Btc.arg1), 
                               IRExpr_Const(con) );
       case Bct:
-         con = LibVEX_Alloc(sizeof(IRConst));
+         con = LibVEX_Alloc_inline(sizeof(IRConst));
          *con = ae->u.Bct.con1;
          return IRExpr_Binop( ae->u.Bct.op,
                               IRExpr_Const(con), 
@@ -3598,21 +3603,21 @@ static IRExpr* availExpr_to_IRExpr ( AvailExpr* ae )
                            IRExpr_RdTmp(ae->u.Ittt.e1), 
                            IRExpr_RdTmp(ae->u.Ittt.e0));
       case Ittc:
-         con0 = LibVEX_Alloc(sizeof(IRConst));
+         con0 = LibVEX_Alloc_inline(sizeof(IRConst));
          *con0 = ae->u.Ittc.con0;
          return IRExpr_ITE(IRExpr_RdTmp(ae->u.Ittc.co), 
                            IRExpr_RdTmp(ae->u.Ittc.e1),
                            IRExpr_Const(con0));
       case Itct:
-         con1 = LibVEX_Alloc(sizeof(IRConst));
+         con1 = LibVEX_Alloc_inline(sizeof(IRConst));
          *con1 = ae->u.Itct.con1;
          return IRExpr_ITE(IRExpr_RdTmp(ae->u.Itct.co), 
                            IRExpr_Const(con1),
                            IRExpr_RdTmp(ae->u.Itct.e0));
 
       case Itcc:
-         con0 = LibVEX_Alloc(sizeof(IRConst));
-         con1 = LibVEX_Alloc(sizeof(IRConst));
+         con0 = LibVEX_Alloc_inline(sizeof(IRConst));
+         con1 = LibVEX_Alloc_inline(sizeof(IRConst));
          *con0 = ae->u.Itcc.con0;
          *con1 = ae->u.Itcc.con1;
          return IRExpr_ITE(IRExpr_RdTmp(ae->u.Itcc.co), 
@@ -3625,7 +3630,7 @@ static IRExpr* availExpr_to_IRExpr ( AvailExpr* ae )
       case CCall: {
          Int i, n = ae->u.CCall.nArgs;
          vassert(n >= 0);
-         IRExpr** vec = LibVEX_Alloc((n+1) * sizeof(IRExpr*));
+         IRExpr** vec = LibVEX_Alloc_inline((n+1) * sizeof(IRExpr*));
          vec[n] = NULL;
          for (i = 0; i < n; i++) {
             vec[i] = tmpOrConst_to_IRExpr(&ae->u.CCall.args[i]);
@@ -3723,7 +3728,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
    switch (e->tag) {
       case Iex_Unop:
          if (e->Iex.Unop.arg->tag == Iex_RdTmp) {
-            ae = LibVEX_Alloc(sizeof(AvailExpr));
+            ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
             ae->tag      = Ut;
             ae->u.Ut.op  = e->Iex.Unop.op;
             ae->u.Ut.arg = e->Iex.Unop.arg->Iex.RdTmp.tmp;
@@ -3734,7 +3739,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
       case Iex_Binop:
          if (e->Iex.Binop.arg1->tag == Iex_RdTmp) {
             if (e->Iex.Binop.arg2->tag == Iex_RdTmp) {
-               ae = LibVEX_Alloc(sizeof(AvailExpr));
+               ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                ae->tag        = Btt;
                ae->u.Btt.op   = e->Iex.Binop.op;
                ae->u.Btt.arg1 = e->Iex.Binop.arg1->Iex.RdTmp.tmp;
@@ -3742,7 +3747,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
                return ae;
             }
             if (e->Iex.Binop.arg2->tag == Iex_Const) {
-               ae = LibVEX_Alloc(sizeof(AvailExpr));
+               ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                ae->tag        = Btc;
                ae->u.Btc.op   = e->Iex.Binop.op;
                ae->u.Btc.arg1 = e->Iex.Binop.arg1->Iex.RdTmp.tmp;
@@ -3751,7 +3756,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
             }
          } else if (e->Iex.Binop.arg1->tag == Iex_Const
                     && e->Iex.Binop.arg2->tag == Iex_RdTmp) {
-            ae = LibVEX_Alloc(sizeof(AvailExpr));
+            ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
             ae->tag        = Bct;
             ae->u.Bct.op   = e->Iex.Binop.op;
             ae->u.Bct.arg2 = e->Iex.Binop.arg2->Iex.RdTmp.tmp;
@@ -3762,7 +3767,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
 
       case Iex_Const:
          if (e->Iex.Const.con->tag == Ico_F64i) {
-            ae = LibVEX_Alloc(sizeof(AvailExpr));
+            ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
             ae->tag          = Cf64i;
             ae->u.Cf64i.f64i = e->Iex.Const.con->Ico.F64i;
             return ae;
@@ -3773,7 +3778,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
          if (e->Iex.ITE.cond->tag == Iex_RdTmp) {
             if (e->Iex.ITE.iffalse->tag == Iex_RdTmp) {
                if (e->Iex.ITE.iftrue->tag == Iex_RdTmp) {
-                  ae = LibVEX_Alloc(sizeof(AvailExpr));
+                  ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                   ae->tag       = Ittt;
                   ae->u.Ittt.co = e->Iex.ITE.cond->Iex.RdTmp.tmp;
                   ae->u.Ittt.e1 = e->Iex.ITE.iftrue->Iex.RdTmp.tmp;
@@ -3781,7 +3786,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
                   return ae;
                }
                if (e->Iex.ITE.iftrue->tag == Iex_Const) {
-                  ae = LibVEX_Alloc(sizeof(AvailExpr));
+                  ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                   ae->tag       = Itct;
                   ae->u.Itct.co = e->Iex.ITE.cond->Iex.RdTmp.tmp;
                   ae->u.Itct.con1 = *(e->Iex.ITE.iftrue->Iex.Const.con);
@@ -3790,7 +3795,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
                }
             } else if (e->Iex.ITE.iffalse->tag == Iex_Const) {
                if (e->Iex.ITE.iftrue->tag == Iex_RdTmp) {
-                  ae = LibVEX_Alloc(sizeof(AvailExpr));
+                  ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                   ae->tag       = Ittc;
                   ae->u.Ittc.co = e->Iex.ITE.cond->Iex.RdTmp.tmp;
                   ae->u.Ittc.e1 = e->Iex.ITE.iftrue->Iex.RdTmp.tmp;
@@ -3798,7 +3803,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
                   return ae;
                }
                if (e->Iex.ITE.iftrue->tag == Iex_Const) {
-                  ae = LibVEX_Alloc(sizeof(AvailExpr));
+                  ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
                   ae->tag       = Itcc;
                   ae->u.Itcc.co = e->Iex.ITE.cond->Iex.RdTmp.tmp;
                   ae->u.Itcc.con1 = *(e->Iex.ITE.iftrue->Iex.Const.con);
@@ -3811,7 +3816,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
 
       case Iex_GetI:
          if (e->Iex.GetI.ix->tag == Iex_RdTmp) {
-            ae = LibVEX_Alloc(sizeof(AvailExpr));
+            ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
             ae->tag           = GetIt;
             ae->u.GetIt.descr = e->Iex.GetI.descr;
             ae->u.GetIt.ix    = e->Iex.GetI.ix->Iex.RdTmp.tmp;
@@ -3821,7 +3826,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
          break;
 
       case Iex_CCall:
-         ae = LibVEX_Alloc(sizeof(AvailExpr));
+         ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
          ae->tag = CCall;
          /* Ok to share only the cee, since it is immutable. */
          ae->u.CCall.cee   = e->Iex.CCall.cee;
@@ -3842,7 +3847,7 @@ static AvailExpr* irExpr_to_AvailExpr ( IRExpr* e, Bool allowLoadsToBeCSEd )
             "available", which effectively disables CSEing of them, as
             desired. */
          if (allowLoadsToBeCSEd) {
-            ae = LibVEX_Alloc(sizeof(AvailExpr));
+            ae = LibVEX_Alloc_inline(sizeof(AvailExpr));
             ae->tag        = Load;
             ae->u.Load.end = e->Iex.Load.end;
             ae->u.Load.ty  = e->Iex.Load.ty;
@@ -4665,7 +4670,7 @@ static void deltaIRStmt ( IRStmt* st, Int delta )
          deltaIRExpr(d->guard, delta);
          for (i = 0; d->args[i]; i++) {
             IRExpr* arg = d->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                deltaIRExpr(arg, delta);
          }
          if (d->tmp != IRTemp_INVALID)
@@ -5202,7 +5207,7 @@ static void aoccCount_Stmt ( UShort* uses, IRStmt* st )
          aoccCount_Expr(uses, d->guard);
          for (i = 0; d->args[i]; i++) {
             IRExpr* arg = d->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                aoccCount_Expr(uses, arg);
          }
          return;
@@ -5593,7 +5598,7 @@ static IRStmt* atbSubst_Stmt ( ATmpInfo* env, IRStmt* st )
          d2->guard = atbSubst_Expr(env, d2->guard);
          for (i = 0; d2->args[i]; i++) {
             IRExpr* arg = d2->args[i];
-            if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+            if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                d2->args[i] = atbSubst_Expr(env, arg);
          }
          return IRStmt_Dirty(d2);
@@ -5624,7 +5629,7 @@ static Interval dirty_helper_puts (
       guest state under the covers.  It's not allowed, but let's be
       extra conservative and assume the worst. */
    for (i = 0; d->args[i]; i++) {
-      if (UNLIKELY(d->args[i]->tag == Iex_BBPTR)) {
+      if (UNLIKELY(d->args[i]->tag == Iex_GSPTR)) {
          *requiresPreciseMemExns = True;
          /* Assume all guest state is written. */
          interval.present = True;
@@ -5733,7 +5738,7 @@ static Interval stmt_modifies_guest_state (
    Addr   max_ga       = 0;
 
    Int       n_tmps = bb->tyenv->types_used;
-   UShort*   uses   = LibVEX_Alloc(n_tmps * sizeof(UShort));
+   UShort*   uses   = LibVEX_Alloc_inline(n_tmps * sizeof(UShort));
 
    /* Phase 1.  Scan forwards in bb, counting use occurrences of each
       temp.  Also count occurrences in the bb->next field.  Take the
@@ -6002,7 +6007,7 @@ static void print_flat_expr ( IRExpr** env, IRExpr* e )
       case Iex_RdTmp:
          ppIRTemp(e->Iex.RdTmp.tmp);
          vex_printf("=");
-         print_flat_expr(env, chase(env, e));
+         print_flat_expr(env, chase1(env, e));
          break;
       case Iex_Const:
       case Iex_CCall:
@@ -6240,7 +6245,7 @@ static Bool do_XOR_TRANSFORM_IRSB ( IRSB* sb )
    /* Make the tmp->expr environment, so we can use it for
       chasing expressions. */
    Int      n_tmps = sb->tyenv->types_used;
-   IRExpr** env = LibVEX_Alloc(n_tmps * sizeof(IRExpr*));
+   IRExpr** env = LibVEX_Alloc_inline(n_tmps * sizeof(IRExpr*));
    for (i = 0; i < n_tmps; i++)
       env[i] = NULL;
 
@@ -6323,7 +6328,7 @@ static Bool do_XOR_TRANSFORM_IRSB ( IRSB* sb )
             vassert(isIRAtom(d->guard));
             for (Int j = 0; d->args[j]; j++) {
                IRExpr* arg = d->args[j];
-               if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg))) {
+               if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg))) {
                   vassert(isIRAtom(arg));
                }
             }
@@ -6482,7 +6487,7 @@ static void considerExpensives ( /*OUT*/Bool* hasGetIorPutI,
                case Ity_I1: case Ity_I8: case Ity_I16: 
                case Ity_I32: case Ity_I64: case Ity_I128: 
                   break;
-               case Ity_F32: case Ity_F64: case Ity_F128:
+               case Ity_F16: case Ity_F32: case Ity_F64: case Ity_F128:
                case Ity_V128: case Ity_V256:
                   *hasVorFtemps = True;
                   break;
@@ -6532,7 +6537,7 @@ static void considerExpensives ( /*OUT*/Bool* hasGetIorPutI,
             vassert(isIRAtom(d->guard));
             for (j = 0; d->args[j]; j++) {
                IRExpr* arg = d->args[j];
-               if (LIKELY(!is_IRExpr_VECRET_or_BBPTR(arg)))
+               if (LIKELY(!is_IRExpr_VECRET_or_GSPTR(arg)))
                   vassert(isIRAtom(arg));
             }
             if (d->mFx != Ifx_None)

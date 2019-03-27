@@ -8,10 +8,10 @@
    This file is part of Helgrind, a Valgrind tool for detecting errors
    in threaded programs.
 
-   Copyright (C) 2007-2013 OpenWorks LLP
+   Copyright (C) 2007-2017 OpenWorks LLP
       info@open-works.co.uk
 
-   Copyright (C) 2007-2013 Apple, Inc.
+   Copyright (C) 2007-2017 Apple, Inc.
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -53,10 +53,12 @@
 #include "pub_tool_debuginfo.h" // VG_(find_seginfo), VG_(seginfo_soname)
 #include "pub_tool_redir.h"     // sonames for the dynamic linkers
 #include "pub_tool_vki.h"       // VKI_PAGE_SIZE
-#include "pub_tool_libcproc.h"  // VG_(atfork)
+#include "pub_tool_libcproc.h"
 #include "pub_tool_aspacemgr.h" // VG_(am_is_valid_for_client)
 #include "pub_tool_poolalloc.h"
 #include "pub_tool_addrinfo.h"
+#include "pub_tool_xtree.h"
+#include "pub_tool_xtmemory.h"
 
 #include "hg_basics.h"
 #include "hg_wordset.h"
@@ -160,6 +162,12 @@ Lock* HG_(get_admin_locks) ( void ) { return admin_locks; }
 static UWord stats__lockN_acquires = 0;
 static UWord stats__lockN_releases = 0;
 
+#if defined(VGO_solaris)
+Bool HG_(clo_ignore_thread_creation) = True;
+#else
+Bool HG_(clo_ignore_thread_creation) = False;
+#endif /* VGO_solaris */
+
 static
 ThreadId map_threads_maybe_reverse_lookup_SLOW ( Thread* thr ); /*fwds*/
 
@@ -175,8 +183,15 @@ static Thread* mk_Thread ( Thr* hbthr ) {
    thread->coretid      = VG_INVALID_THREADID;
    thread->created_at   = NULL;
    thread->announced    = False;
+   thread->first_sp_delta = 0;
    thread->errmsg_index = indx++;
    thread->admin        = admin_threads;
+   thread->synchr_nesting = 0;
+   thread->pthread_create_nesting_level = 0;
+#if defined(VGO_solaris)
+   thread->bind_guard_flag = 0;
+#endif /* VGO_solaris */
+
    admin_threads        = thread;
    return thread;
 }
@@ -272,7 +287,7 @@ static void lockN_acquire_writer ( Lock* lk, Thread* thr )
          /* 2nd and subsequent locking of a lock by its owner */
          tl_assert(lk->heldW);
          /* assert: lk is only held by one thread .. */
-         tl_assert(VG_(sizeUniqueBag(lk->heldBy)) == 1);
+         tl_assert(VG_(sizeUniqueBag)(lk->heldBy) == 1);
          /* assert: .. and that thread is 'thr'. */
          tl_assert(VG_(elemBag)(lk->heldBy, (UWord)thr)
                    == VG_(sizeTotalBag)(lk->heldBy));
@@ -469,13 +484,15 @@ static void pp_Lock ( Int d, Lock* lk,
                       Bool show_lock_addrdescr,
                       Bool show_internal_data)
 {
+   // FIXME PW EPOCH should use the epoch of the allocated_at ec.
+   const DiEpoch cur_ep = VG_(current_DiEpoch)();
    space(d+0); 
    if (show_internal_data)
       VG_(printf)("Lock %p (ga %#lx) {\n", lk, lk->guestaddr);
    else
       VG_(printf)("Lock ga %#lx {\n", lk->guestaddr);
    if (!show_lock_addrdescr 
-       || !HG_(get_and_pp_addrdescr) ((Addr) lk->guestaddr))
+       || !HG_(get_and_pp_addrdescr) (cur_ep, (Addr) lk->guestaddr))
       VG_(printf)("\n");
       
    if (sHOW_ADMIN) {
@@ -508,7 +525,7 @@ static void pp_Lock ( Int d, Lock* lk,
             if (thr->coretid == VG_INVALID_THREADID) 
                VG_(printf)("tid (exited) ");
             else
-               VG_(printf)("tid %d ", thr->coretid);
+               VG_(printf)("tid %u ", thr->coretid);
 
          }
       }
@@ -698,6 +715,34 @@ static void map_threads_delete ( ThreadId coretid )
    map_threads[coretid] = NULL;
 }
 
+static void HG_(thread_enter_synchr)(Thread *thr) {
+   tl_assert(thr->synchr_nesting >= 0);
+#if defined(VGO_solaris)
+   thr->synchr_nesting += 1;
+#endif /* VGO_solaris */
+}
+
+static void HG_(thread_leave_synchr)(Thread *thr) {
+#if defined(VGO_solaris)
+   thr->synchr_nesting -= 1;
+#endif /* VGO_solaris */
+   tl_assert(thr->synchr_nesting >= 0);
+}
+
+static void HG_(thread_enter_pthread_create)(Thread *thr) {
+   tl_assert(thr->pthread_create_nesting_level >= 0);
+   thr->pthread_create_nesting_level += 1;
+}
+
+static void HG_(thread_leave_pthread_create)(Thread *thr) {
+   tl_assert(thr->pthread_create_nesting_level > 0);
+   thr->pthread_create_nesting_level -= 1;
+}
+
+static Int HG_(get_pthread_create_nesting_level)(ThreadId tid) {
+   Thread *thr = map_threads_maybe_lookup(tid);
+   return thr->pthread_create_nesting_level;
+}
 
 /*----------------------------------------------------------------*/
 /*--- map_locks :: WordFM guest-Addr-of-lock Lock*             ---*/
@@ -989,31 +1034,34 @@ static void shadow_mem_cwrite_range ( Thread* thr, Addr a, SizeT len ) {
    LIBHB_CWRITE_N(hbthr, a, len);
 }
 
-static void shadow_mem_make_New ( Thread* thr, Addr a, SizeT len )
+inline static void shadow_mem_make_New ( Thread* thr, Addr a, SizeT len )
 {
    libhb_srange_new( thr->hbthr, a, len );
 }
 
-static void shadow_mem_make_NoAccess_NoFX ( Thread* thr, Addr aIN, SizeT len )
+inline static void shadow_mem_make_NoAccess_NoFX ( Thread* thr, Addr aIN,
+                                                   SizeT len )
 {
    if (0 && len > 500)
-      VG_(printf)("make NoAccess_NoFX ( %#lx, %ld )\n", aIN, len );
+      VG_(printf)("make NoAccess_NoFX ( %#lx, %lu )\n", aIN, len );
    // has no effect (NoFX)
    libhb_srange_noaccess_NoFX( thr->hbthr, aIN, len );
 }
 
-static void shadow_mem_make_NoAccess_AHAE ( Thread* thr, Addr aIN, SizeT len )
+inline static void shadow_mem_make_NoAccess_AHAE ( Thread* thr, Addr aIN,
+                                                   SizeT len)
 {
    if (0 && len > 500)
-      VG_(printf)("make NoAccess_AHAE ( %#lx, %ld )\n", aIN, len );
+      VG_(printf)("make NoAccess_AHAE ( %#lx, %lu )\n", aIN, len );
    // Actually Has An Effect (AHAE)
    libhb_srange_noaccess_AHAE( thr->hbthr, aIN, len );
 }
 
-static void shadow_mem_make_Untracked ( Thread* thr, Addr aIN, SizeT len )
+inline static void shadow_mem_make_Untracked ( Thread* thr, Addr aIN,
+                                               SizeT len )
 {
    if (0 && len > 500)
-      VG_(printf)("make Untracked ( %#lx, %ld )\n", aIN, len );
+      VG_(printf)("make Untracked ( %#lx, %lu )\n", aIN, len );
    libhb_srange_untrack( thr->hbthr, aIN, len );
 }
 
@@ -1423,40 +1471,76 @@ static inline Thread* get_current_Thread ( void ) {
 
 static
 void evh__new_mem ( Addr a, SizeT len ) {
+   Thread *thr = get_current_Thread();
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__new_mem(%p, %lu)\n", (void*)a, len );
-   shadow_mem_make_New( get_current_Thread(), a, len );
+   shadow_mem_make_New( thr, a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__new_mem-post");
+   if (UNLIKELY(thr->pthread_create_nesting_level > 0))
+      shadow_mem_make_Untracked( thr, a, len );
 }
 
 static
 void evh__new_mem_stack ( Addr a, SizeT len ) {
+   Thread *thr = get_current_Thread();
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__new_mem_stack(%p, %lu)\n", (void*)a, len );
-   shadow_mem_make_New( get_current_Thread(),
-                        -VG_STACK_REDZONE_SZB + a, len );
+   shadow_mem_make_New( thr, -VG_STACK_REDZONE_SZB + a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__new_mem_stack-post");
+   if (UNLIKELY(thr->pthread_create_nesting_level > 0))
+      shadow_mem_make_Untracked( thr, a, len );
 }
+
+#define DCL_evh__new_mem_stack(syze)                                     \
+static void VG_REGPARM(1) evh__new_mem_stack_##syze(Addr new_SP)         \
+{                                                                        \
+   Thread *thr = get_current_Thread();                                   \
+   if (SHOW_EVENTS >= 2)                                                 \
+      VG_(printf)("evh__new_mem_stack_" #syze "(%p, %lu)\n",             \
+                  (void*)new_SP, (SizeT)syze );                          \
+   shadow_mem_make_New( thr, -VG_STACK_REDZONE_SZB + new_SP, syze );     \
+   if (syze >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE)) \
+      all__sanity_check("evh__new_mem_stack_" #syze "-post");            \
+   if (UNLIKELY(thr->pthread_create_nesting_level > 0))                  \
+      shadow_mem_make_Untracked( thr, new_SP, syze );                    \
+}
+
+DCL_evh__new_mem_stack(4);
+DCL_evh__new_mem_stack(8);
+DCL_evh__new_mem_stack(12);
+DCL_evh__new_mem_stack(16);
+DCL_evh__new_mem_stack(32);
+DCL_evh__new_mem_stack(112);
+DCL_evh__new_mem_stack(128);
+DCL_evh__new_mem_stack(144);
+DCL_evh__new_mem_stack(160);
 
 static
 void evh__new_mem_w_tid ( Addr a, SizeT len, ThreadId tid ) {
+   Thread *thr = get_current_Thread();
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__new_mem_w_tid(%p, %lu)\n", (void*)a, len );
-   shadow_mem_make_New( get_current_Thread(), a, len );
+   shadow_mem_make_New( thr, a, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__new_mem_w_tid-post");
+   if (UNLIKELY(thr->pthread_create_nesting_level > 0))
+      shadow_mem_make_Untracked( thr, a, len );
 }
 
 static
 void evh__new_mem_w_perms ( Addr a, SizeT len, 
                             Bool rr, Bool ww, Bool xx, ULong di_handle ) {
+   Thread *thr = get_current_Thread();
    if (SHOW_EVENTS >= 1)
       VG_(printf)("evh__new_mem_w_perms(%p, %lu, %d,%d,%d)\n",
                   (void*)a, len, (Int)rr, (Int)ww, (Int)xx );
-   if (rr || ww || xx)
-      shadow_mem_make_New( get_current_Thread(), a, len );
+   if (rr || ww || xx) {
+      shadow_mem_make_New( thr, a, len );
+      if (UNLIKELY(thr->pthread_create_nesting_level > 0))
+         shadow_mem_make_Untracked( thr, a, len );
+   }
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__new_mem_w_perms-post");
 }
@@ -1518,7 +1602,9 @@ static
 void evh__copy_mem ( Addr src, Addr dst, SizeT len ) {
    if (SHOW_EVENTS >= 2)
       VG_(printf)("evh__copy_mem(%p, %p, %lu)\n", (void*)src, (void*)dst, len );
-   shadow_mem_scopy_range( get_current_Thread(), src, dst, len );
+   Thread *thr = get_current_Thread();
+   if (LIKELY(thr->synchr_nesting == 0))
+      shadow_mem_scopy_range( thr , src, dst, len );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__copy_mem-post");
 }
@@ -1581,6 +1667,13 @@ void evh__pre_thread_ll_create ( ThreadId parent, ThreadId child )
         first_ip_delta = -1;
 #       endif
         thr_c->created_at = VG_(record_ExeContext)(parent, first_ip_delta);
+      }
+
+      if (HG_(clo_ignore_thread_creation)) {
+         HG_(thread_enter_pthread_create)(thr_c);
+         tl_assert(thr_c->synchr_nesting == 0);
+         HG_(thread_enter_synchr)(thr_c);
+         /* Counterpart in _VG_USERREQ__HG_SET_MY_PTHREAD_T. */
       }
    }
 
@@ -1752,7 +1845,9 @@ void evh__pre_mem_read ( CorePart part, ThreadId tid, const HChar* s,
        || (SHOW_EVENTS >= 1 && size != 1))
       VG_(printf)("evh__pre_mem_read(ctid=%d, \"%s\", %p, %lu)\n", 
                   (Int)tid, s, (void*)a, size );
-   shadow_mem_cread_range( map_threads_lookup(tid), a, size);
+   Thread *thr = map_threads_lookup(tid);
+   if (LIKELY(thr->synchr_nesting == 0))
+      shadow_mem_cread_range(thr, a, size);
    if (size >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_read-post");
 }
@@ -1770,8 +1865,10 @@ void evh__pre_mem_read_asciiz ( CorePart part, ThreadId tid,
    // checking the first byte is better than nothing.  See #255009.
    if (!VG_(am_is_valid_for_client) (a, 1, VKI_PROT_READ))
       return;
+   Thread *thr = map_threads_lookup(tid);
    len = VG_(strlen)( (HChar*) a );
-   shadow_mem_cread_range( map_threads_lookup(tid), a, len+1 );
+   if (LIKELY(thr->synchr_nesting == 0))
+      shadow_mem_cread_range( thr, a, len+1 );
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_read_asciiz-post");
 }
@@ -1782,7 +1879,9 @@ void evh__pre_mem_write ( CorePart part, ThreadId tid, const HChar* s,
    if (SHOW_EVENTS >= 1)
       VG_(printf)("evh__pre_mem_write(ctid=%d, \"%s\", %p, %lu)\n", 
                   (Int)tid, s, (void*)a, size );
-   shadow_mem_cwrite_range( map_threads_lookup(tid), a, size);
+   Thread *thr = map_threads_lookup(tid);
+   if (LIKELY(thr->synchr_nesting == 0))
+      shadow_mem_cwrite_range(thr, a, size);
    if (size >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_write-post");
 }
@@ -1811,9 +1910,31 @@ void evh__die_mem_heap ( Addr a, SizeT len ) {
          where memory is referenced by one thread, and freed by
          another, and there's no observable synchronisation event to
          guarantee that the reference happens before the free. */
-      shadow_mem_cwrite_range(thr, a, len);
+      if (LIKELY(thr->synchr_nesting == 0))
+         shadow_mem_cwrite_range(thr, a, len);
    }
-   shadow_mem_make_NoAccess_NoFX( thr, a, len );
+   shadow_mem_make_NoAccess_AHAE( thr, a, len );
+   /* We used to call instead
+          shadow_mem_make_NoAccess_NoFX( thr, a, len );
+      A non-buggy application will not access anymore
+      the freed memory, and so marking no access is in theory useless.
+      Not marking freed memory would avoid the overhead for applications
+      doing mostly malloc/free, as the freed memory should then be recycled
+      very quickly after marking.
+      We rather mark it noaccess for the following reasons:
+        * accessibility bits then always correctly represents the memory
+          status (e.g. for the client request VALGRIND_HG_GET_ABITS).
+        * the overhead is reasonable (about 5 seconds per Gb in 1000 bytes
+          blocks, on a ppc64le, for a unrealistic workload of an application
+          doing only malloc/free).
+        * marking no access allows to GC the SecMap, which might improve
+          performance and/or memory usage.
+        * we might detect more applications bugs when memory is marked
+          noaccess.
+      If needed, we could support here an option --free-is-noaccess=yes|no
+      to avoid marking freed memory as no access if some applications
+      would need to avoid the marking noaccess overhead. */
+
    if (len >= SCE_BIGRANGE_T && (HG_(clo_sanity_flags) & SCE_BIGRANGE))
       all__sanity_check("evh__pre_mem_read-post");
 }
@@ -1824,70 +1945,106 @@ static VG_REGPARM(1)
 void evh__mem_help_cread_1(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CREAD_1(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CREAD_1(hbthr, a);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cread_2(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CREAD_2(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CREAD_2(hbthr, a);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cread_4(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CREAD_4(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CREAD_4(hbthr, a);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cread_8(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CREAD_8(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CREAD_8(hbthr, a);
 }
 
 static VG_REGPARM(2)
 void evh__mem_help_cread_N(Addr a, SizeT size) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CREAD_N(hbthr, a, size);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CREAD_N(hbthr, a, size);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cwrite_1(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CWRITE_1(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_1(hbthr, a);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cwrite_2(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CWRITE_2(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_2(hbthr, a);
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cwrite_4(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CWRITE_4(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_4(hbthr, a);
+}
+
+/* Same as evh__mem_help_cwrite_4 but unwind will use a first_sp_delta of
+   one word. */
+static VG_REGPARM(1)
+void evh__mem_help_cwrite_4_fixupSP(Addr a) {
+   Thread*  thr = get_current_Thread_in_C_C();
+   Thr*     hbthr = thr->hbthr;
+
+   thr->first_sp_delta = sizeof(Word);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_4(hbthr, a);
+   thr->first_sp_delta = 0;
 }
 
 static VG_REGPARM(1)
 void evh__mem_help_cwrite_8(Addr a) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CWRITE_8(hbthr, a);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_8(hbthr, a);
+}
+
+/* Same as evh__mem_help_cwrite_8 but unwind will use a first_sp_delta of
+   one word. */
+static VG_REGPARM(1)
+void evh__mem_help_cwrite_8_fixupSP(Addr a) {
+   Thread*  thr = get_current_Thread_in_C_C();
+   Thr*     hbthr = thr->hbthr;
+
+   thr->first_sp_delta = sizeof(Word);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_8(hbthr, a);
+   thr->first_sp_delta = 0;
 }
 
 static VG_REGPARM(2)
 void evh__mem_help_cwrite_N(Addr a, SizeT size) {
    Thread*  thr = get_current_Thread_in_C_C();
    Thr*     hbthr = thr->hbthr;
-   LIBHB_CWRITE_N(hbthr, a, size);
+   if (LIKELY(thr->synchr_nesting == 0))
+      LIBHB_CWRITE_N(hbthr, a, size);
 }
 
 
@@ -3289,7 +3446,7 @@ void evh__HG_USERSO_FORGET_ALL ( ThreadId tid, UWord usertag )
 {
    /* TID declares that any happens-before edges notionally stored in
       USERTAG can be deleted.  If (as would normally be the case) a
-      SO is associated with USERTAG, then the assocation is removed
+      SO is associated with USERTAG, then the association is removed
       and all resources associated with SO are freed.  Importantly,
       that frees up any VTSs stored in SO. */
    if (SHOW_EVENTS >= 1)
@@ -3298,6 +3455,52 @@ void evh__HG_USERSO_FORGET_ALL ( ThreadId tid, UWord usertag )
 
    map_usertag_to_SO_delete( usertag );
 }
+
+
+#if defined(VGO_solaris)
+/* ----------------------------------------------------- */
+/* --- events to do with bind guard/clear intercepts --- */
+/* ----------------------------------------------------- */
+
+static
+void evh__HG_RTLD_BIND_GUARD(ThreadId tid, Int flags)
+{
+   if (SHOW_EVENTS >= 1)
+      VG_(printf)("evh__HG_RTLD_BIND_GUARD"
+                  "(tid=%d, flags=%d)\n",
+                  (Int)tid, flags);
+
+   Thread *thr = map_threads_maybe_lookup(tid);
+   tl_assert(thr != NULL);
+
+   Int bindflag = (flags & VKI_THR_FLG_RTLD);
+   if ((bindflag & thr->bind_guard_flag) == 0) {
+      thr->bind_guard_flag |= bindflag;
+      HG_(thread_enter_synchr)(thr);
+      /* Misuse pthread_create_nesting_level for ignoring mutex activity. */
+      HG_(thread_enter_pthread_create)(thr);
+   }
+}
+
+static
+void evh__HG_RTLD_BIND_CLEAR(ThreadId tid, Int flags)
+{
+   if (SHOW_EVENTS >= 1)
+      VG_(printf)("evh__HG_RTLD_BIND_CLEAR"
+                  "(tid=%d, flags=%d)\n",
+                  (Int)tid, flags);
+
+   Thread *thr = map_threads_maybe_lookup(tid);
+   tl_assert(thr != NULL);
+
+   Int bindflag = (flags & VKI_THR_FLG_RTLD);
+   if ((thr->bind_guard_flag & bindflag) != 0) {
+      thr->bind_guard_flag &= ~bindflag;
+      HG_(thread_leave_synchr)(thr);
+      HG_(thread_leave_pthread_create)(thr);
+   }
+}
+#endif /* VGO_solaris */
 
 
 /*--------------------------------------------------------------*/
@@ -3312,7 +3515,7 @@ void evh__HG_USERSO_FORGET_ALL ( ThreadId tid, UWord usertag )
 
    The common case is that some thread T holds (eg) L1 L2 and L3 and
    is repeatedly acquiring and releasing Ln, and there is no ordering
-   error in what it is doing.  Hence it repeatly:
+   error in what it is doing.  Hence it repeatedly:
 
    (1) searches laog to see if Ln --*--> {L1,L2,L3}, which always 
        produces the answer No (because there is no error).
@@ -3420,11 +3623,6 @@ static void univ_laog_do_GC ( void ) {
                                         * sizeof(Bool) );
    // univ_laog_seen[*] set to 0 (False) by zalloc.
 
-   if (VG_(clo_stats))
-      VG_(message)(Vg_DebugMsg,
-                   "univ_laog_do_GC enter cardinality %'10d\n",
-                   (Int)univ_laog_cardinality);
-
    VG_(initIterFM)( laog );
    links = NULL;
    while (VG_(nextIterFM)( laog, NULL, (UWord*)&links )) {
@@ -3482,8 +3680,8 @@ static void univ_laog_do_GC ( void ) {
    if (VG_(clo_stats))
       VG_(message)
          (Vg_DebugMsg,
-          "univ_laog_do_GC exit seen %'8d next gc at cardinality %'10d\n",
-          (Int)seen, next_gc_univ_laog);
+          "univ_laog_do_GC cardinality entered %d exit %d next gc at %d\n",
+          (Int)univ_laog_cardinality, (Int)seen, next_gc_univ_laog);
 }
 
 
@@ -4017,6 +4215,8 @@ void* handle_alloc ( ThreadId tid,
    md->thr     = map_threads_lookup( tid );
 
    VG_(HT_add_node)( hg_mallocmeta_table, (VgHashNode*)md );
+   if (UNLIKELY(VG_(clo_xtree_memory) == Vg_XTMemory_Full))
+      VG_(XTMemory_Full_alloc)(md->szB, md->where);
 
    /* Tell the lower level memory wranglers. */
    evh__new_mem_heap( p, szB, is_zeroed );
@@ -4071,6 +4271,10 @@ static void handle_free ( ThreadId tid, void* p )
 
    tl_assert(md->payload == (Addr)p);
    szB = md->szB;
+   if (UNLIKELY(VG_(clo_xtree_memory) == Vg_XTMemory_Full)) {
+      ExeContext* ec_free = VG_(record_ExeContext)( tid, 0 );
+      VG_(XTMemory_Full_free)(md->szB, md->where, ec_free);
+   }
 
    /* Nuke the metadata block */
    old_md = (MallocMeta*)
@@ -4210,6 +4414,12 @@ Bool HG_(mm_find_containing_block)( /*OUT*/ExeContext** where,
    Int i;
    const Int n_fast_check_words = 16;
 
+   /* Before searching the list of allocated blocks in hg_mallocmeta_table,
+      first verify that data_addr is in a heap client segment. */
+   const NSegment *s = VG_(am_find_nsegment) (data_addr);
+   if (s == NULL || !s->isCH)
+     return False;
+
    /* First, do a few fast searches on the basis that data_addr might
       be exactly the start of a block or up to 15 words inside.  This
       can happen commonly via the creq
@@ -4280,8 +4490,13 @@ static void instrument_mem_access ( IRSB*   sbOut,
                                     IRExpr* addr,
                                     Int     szB,
                                     Bool    isStore,
+                                    Bool    fixupSP_needed,
                                     Int     hWordTy_szB,
                                     Int     goff_sp,
+                                    Int     goff_sp_s1,
+                                    /* goff_sp_s1 is the offset in guest
+                                       state where the cachedstack validity
+                                       is stored. */
                                     IRExpr* guard ) /* NULL => True */
 {
    IRType   tyAddr   = Ity_INVALID;
@@ -4317,13 +4532,27 @@ static void instrument_mem_access ( IRSB*   sbOut,
             argv = mkIRExprVec_1( addr );
             break;
          case 4:
-            hName = "evh__mem_help_cwrite_4";
-            hAddr = &evh__mem_help_cwrite_4;
+            if (fixupSP_needed) {
+               /* Unwind has to be done with a SP fixed up with one word.
+                  See Ist_Put heuristic in hg_instrument. */
+               hName = "evh__mem_help_cwrite_4_fixupSP";
+               hAddr = &evh__mem_help_cwrite_4_fixupSP;
+            } else {
+               hName = "evh__mem_help_cwrite_4";
+               hAddr = &evh__mem_help_cwrite_4;
+            }
             argv = mkIRExprVec_1( addr );
             break;
          case 8:
-            hName = "evh__mem_help_cwrite_8";
-            hAddr = &evh__mem_help_cwrite_8;
+            if (fixupSP_needed) {
+               /* Unwind has to be done with a SP fixed up with one word.
+                  See Ist_Put heuristic in hg_instrument. */
+               hName = "evh__mem_help_cwrite_8_fixupSP";
+               hAddr = &evh__mem_help_cwrite_8_fixupSP;
+            } else {
+               hName = "evh__mem_help_cwrite_8";
+               hAddr = &evh__mem_help_cwrite_8;
+            }
             argv = mkIRExprVec_1( addr );
             break;
          default:
@@ -4373,6 +4602,17 @@ static void instrument_mem_access ( IRSB*   sbOut,
    di = unsafeIRDirty_0_N( regparms,
                            hName, VG_(fnptr_to_fnentry)( hAddr ),
                            argv );
+
+   if (HG_(clo_delta_stacktrace)) {
+      /* memory access helper might read the shadow1 SP offset, that
+         indicates if the cached stacktrace is valid. */
+      di->fxState[0].fx = Ifx_Read;
+      di->fxState[0].offset = goff_sp_s1;
+      di->fxState[0].size = hWordTy_szB;
+      di->fxState[0].nRepeats = 0;
+      di->fxState[0].repeatLen = 0;
+      di->nFxState = 1;
+   }
 
    if (! HG_(clo_check_stack_refs)) {
       /* We're ignoring memory references which are (obviously) to the
@@ -4449,30 +4689,28 @@ static Bool is_in_dynamic_linker_shared_object( Addr ga )
 {
    DebugInfo* dinfo;
    const HChar* soname;
-   if (0) return False;
 
-   dinfo = VG_(find_DebugInfo)( ga );
+   dinfo = VG_(find_DebugInfo)( VG_(current_DiEpoch)(), ga );
    if (!dinfo) return False;
 
    soname = VG_(DebugInfo_get_soname)(dinfo);
    tl_assert(soname);
    if (0) VG_(printf)("%s\n", soname);
 
-#  if defined(VGO_linux)
-   if (VG_STREQ(soname, VG_U_LD_LINUX_SO_3))        return True;
-   if (VG_STREQ(soname, VG_U_LD_LINUX_SO_2))        return True;
-   if (VG_STREQ(soname, VG_U_LD_LINUX_X86_64_SO_2)) return True;
-   if (VG_STREQ(soname, VG_U_LD64_SO_1))            return True;
-   if (VG_STREQ(soname, VG_U_LD64_SO_2))            return True;
-   if (VG_STREQ(soname, VG_U_LD_SO_1))              return True;
-   if (VG_STREQ(soname, VG_U_LD_LINUX_AARCH64_SO_1)) return True;
-   if (VG_STREQ(soname, VG_U_LD_LINUX_ARMHF_SO_3))  return True;
-#  elif defined(VGO_darwin)
-   if (VG_STREQ(soname, VG_U_DYLD)) return True;
-#  else
-#    error "Unsupported OS"
-#  endif
-   return False;
+   return VG_(is_soname_ld_so)(soname);
+}
+
+static
+void addInvalidateCachedStack (IRSB*   bbOut,
+                               Int     goff_sp_s1,
+                               Int     hWordTy_szB)
+{
+   /* Invalidate cached stack: Write 0 in the shadow1 offset 0 */
+   addStmtToIRSB( bbOut,
+                  IRStmt_Put(goff_sp_s1,
+                             hWordTy_szB == 4 ?
+                             mkU32(0) : mkU64(0)));
+   /// ???? anything more efficient than assign a Word???
 }
 
 static
@@ -4490,7 +4728,15 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
    Bool    inLDSO = False;
    Addr    inLDSOmask4K = 1; /* mismatches on first check */
 
-   const Int goff_sp = layout->offset_SP;
+   // Set to True when SP must be fixed up when taking a stack trace for the
+   // mem accesses in the rest of the instruction
+   Bool    fixupSP_needed = False;
+
+   const Int goff_SP = layout->offset_SP;
+   /* SP in shadow1 indicates if cached stack is valid.
+      We have to invalidate the cached stack e.g. when seeing call or ret. */
+   const Int goff_SP_s1 = layout->total_sizeB + layout->offset_SP;
+   const Int hWordTy_szB = sizeofIRType(hWordTy);
 
    if (gWordTy != hWordTy) {
       /* We don't currently support this case. */
@@ -4528,17 +4774,45 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
       tl_assert(st);
       tl_assert(isFlatIRStmt(st));
       switch (st->tag) {
+         case Ist_Exit:
+            /* No memory reference, but if we do anything else than
+               Ijk_Boring, indicate to helgrind that the previously
+               recorded stack is invalid.
+               For Ijk_Boring, also invalidate the stack if the exit
+               instruction has no CF info. This heuristic avoids cached
+               stack trace mismatch in some cases such as longjmp
+               implementation. Similar logic below for the bb exit. */
+            if (HG_(clo_delta_stacktrace)
+                && (st->Ist.Exit.jk != Ijk_Boring || ! VG_(has_CF_info)(cia)))
+               addInvalidateCachedStack(bbOut, goff_SP_s1, hWordTy_szB);
+            break;
          case Ist_NoOp:
          case Ist_AbiHint:
-         case Ist_Put:
-         case Ist_PutI:
-         case Ist_Exit:
             /* None of these can contain any memory references. */
+            break;
+         case Ist_Put:
+            /* This cannot contain any memory references. */
+            /* If we see a put to SP, from now on in this instruction, 
+               the SP needed to unwind has to be fixed up by one word.
+               This very simple heuristic ensures correct unwinding in the
+               typical case of a push instruction. If we need to cover more
+               cases, then we need to better track how the SP is modified by
+               the instruction (and calculate a precise sp delta), rather than
+               assuming that the SP is decremented by a Word size. */
+            if (HG_(clo_delta_stacktrace) && st->Ist.Put.offset == goff_SP) {
+               fixupSP_needed = True;
+            }
+            break;
+         case Ist_PutI:
+            /* This cannot contain any memory references. */
             break;
 
          case Ist_IMark:
+            fixupSP_needed = False;
+
             /* no mem refs, but note the insn address. */
             cia = st->Ist.IMark.addr;
+
             /* Don't instrument the dynamic linker.  It generates a
                lot of races which we just expensively suppress, so
                it's pointless.
@@ -4584,8 +4858,8 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   cas->addr,
                   (isDCAS ? 2 : 1)
                      * sizeofIRType(typeOfIRExpr(bbIn->tyenv, cas->dataLo)),
-                  False/*!isStore*/,
-                  sizeofIRType(hWordTy), goff_sp,
+                  False/*!isStore*/, fixupSP_needed,
+                  hWordTy_szB, goff_SP, goff_SP_s1,
                   NULL/*no-guard*/
                );
             }
@@ -4605,8 +4879,8 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                      bbOut,
                      st->Ist.LLSC.addr,
                      sizeofIRType(dataTy),
-                     False/*!isStore*/,
-                     sizeofIRType(hWordTy), goff_sp,
+                     False/*!isStore*/, fixupSP_needed,
+                     hWordTy_szB, goff_SP, goff_SP_s1,
                      NULL/*no-guard*/
                   );
                }
@@ -4623,8 +4897,8 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                   bbOut, 
                   st->Ist.Store.addr, 
                   sizeofIRType(typeOfIRExpr(bbIn->tyenv, st->Ist.Store.data)),
-                  True/*isStore*/,
-                  sizeofIRType(hWordTy), goff_sp,
+                  True/*isStore*/, fixupSP_needed,
+                  hWordTy_szB, goff_SP, goff_SP_s1,
                   NULL/*no-guard*/
                );
             }
@@ -4637,9 +4911,9 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
             IRType    type = typeOfIRExpr(bbIn->tyenv, data);
             tl_assert(type != Ity_INVALID);
             instrument_mem_access( bbOut, addr, sizeofIRType(type),
-                                   True/*isStore*/,
-                                   sizeofIRType(hWordTy),
-                                   goff_sp, sg->guard );
+                                   True/*isStore*/, fixupSP_needed,
+                                   hWordTy_szB,
+                                   goff_SP, goff_SP_s1, sg->guard );
             break;
          }
 
@@ -4651,9 +4925,9 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
             typeOfIRLoadGOp(lg->cvt, &typeWide, &type);
             tl_assert(type != Ity_INVALID);
             instrument_mem_access( bbOut, addr, sizeofIRType(type),
-                                   False/*!isStore*/,
-                                   sizeofIRType(hWordTy),
-                                   goff_sp, lg->guard );
+                                   False/*!isStore*/, fixupSP_needed,
+                                   hWordTy_szB,
+                                   goff_SP, goff_SP_s1, lg->guard );
             break;
          }
 
@@ -4665,8 +4939,8 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                      bbOut,
                      data->Iex.Load.addr,
                      sizeofIRType(data->Iex.Load.ty),
-                     False/*!isStore*/,
-                     sizeofIRType(hWordTy), goff_sp,
+                     False/*!isStore*/, fixupSP_needed,
+                     hWordTy_szB, goff_SP, goff_SP_s1,
                      NULL/*no-guard*/
                   );
                }
@@ -4686,16 +4960,20 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
                if (d->mFx == Ifx_Read || d->mFx == Ifx_Modify) {
                   if (!inLDSO) {
                      instrument_mem_access( 
-                        bbOut, d->mAddr, dataSize, False/*!isStore*/,
-                        sizeofIRType(hWordTy), goff_sp, NULL/*no-guard*/
+                        bbOut, d->mAddr, dataSize,
+                        False/*!isStore*/, fixupSP_needed,
+                        hWordTy_szB, goff_SP, goff_SP_s1,
+                        NULL/*no-guard*/
                      );
                   }
                }
                if (d->mFx == Ifx_Write || d->mFx == Ifx_Modify) {
                   if (!inLDSO) {
                      instrument_mem_access( 
-                        bbOut, d->mAddr, dataSize, True/*isStore*/,
-                        sizeofIRType(hWordTy), goff_sp, NULL/*no-guard*/
+                        bbOut, d->mAddr, dataSize,
+                        True/*isStore*/, fixupSP_needed,
+                        hWordTy_szB, goff_SP, goff_SP_s1,
+                        NULL/*no-guard*/
                      );
                   }
                }
@@ -4715,6 +4993,11 @@ IRSB* hg_instrument ( VgCallbackClosure* closure,
 
       addStmtToIRSB( bbOut, st );
    } /* iterate over bbIn->stmts */
+
+   // See above the case Ist_Exit:
+   if (HG_(clo_delta_stacktrace)
+       && (bbOut->jumpkind != Ijk_Boring || ! VG_(has_CF_info)(cia)))
+      addInvalidateCachedStack(bbOut, goff_SP_s1, hWordTy_szB);
 
    return bbOut;
 }
@@ -4750,7 +5033,7 @@ typedef
       Word  master_level; // level of dependency between master and dependent
       Thread* hg_dependent; // helgrind Thread* for dependent task.
    }
-   GNAT_dmml;
+   GNAT_dmml; // (d)ependent (m)aster (m)aster_(l)evel.
 static XArray* gnat_dmmls;   /* of GNAT_dmml */
 static void gnat_dmmls_INIT (void)
 {
@@ -4760,13 +5043,37 @@ static void gnat_dmmls_INIT (void)
                                sizeof(GNAT_dmml) );
    }
 }
+
+static void xtmemory_report_next_block(XT_Allocs* xta, ExeContext** ec_alloc)
+{
+   const MallocMeta* md = VG_(HT_Next)(hg_mallocmeta_table);
+   if (md) {
+      xta->nbytes = md->szB;
+      xta->nblocks = 1;
+      *ec_alloc = md->where;
+   } else
+      xta->nblocks = 0;
+}
+static void HG_(xtmemory_report) ( const HChar* filename, Bool fini )
+{ 
+   // Make xtmemory_report_next_block ready to be called.
+   VG_(HT_ResetIter)(hg_mallocmeta_table);
+   VG_(XTMemory_report)(filename, fini, xtmemory_report_next_block,
+                        VG_(XT_filter_1top_and_maybe_below_main));
+}
+
 static void print_monitor_help ( void )
 {
    VG_(gdb_printf) 
       (
 "\n"
 "helgrind monitor commands:\n"
-"  info locks              : show list of locks and their status\n"
+"  info locks [lock_addr]  : show status of lock at addr lock_addr\n"
+"           with no lock_addr, show status of all locks\n"
+"  accesshistory <addr> [<len>]   : show access history recorded\n"
+"                     for <len> (or 1) bytes at <addr>\n"
+"  xtmemory [<filename>]\n"
+"        dump xtree memory profile in <filename> (default xtmemory.kcg.%%p.%%n)\n"
 "\n");
 }
 
@@ -4774,7 +5081,7 @@ static void print_monitor_help ( void )
 static Bool handle_gdb_monitor_command (ThreadId tid, HChar *req)
 {
    HChar* wcmd;
-   HChar s[VG_(strlen(req))]; /* copy for strtok_r */
+   HChar s[VG_(strlen)(req)]; /* copy for strtok_r */
    HChar *ssaveptr;
    Int   kwdid;
 
@@ -4785,7 +5092,7 @@ static Bool handle_gdb_monitor_command (ThreadId tid, HChar *req)
       starts with the same first letter(s) as an already existing
       command. This ensures a shorter abbreviation for the user. */
    switch (VG_(keyword_id) 
-           ("help info", 
+           ("help info accesshistory xtmemory", 
             wcmd, kwd_report_duplicated_matches)) {
    case -2: /* multiple matches */
       return True;
@@ -4804,21 +5111,67 @@ static Bool handle_gdb_monitor_command (ThreadId tid, HChar *req)
          break;
       case 0: // locks
          {
+            const HChar* wa;
+            Addr lk_addr = 0;
+            Bool lk_shown = False;
+            Bool all_locks = True;
             Int i;
             Lock* lk;
+
+            wa = VG_(strtok_r) (NULL, " ", &ssaveptr);
+            if (wa != NULL) {
+               if (VG_(parse_Addr) (&wa, &lk_addr) )
+                  all_locks = False;
+               else {
+                  VG_(gdb_printf) ("missing or malformed address\n");
+               }
+            }
             for (i = 0, lk = admin_locks;  lk;  i++, lk = lk->admin_next) {
-               pp_Lock(0, lk,
-                       True /* show_lock_addrdescr */,
-                       False /* show_internal_data */);
+               if (all_locks || lk_addr == lk->guestaddr) {
+                  pp_Lock(0, lk,
+                          True /* show_lock_addrdescr */,
+                          False /* show_internal_data */);
+                  lk_shown = True;
+               }
             }
             if (i == 0)
                VG_(gdb_printf) ("no locks\n");
+            if (!all_locks && !lk_shown)
+               VG_(gdb_printf) ("lock with address %p not found\n",
+                                (void*)lk_addr);
          }
          break;
       default:
          tl_assert(0);
       }
       return True;
+
+   case  2: /* accesshistory */
+      {
+         Addr address;
+         SizeT szB = 1;
+         if (HG_(clo_history_level) < 2) {
+            VG_(gdb_printf)
+               ("helgrind must be started with --history-level=full"
+                " to use accesshistory\n");
+            return True;
+         }
+         if (VG_(strtok_get_address_and_size) (&address, &szB, &ssaveptr)) {
+            if (szB >= 1) 
+               libhb_event_map_access_history (address, szB, HG_(print_access));
+            else
+               VG_(gdb_printf) ("len must be >=1\n");
+         }
+         return True;
+      }
+
+   case  3: { /* xtmemory */
+      HChar* filename;
+      filename = VG_(strtok_r) (NULL, " ", &ssaveptr);
+      HG_(xtmemory_report)(filename, False);
+      return True;
+   }
+
    default: 
       tl_assert(0);
       return False;
@@ -4843,7 +5196,7 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
       /* --- --- User-visible client requests --- --- */
 
       case VG_USERREQ__HG_CLEAN_MEMORY:
-         if (0) VG_(printf)("VG_USERREQ__HG_CLEAN_MEMORY(%#lx,%ld)\n",
+         if (0) VG_(printf)("VG_USERREQ__HG_CLEAN_MEMORY(%#lx,%lu)\n",
                             args[1], args[2]);
          /* Call die_mem to (expensively) tidy up properly, if there
             are any held locks etc in the area.  Calling evh__die_mem
@@ -4875,7 +5228,7 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
       }
 
       case _VG_USERREQ__HG_ARANGE_MAKE_UNTRACKED:
-         if (0) VG_(printf)("HG_ARANGE_MAKE_UNTRACKED(%#lx,%ld)\n",
+         if (0) VG_(printf)("HG_ARANGE_MAKE_UNTRACKED(%#lx,%lu)\n",
                             args[1], args[2]);
          if (args[2] > 0) { /* length */
             evh__untrack_mem(args[1], args[2]);
@@ -4883,12 +5236,61 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          break;
 
       case _VG_USERREQ__HG_ARANGE_MAKE_TRACKED:
-         if (0) VG_(printf)("HG_ARANGE_MAKE_TRACKED(%#lx,%ld)\n",
+         if (0) VG_(printf)("HG_ARANGE_MAKE_TRACKED(%#lx,%lu)\n",
                             args[1], args[2]);
          if (args[2] > 0) { /* length */
             evh__new_mem(args[1], args[2]);
          }
          break;
+
+      case _VG_USERREQ__HG_GET_ABITS:
+         if (0) VG_(printf)("HG_GET_ABITS(%#lx,%#lx,%lu)\n",
+                            args[1], args[2], args[3]);
+         UChar *zzabit = (UChar *) args[2];
+         if (zzabit == NULL 
+             || VG_(am_is_valid_for_client)((Addr)zzabit, (SizeT)args[3],
+                                            VKI_PROT_READ|VKI_PROT_WRITE))
+            *ret = (UWord) libhb_srange_get_abits ((Addr)   args[1],
+                                                   (UChar*) args[2],
+                                                   (SizeT)  args[3]);
+         else
+            *ret = -1;
+         break;
+
+      /* This thread (tid) (a master) is informing us that it has
+         seen the termination of a dependent task, and that this should
+         be considered as a join between master and dependent. */
+      case _VG_USERREQ__HG_GNAT_DEPENDENT_MASTER_JOIN: {
+         Word n;
+         const Thread *stayer = map_threads_maybe_lookup( tid );
+         const void *dependent = (void*)args[1];
+         const void *master = (void*)args[2];
+
+         if (0)
+         VG_(printf)("HG_GNAT_DEPENDENT_MASTER_JOIN (tid %d): "
+                     "self_id = %p Thread* = %p dependent %p\n",
+                     (Int)tid, master, stayer, dependent);
+
+         gnat_dmmls_INIT();
+         /* Similar loop as for master completed hook below, but stops at
+            the first matching occurence, only comparing master and
+            dependent. */
+         for (n = VG_(sizeXA) (gnat_dmmls) - 1; n >= 0; n--) {
+            GNAT_dmml *dmml = (GNAT_dmml*) VG_(indexXA)(gnat_dmmls, n);
+            if (dmml->master == master
+                && dmml->dependent == dependent) {
+               if (0)
+               VG_(printf)("quitter %p dependency to stayer %p (join)\n",
+                           dmml->hg_dependent->hbthr,  stayer->hbthr);
+               tl_assert(dmml->hg_dependent->hbthr != stayer->hbthr);
+               generate_quitter_stayer_dependence (dmml->hg_dependent->hbthr,
+                                                   stayer->hbthr);
+               VG_(removeIndexXA) (gnat_dmmls, n);
+               break;
+            }
+         }
+         break;
+      }
 
       /* --- --- Client requests for Helgrind's use only --- --- */
 
@@ -4917,6 +5319,15 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          VG_(printf)("XXXX: bind pthread_t %p to Thread* %p\n",
                      (void*)args[1], (void*)my_thr );
          VG_(addToFM)( map_pthread_t_to_Thread, (UWord)args[1], (UWord)my_thr );
+
+         if (my_thr->coretid != 1) {
+            /* FIXME: hardwires assumption about identity of the root thread. */
+            if (HG_(clo_ignore_thread_creation)) {
+               HG_(thread_leave_pthread_create)(my_thr);
+               HG_(thread_leave_synchr)(my_thr);
+               tl_assert(my_thr->synchr_nesting == 0);
+            }
+         }
          break;
       }
 
@@ -5026,32 +5437,48 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          break;
 
       case _VG_USERREQ__HG_PTHREAD_MUTEX_UNLOCK_PRE:   // pth_mx_t*
-         evh__HG_PTHREAD_MUTEX_UNLOCK_PRE( tid, (void*)args[1] );
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_MUTEX_UNLOCK_PRE( tid, (void*)args[1] );
          break;
 
       case _VG_USERREQ__HG_PTHREAD_MUTEX_UNLOCK_POST:  // pth_mx_t*
-         evh__HG_PTHREAD_MUTEX_UNLOCK_POST( tid, (void*)args[1] );
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_MUTEX_UNLOCK_POST( tid, (void*)args[1] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
-      case _VG_USERREQ__HG_PTHREAD_MUTEX_LOCK_PRE:     // pth_mx_t*, Word
-         evh__HG_PTHREAD_MUTEX_LOCK_PRE( tid, (void*)args[1], args[2] );
+      case _VG_USERREQ__HG_PTHREAD_MUTEX_LOCK_PRE:     // pth_mx_t*
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_MUTEX_LOCK_PRE( tid, (void*)args[1], args[2] );
          break;
 
-      case _VG_USERREQ__HG_PTHREAD_MUTEX_LOCK_POST:    // pth_mx_t*
-         evh__HG_PTHREAD_MUTEX_LOCK_POST( tid, (void*)args[1] );
+      case _VG_USERREQ__HG_PTHREAD_MUTEX_LOCK_POST:    // pth_mx_t*, long
+         if ((args[2] == True) // lock actually taken
+             && (HG_(get_pthread_create_nesting_level)(tid) == 0))
+            evh__HG_PTHREAD_MUTEX_LOCK_POST( tid, (void*)args[1] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       /* This thread is about to do pthread_cond_signal on the
          pthread_cond_t* in arg[1].  Ditto pthread_cond_broadcast. */
       case _VG_USERREQ__HG_PTHREAD_COND_SIGNAL_PRE:
       case _VG_USERREQ__HG_PTHREAD_COND_BROADCAST_PRE:
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
          evh__HG_PTHREAD_COND_SIGNAL_PRE( tid, (void*)args[1] );
+         break;
+
+      case _VG_USERREQ__HG_PTHREAD_COND_SIGNAL_POST:
+      case _VG_USERREQ__HG_PTHREAD_COND_BROADCAST_POST:
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       /* Entry into pthread_cond_wait, cond=arg[1], mutex=arg[2].
          Returns a flag indicating whether or not the mutex is believed to be
          valid for this operation. */
       case _VG_USERREQ__HG_PTHREAD_COND_WAIT_PRE: {
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
          Bool mutex_is_valid
             = evh__HG_PTHREAD_COND_WAIT_PRE( tid, (void*)args[1], 
                                                   (void*)args[2] );
@@ -5071,12 +5498,14 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          evh__HG_PTHREAD_COND_DESTROY_PRE( tid, (void*)args[1], args[2] != 0 );
          break;
 
-      /* Thread successfully completed pthread_cond_wait, cond=arg[1],
-         mutex=arg[2] */
+      /* Thread completed pthread_cond_wait, cond=arg[1],
+         mutex=arg[2], timeout=arg[3], successful=arg[4] */
       case _VG_USERREQ__HG_PTHREAD_COND_WAIT_POST:
-         evh__HG_PTHREAD_COND_WAIT_POST( tid,
-                                         (void*)args[1], (void*)args[2],
-                                         (Bool)args[3] );
+         if (args[4] == True)
+            evh__HG_PTHREAD_COND_WAIT_POST( tid,
+                                            (void*)args[1], (void*)args[2],
+                                            (Bool)args[3] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       case _VG_USERREQ__HG_PTHREAD_RWLOCK_INIT_POST:
@@ -5089,21 +5518,30 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
 
       /* rwlock=arg[1], isW=arg[2], isTryLock=arg[3] */
       case _VG_USERREQ__HG_PTHREAD_RWLOCK_LOCK_PRE:
-         evh__HG_PTHREAD_RWLOCK_LOCK_PRE( tid, (void*)args[1],
-                                               args[2], args[3] );
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_RWLOCK_LOCK_PRE( tid, (void*)args[1],
+                                             args[2], args[3] );
          break;
 
-      /* rwlock=arg[1], isW=arg[2] */
+      /* rwlock=arg[1], isW=arg[2], tookLock=arg[3] */
       case _VG_USERREQ__HG_PTHREAD_RWLOCK_LOCK_POST:
-         evh__HG_PTHREAD_RWLOCK_LOCK_POST( tid, (void*)args[1], args[2] );
+         if ((args[3] == True)
+             && (HG_(get_pthread_create_nesting_level)(tid) == 0))
+            evh__HG_PTHREAD_RWLOCK_LOCK_POST( tid, (void*)args[1], args[2] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       case _VG_USERREQ__HG_PTHREAD_RWLOCK_UNLOCK_PRE:
-         evh__HG_PTHREAD_RWLOCK_UNLOCK_PRE( tid, (void*)args[1] );
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_RWLOCK_UNLOCK_PRE( tid, (void*)args[1] );
          break;
 
       case _VG_USERREQ__HG_PTHREAD_RWLOCK_UNLOCK_POST:
-         evh__HG_PTHREAD_RWLOCK_UNLOCK_POST( tid, (void*)args[1] );
+         if (HG_(get_pthread_create_nesting_level)(tid) == 0)
+            evh__HG_PTHREAD_RWLOCK_UNLOCK_POST( tid, (void*)args[1] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       case _VG_USERREQ__HG_POSIX_SEM_INIT_POST: /* sem_t*, unsigned long */
@@ -5115,11 +5553,22 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          break;
 
       case _VG_USERREQ__HG_POSIX_SEM_POST_PRE: /* sem_t* */
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
          evh__HG_POSIX_SEM_POST_PRE( tid, (void*)args[1] );
          break;
 
-      case _VG_USERREQ__HG_POSIX_SEM_WAIT_POST: /* sem_t* */
-         evh__HG_POSIX_SEM_WAIT_POST( tid, (void*)args[1] );
+      case _VG_USERREQ__HG_POSIX_SEM_POST_POST: /* sem_t* */
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
+         break;
+
+      case _VG_USERREQ__HG_POSIX_SEM_WAIT_PRE: /* sem_t* */
+         HG_(thread_enter_synchr)(map_threads_maybe_lookup(tid));
+         break;
+
+      case _VG_USERREQ__HG_POSIX_SEM_WAIT_POST: /* sem_t*, long tookLock */
+         if (args[2] == True)
+            evh__HG_POSIX_SEM_WAIT_POST( tid, (void*)args[1] );
+         HG_(thread_leave_synchr)(map_threads_maybe_lookup(tid));
          break;
 
       case _VG_USERREQ__HG_PTHREAD_BARRIER_INIT_PRE:
@@ -5207,6 +5656,58 @@ Bool hg_handle_client_request ( ThreadId tid, UWord* args, UWord* ret)
          return handled;
       }
 
+      case _VG_USERREQ__HG_PTHREAD_CREATE_BEGIN: {
+         Thread *thr = map_threads_maybe_lookup(tid);
+         if (HG_(clo_ignore_thread_creation)) {
+            HG_(thread_enter_pthread_create)(thr);
+            HG_(thread_enter_synchr)(thr);
+         }
+         break;
+      }
+
+      case _VG_USERREQ__HG_PTHREAD_CREATE_END: {
+         Thread *thr = map_threads_maybe_lookup(tid);
+         if (HG_(clo_ignore_thread_creation)) {
+            HG_(thread_leave_pthread_create)(thr);
+            HG_(thread_leave_synchr)(thr);
+         }
+         break;
+      }
+
+      case _VG_USERREQ__HG_PTHREAD_MUTEX_ACQUIRE_PRE: // pth_mx_t*, long tryLock
+         evh__HG_PTHREAD_MUTEX_LOCK_PRE( tid, (void*)args[1], args[2] );
+         break;
+
+      case _VG_USERREQ__HG_PTHREAD_MUTEX_ACQUIRE_POST:    // pth_mx_t*
+         evh__HG_PTHREAD_MUTEX_LOCK_POST( tid, (void*)args[1] );
+         break;
+
+      case _VG_USERREQ__HG_PTHREAD_RWLOCK_ACQUIRED:       // void*, long isW
+         evh__HG_PTHREAD_RWLOCK_LOCK_POST( tid, (void*)args[1], args[2] );
+         break;
+
+      case _VG_USERREQ__HG_PTHREAD_RWLOCK_RELEASED:       // void*
+         evh__HG_PTHREAD_RWLOCK_UNLOCK_PRE( tid, (void*)args[1] );
+         break;
+
+      case _VG_USERREQ__HG_POSIX_SEM_RELEASED: /* sem_t* */
+         evh__HG_POSIX_SEM_POST_PRE( tid, (void*)args[1] );
+         break;
+
+      case _VG_USERREQ__HG_POSIX_SEM_ACQUIRED: /* sem_t* */
+         evh__HG_POSIX_SEM_WAIT_POST( tid, (void*)args[1] );
+         break;
+
+#if defined(VGO_solaris)
+      case _VG_USERREQ__HG_RTLD_BIND_GUARD:
+         evh__HG_RTLD_BIND_GUARD(tid, args[1]);
+         break;
+
+      case _VG_USERREQ__HG_RTLD_BIND_CLEAR:
+         evh__HG_RTLD_BIND_CLEAR(tid, args[1]);
+         break;
+#endif /* VGO_solaris */
+
       default:
          /* Unhandled Helgrind client request! */
          tl_assert2(0, "unhandled Helgrind client request 0x%lx",
@@ -5237,10 +5738,11 @@ static Bool hg_process_cmd_line_option ( const HChar* arg )
    else if VG_XACT_CLO(arg, "--history-level=full",
                             HG_(clo_history_level), 2);
 
-   /* If you change the 10k/30mill limits, remember to also change
-      them in assertions at the top of event_map_maybe_GC. */
+   else if VG_BOOL_CLO(arg, "--delta-stacktrace",
+                            HG_(clo_delta_stacktrace)) {}
+
    else if VG_BINT_CLO(arg, "--conflict-cache-size",
-                       HG_(clo_conflict_cache_size), 10*1000, 30*1000*1000) {}
+                       HG_(clo_conflict_cache_size), 10*1000, 150*1000*1000) {}
 
    /* "stuvwx" --> stuvwx (binary) */
    else if VG_STR_CLO(arg, "--hg-sanity-flags", tmp_str) {
@@ -5275,6 +5777,8 @@ static Bool hg_process_cmd_line_option ( const HChar* arg )
 
    else if VG_BOOL_CLO(arg, "--check-stack-refs",
                             HG_(clo_check_stack_refs)) {}
+   else if VG_BOOL_CLO(arg, "--ignore-thread-creation",
+                            HG_(clo_ignore_thread_creation)) {}
 
    else 
       return VG_(replacement_malloc_process_cmd_line_option)(arg);
@@ -5291,9 +5795,16 @@ static void hg_print_usage ( void )
 "       full:   show both stack traces for a data race (can be very slow)\n"
 "       approx: full trace for one thread, approx for the other (faster)\n"
 "       none:   only show trace for one thread in a race (fastest)\n"
-"    --conflict-cache-size=N   size of 'full' history cache [1000000]\n"
+"    --delta-stacktrace=no|yes [yes on linux amd64/x86]\n"
+"        no : always compute a full history stacktrace from unwind info\n"
+"        yes : derive a stacktrace from the previous stacktrace\n"
+"          if there was no call/return or similar instruction\n"
+"    --conflict-cache-size=N   size of 'full' history cache [2000000]\n"
 "    --check-stack-refs=no|yes race-check reads and writes on the\n"
 "                              main stack and thread stacks? [yes]\n"
+"    --ignore-thread-creation=yes|no Ignore activities during thread\n"
+"                              creation [%s]\n",
+HG_(clo_ignore_thread_creation) ? "yes" : "no"
    );
 }
 
@@ -5306,7 +5817,7 @@ static void hg_print_debug_usage ( void )
    VG_(printf)("    --hg-sanity-flags values:\n");
    VG_(printf)("       010000   after changes to "
                "lock-order-acquisition-graph\n");
-   VG_(printf)("       001000   at memory accesses (NB: not currently used)\n");
+   VG_(printf)("       001000   at memory accesses\n");
    VG_(printf)("       000100   at mem permission setting for "
                "ranges >= %d bytes\n", SCE_BIGRANGE_T);
    VG_(printf)("       000010   at lock/unlock events\n");
@@ -5359,6 +5870,9 @@ static void hg_print_stats (void)
                HG_(stats__LockN_to_P_queries),
                HG_(stats__LockN_to_P_get_map_size)() );
 
+   VG_(printf)("client malloc-ed blocks: %'8u\n",
+               VG_(HT_count_nodes)(hg_mallocmeta_table));
+               
    VG_(printf)("string table map: %'8llu queries (%llu map size)\n",
                HG_(stats__string_table_queries),
                HG_(stats__string_table_get_map_size)() );
@@ -5382,6 +5896,7 @@ static void hg_print_stats (void)
 
 static void hg_fini ( Int exitcode )
 {
+   HG_(xtmemory_report) (VG_(clo_xtree_memory_file), True);
    if (VG_(clo_verbosity) == 1 && !VG_(clo_xml)) {
       VG_(message)(Vg_UserMsg, 
                    "For counts of detected and suppressed errors, "
@@ -5417,8 +5932,10 @@ void for_libhb__get_stacktrace ( Thr* hbt, Addr* frames, UWord nRequest )
    thr = libhb_get_Thr_hgthread( hbt );
    tl_assert(thr);
    tid = map_threads_maybe_reverse_lookup_SLOW(thr);
-   nActual = (UWord)VG_(get_StackTrace)( tid, frames, (UInt)nRequest,
-                                         NULL, NULL, 0 );
+   nActual = (UWord)VG_(get_StackTrace_with_deltas)
+                           ( tid, frames, (UInt)nRequest,
+                             NULL, NULL, 0,
+                             thr->first_sp_delta);
    tl_assert(nActual <= nRequest);
    for (; nActual < nRequest; nActual++)
       frames[nActual] = 0;
@@ -5444,6 +5961,17 @@ static void hg_post_clo_init ( void )
 {
    Thr* hbthr_root;
 
+   if (HG_(clo_delta_stacktrace)
+       && VG_(clo_vex_control).guest_chase_thresh != 0) {
+      if (VG_(clo_verbosity) >= 2)
+         VG_(message)(Vg_UserMsg,
+                      "helgrind --delta-stacktrace=yes only works with "
+                      "--vex-guest-chase-thresh=0\n"
+                      "=> (re-setting it to 0\n");
+      VG_(clo_vex_control).guest_chase_thresh = 0;
+   }
+
+
    /////////////////////////////////////////////
    hbthr_root = libhb_init( for_libhb__get_stacktrace, 
                             for_libhb__get_EC );
@@ -5454,11 +5982,14 @@ static void hg_post_clo_init ( void )
       laog__init();
 
    initialise_data_structures(hbthr_root);
+   if (VG_(clo_xtree_memory) == Vg_XTMemory_Full)
+      // Activate full xtree memory profiling.
+      VG_(XTMemory_Full_init)(VG_(XT_filter_1top_and_maybe_below_main));
 }
 
-static void hg_info_location (Addr a)
+static void hg_info_location (DiEpoch ep, Addr a)
 {
-   (void) HG_(get_and_pp_addrdescr) (a);
+   (void) HG_(get_and_pp_addrdescr) (ep, a);
 }
 
 static void hg_pre_clo_init ( void )
@@ -5467,7 +5998,7 @@ static void hg_pre_clo_init ( void )
    VG_(details_version)         (NULL);
    VG_(details_description)     ("a thread error detector");
    VG_(details_copyright_author)(
-      "Copyright (C) 2007-2013, and GNU GPL'd, by OpenWorks LLP et al.");
+      "Copyright (C) 2007-2017, and GNU GPL'd, by OpenWorks LLP et al.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
    VG_(details_avg_translation_sizeB) ( 320 );
 
@@ -5526,6 +6057,15 @@ static void hg_pre_clo_init ( void )
    VG_(track_new_mem_brk)         ( evh__new_mem_w_tid );
    VG_(track_new_mem_mmap)        ( evh__new_mem_w_perms );
    VG_(track_new_mem_stack)       ( evh__new_mem_stack );
+   VG_(track_new_mem_stack_4)     ( evh__new_mem_stack_4 );
+   VG_(track_new_mem_stack_8)     ( evh__new_mem_stack_8 );
+   VG_(track_new_mem_stack_12)    ( evh__new_mem_stack_12 );
+   VG_(track_new_mem_stack_16)    ( evh__new_mem_stack_16 );
+   VG_(track_new_mem_stack_32)    ( evh__new_mem_stack_32 );
+   VG_(track_new_mem_stack_112)   ( evh__new_mem_stack_112 );
+   VG_(track_new_mem_stack_128)   ( evh__new_mem_stack_128 );
+   VG_(track_new_mem_stack_144)   ( evh__new_mem_stack_144 );
+   VG_(track_new_mem_stack_160)   ( evh__new_mem_stack_160 );
 
    // FIXME: surely this isn't thread-aware
    VG_(track_copy_mem_remap)      ( evh__copy_mem );
@@ -5535,7 +6075,11 @@ static void hg_pre_clo_init ( void )
    VG_(track_die_mem_stack_signal)( evh__die_mem );
    VG_(track_die_mem_brk)         ( evh__die_mem_munmap );
    VG_(track_die_mem_munmap)      ( evh__die_mem_munmap );
-   VG_(track_die_mem_stack)       ( evh__die_mem );
+
+   /* evh__die_mem calls at the end libhb_srange_noaccess_NoFX
+      which has no effect. We do not use  VG_(track_die_mem_stack),
+      as this would be an expensive way to do nothing. */      
+   // VG_(track_die_mem_stack)       ( evh__die_mem );
 
    // FIXME: what is this for?
    VG_(track_ban_mem_stack)       (NULL);

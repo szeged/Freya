@@ -1,4 +1,3 @@
-relaying data between gdb and process ....
 vgdb-error value changed from 0 to 999999
 general valgrind monitor commands:
   help [debug]            : monitor command help. With debug: + debugging commands
@@ -17,8 +16,13 @@ general valgrind monitor commands:
 massif monitor commands:
   snapshot [<filename>]
   detailed_snapshot [<filename>]
-       takes a snapshot (or a detailed snapshot)
-       and saves it in <filename>
+      takes a snapshot (or a detailed snapshot)
+      and saves it in <filename>
              default <filename> is massif.vgdb.out
+  all_snapshots [<filename>]
+      saves all snapshot(s) taken so far in <filename>
+             default <filename> is massif.vgdb.out
+  xtmemory [<filename>]
+        dump xtree memory profile in <filename> (default xtmemory.kcg.%p.%n)
 monitor command request to kill this process
 Remote connection closed

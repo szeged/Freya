@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2008-2013 OpenWorks Ltd
+   Copyright (C) 2008-2017 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -86,7 +86,7 @@ static ThreadId find_tid_with_stack_containing (Addr a)
    return VG_INVALID_THREADID;
 }
 
-void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
+void VG_(describe_addr) ( DiEpoch ep, Addr a, /*OUT*/AddrInfo* ai )
 {
    VgSectKind sect;
 
@@ -99,8 +99,8 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
                     VG_(free), sizeof(HChar) );
 
    (void) VG_(get_data_description)( ai->Addr.Variable.descr1,
-                                     ai->Addr.Variable.descr2, a );
-   /* If there's nothing in descr1/2, free them.  Why is it safe to to
+                                     ai->Addr.Variable.descr2, ep, a );
+   /* If there's nothing in descr1/2, free them.  Why is it safe to
       VG_(indexXA) at zero here?  Because VG_(get_data_description)
       guarantees to zero terminate descr1/2 regardless of the outcome
       of the call.  So there's always at least one element in each XA
@@ -127,7 +127,7 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
       there. -- */
    const HChar *name;
    if (VG_(get_datasym_and_offset)(
-             a, &name,
+             ep, a, &name,
              &ai->Addr.DataSym.offset )) {
       ai->Addr.DataSym.name = VG_(strdup)("mc.da.dsname", name);
       ai->tag = Addr_DataSym;
@@ -148,6 +148,7 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
             ai->tag            = Addr_Stack;
             VG_(initThreadInfo)(&ai->Addr.Stack.tinfo);
             ai->Addr.Stack.tinfo.tid = tid;
+            ai->Addr.Stack.epoch = ep;
             ai->Addr.Stack.IP = 0;
             ai->Addr.Stack.frameNo = -1;
             ai->Addr.Stack.stackPos = StackPos_stacked;
@@ -205,10 +206,9 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
 
    /* -- last ditch attempt at classification -- */
    sect = VG_(DebugInfo_sect_kind)( &name, a);
-   ai->Addr.SectKind.objname = VG_(strdup)("mc.da.dsname", name);
-
    if (sect != Vg_SectUnknown) {
       ai->tag = Addr_SectKind;
+      ai->Addr.SectKind.objname = VG_(strdup)("mc.da.dsname", name);
       ai->Addr.SectKind.kind = sect;
       return;
    }
@@ -223,7 +223,7 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
       ThreadId   tid;
       StackPos stackPos = StackPos_stacked;
       // Default init to StackPos_stacked, to silence gcc warning.
-      // We assert this value is overriden if a stack descr is produced.
+      // We assert this value is overridden if a stack descr is produced.
 
       // First try to find a tid with stack containing a
       tid = find_tid_with_stack_containing (a);
@@ -249,6 +249,7 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
          ai->tag  = Addr_Stack;
          VG_(initThreadInfo)(&ai->Addr.Stack.tinfo);
          ai->Addr.Stack.tinfo.tid = tid;
+         ai->Addr.Stack.epoch = ep;
          ai->Addr.Stack.IP = 0;
          ai->Addr.Stack.frameNo = -1;
          vg_assert (stackPos != StackPos_stacked);
@@ -266,7 +267,11 @@ void VG_(describe_addr) ( Addr a, /*OUT*/AddrInfo* ai )
 
       /* Special case to detect the brk data segment. */
       if (seg != NULL
+#if defined(VGO_solaris)
+          && (seg->kind == SkAnonC || seg->kind == SkFileC)
+#else
           && seg->kind == SkAnonC
+#endif /* VGO_solaris */
           && VG_(brk_limit) >= seg->start
           && VG_(brk_limit) <= seg->end+1) {
          /* Address a is in a Anon Client segment which contains
@@ -417,22 +422,21 @@ static void pp_addrinfo_WRK ( Addr a, const AddrInfo* ai, Bool mc,
 
       case Addr_Unknown:
          if (maybe_gcc) {
-            VG_(emit)( "%sAddress 0x%llx is just below the stack ptr.  "
+            VG_(emit)( "%sAddress 0x%lx is just below the stack ptr.  "
                        "To suppress, use: --workaround-gcc296-bugs=yes%s\n",
-                       xpre, (ULong)a, xpost );
+                       xpre, a, xpost );
 	 } else {
-            VG_(emit)( "%sAddress 0x%llx "
+            VG_(emit)( "%sAddress 0x%lx "
                        "is not stack'd, malloc'd or %s%s\n",
-                       xpre, 
-                       (ULong)a, 
+                       xpre, a,
                        mc ? "(recently) free'd" : "on a free list",
                        xpost );
          }
          break;
 
       case Addr_Stack: 
-         VG_(emit)( "%sAddress 0x%llx is on thread %s%d's stack%s\n", 
-                    xpre, (ULong)a, 
+         VG_(emit)( "%sAddress 0x%lx is on thread %s%u's stack%s\n", 
+                    xpre, a, 
                     opt_tnr_prefix (ai->Addr.Stack.tinfo), 
                     tnr_else_tid (ai->Addr.Stack.tinfo), 
                     xpost );
@@ -445,23 +449,27 @@ static void pp_addrinfo_WRK ( Addr a, const AddrInfo* ai, Bool mc,
             Bool haslinenum;
             PtrdiffT offset;
 
-            if (VG_(get_inst_offset_in_function)( ai->Addr.Stack.IP,
+            if (VG_(get_inst_offset_in_function)( ai->Addr.Stack.epoch,
+                                                  ai->Addr.Stack.IP,
                                                   &offset))
-               haslinenum = VG_(get_linenum) (ai->Addr.Stack.IP - offset,
+               haslinenum = VG_(get_linenum) (ai->Addr.Stack.epoch,
+                                              ai->Addr.Stack.IP - offset,
                                               &linenum);
             else
                haslinenum = False;
 
-            hasfile = VG_(get_filename)(ai->Addr.Stack.IP, &file);
+            hasfile = VG_(get_filename)(ai->Addr.Stack.epoch,
+                                        ai->Addr.Stack.IP, &file);
 
             HChar strlinenum[16] = "";   // large enough
             if (hasfile && haslinenum)
-               VG_(sprintf)(strlinenum, "%d", linenum);
+               VG_(sprintf)(strlinenum, "%u", linenum);
 
-            hasfn = VG_(get_fnname)(ai->Addr.Stack.IP, &fn);
+            hasfn = VG_(get_fnname)(ai->Addr.Stack.epoch,
+                                    ai->Addr.Stack.IP, &fn);
 
             if (hasfn || hasfile)
-               VG_(emit)( "%sin frame #%d, created by %s (%s:%s)%s\n",
+               VG_(emit)( "%sin frame #%d, created by %ps (%ps:%s)%s\n",
                           xpre,
                           ai->Addr.Stack.frameNo, 
                           hasfn ? fn : "???", 
@@ -560,7 +568,7 @@ static void pp_addrinfo_WRK ( Addr a, const AddrInfo* ai, Bool mc,
          }
          if (ai->Addr.Block.alloc_tinfo.tnr || ai->Addr.Block.alloc_tinfo.tid)
             VG_(emit)(
-               "%sBlock was alloc'd by thread %s%d%s\n",
+               "%sBlock was alloc'd by thread %s%u%s\n",
                xpre,
                opt_tnr_prefix (ai->Addr.Block.alloc_tinfo),
                tnr_else_tid (ai->Addr.Block.alloc_tinfo),
@@ -570,10 +578,9 @@ static void pp_addrinfo_WRK ( Addr a, const AddrInfo* ai, Bool mc,
       }
 
       case Addr_DataSym:
-         VG_(emit)( "%sAddress 0x%llx is %llu bytes "
-                    "inside data symbol \"%pS\"%s\n",
-                    xpre,
-                    (ULong)a,
+         VG_(emit)( "%sAddress 0x%lx is %llu bytes "
+                    "inside data symbol \"%ps\"%s\n",
+                    xpre, a,
                     (ULong)ai->Addr.DataSym.offset,
                     ai->Addr.DataSym.name,
                     xpost );
@@ -594,44 +601,41 @@ static void pp_addrinfo_WRK ( Addr a, const AddrInfo* ai, Bool mc,
          break;
 
       case Addr_SectKind:
-         VG_(emit)( "%sAddress 0x%llx is in the %pS segment of %pS%s\n",
-                    xpre,
-                    (ULong)a,
+         VG_(emit)( "%sAddress 0x%lx is in the %ps segment of %ps%s\n",
+                    xpre, a,
                     VG_(pp_SectKind)(ai->Addr.SectKind.kind),
                     ai->Addr.SectKind.objname,
                     xpost );
          if (ai->Addr.SectKind.kind == Vg_SectText) {
             /* To better describe the address in a text segment,
                pp a dummy stacktrace made of this single address. */
-            VG_(pp_StackTrace)( &a, 1 );
+            VG_(pp_StackTrace)( VG_(current_DiEpoch)(), &a, 1 );
          }
          break;
 
       case Addr_BrkSegment:
          if (a < ai->Addr.BrkSegment.brk_limit)
-            VG_(emit)( "%sAddress 0x%llx is in the brk data segment"
-                       " 0x%llx-0x%llx%s\n",
-                       xpre,
-                       (ULong)a,
-                       (ULong)VG_(brk_base),
-                       (ULong)ai->Addr.BrkSegment.brk_limit - 1,
+            VG_(emit)( "%sAddress 0x%lx is in the brk data segment"
+                       " 0x%lx-0x%lx%s\n",
+                       xpre, a,
+                       VG_(brk_base),
+                       ai->Addr.BrkSegment.brk_limit - 1,
                        xpost );
          else
-            VG_(emit)( "%sAddress 0x%llx is %lu bytes after "
+            VG_(emit)( "%sAddress 0x%lx is %lu bytes after "
                        "the brk data segment limit"
-                       " 0x%llx%s\n",
-                       xpre,
-                       (ULong)a,
+                       " 0x%lx%s\n",
+                       xpre, a,
                        a - ai->Addr.BrkSegment.brk_limit,
-                       (ULong)ai->Addr.BrkSegment.brk_limit,
+                       ai->Addr.BrkSegment.brk_limit,
                        xpost );
          break;
 
       case Addr_SegmentKind:
-         VG_(emit)( "%sAddress 0x%llx is in "
-                    "a %s%s%s %s%s%pS segment%s\n",
+         VG_(emit)( "%sAddress 0x%lx is in "
+                    "a %s%s%s %s%s%ps segment%s\n",
                     xpre,
-                    (ULong)a,
+                    a,
                     ai->Addr.SegmentKind.hasR ? "r" : "-",
                     ai->Addr.SegmentKind.hasW ? "w" : "-",
                     ai->Addr.SegmentKind.hasX ? "x" : "-",

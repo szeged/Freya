@@ -22,51 +22,52 @@ unsigned int mem2[] = {
 
 // sb $t0, 0($t1)
 #define TESTINST1(instruction, RTval, offset, RT, RS) \
-{ \
-    unsigned int out; \
-   __asm__ volatile( \
-     "move $" #RS", %1\n\t" \
-     "li $" #RT", " #RTval"\n\t" \
-     instruction "\n\t" \
-     "lw %0, "#offset"($"#RS")\n\t" \
-     : "=&r" (out) \
-	 : "r" (mem1), "r" (RTval) \
-	 : #RT, "cc", "memory" \
-	 ); \
-   printf("%s :: RTval: 0x%x, out: 0x%x\n", \
-          instruction, RTval, out); \
-   out = 0; \
-   __asm__ volatile( \
-     "move $" #RS", %1\n\t" \
-     "li $" #RT", " #RTval"\n\t" \
-     instruction "\n\t" \
-     "lw %0, "#offset"($"#RS")\n\t" \
-     : "=&r" (out) \
-	 : "r" (mem), "r" (RTval) \
-	 : #RT, "cc", "memory" \
-	 ); \
-   printf("%s :: RTval: 0x%x, out: 0x%x\n", \
-          instruction, RTval, out); \
+{                                                     \
+   unsigned int out;                                  \
+   __asm__ volatile(                                  \
+      "move $" #RS", %1                         \n\t" \
+      "li $" #RT", " #RTval"                    \n\t" \
+      instruction "                             \n\t" \
+      "lw %0, "#offset"($"#RS")                 \n\t" \
+      : "=&r" (out)                                   \
+      : "r" (mem1), "r" (RTval)                       \
+      : #RS, #RT, "memory"                            \
+   );                                                 \
+   printf("%s :: RTval: 0x%x, out: 0x%x\n",           \
+          instruction, RTval, out);                   \
+   out = 0;                                           \
+   __asm__ volatile(                                  \
+      "move $" #RS", %1                         \n\t" \
+      "li $" #RT", " #RTval "                   \n\t" \
+      instruction "                             \n\t" \
+      "lw %0, "#offset"($"#RS")                 \n\t" \
+      : "=&r" (out)                                   \
+      : "r" (mem), "r" (RTval)                        \
+      : #RS, #RT, "memory"                            \
+   );                                                 \
+   printf("%s :: RTval: 0x%x, out: 0x%x\n",           \
+          instruction, RTval, out);                   \
 }
 
 // swl $t0, 3($t1)
 // swr $t0, 0($t1)
-#define TESTINSTsw(RTval, offset, RT, RS) \
-{ \
-    unsigned int out; \
-   __asm__ volatile( \
-     "move $" #RS", %1\n\t" \
-     "addiu $"#RS", $"#RS", "#offset"\n\t" \
-     "li $" #RT", " #RTval"\n\t" \
-     "swl $t0, 3($t1) \n\t" \
-     "swr $t0, 0($t1) \n\t" \
-     "lw %0, 0($"#RS")\n\t" \
-     : "=&r" (out) \
-	 : "r" (mem2), "r" (RTval) \
-	 : #RT, #RS, "cc", "memory" \
-	 ); \
-   printf("swl $t0, 3($t1)\nswr $t0, 0($t1)\n :: RTval: 0x%x, out: 0x%x\n", \
-          RTval, out); \
+#define TESTINSTsw(RTval, offset, RT, RS)             \
+{                                                     \
+   unsigned int out;                                  \
+   __asm__ volatile(                                  \
+      "move $" #RS", %1\n\t"                          \
+      "addiu $"#RS", $"#RS", "#offset"          \n\t" \
+      "li $" #RT", " #RTval"                    \n\t" \
+      "swl $t0, 3($t1)                          \n\t" \
+      "swr $t0, 0($t1)                          \n\t" \
+      "lw %0, 0($"#RS")                         \n\t" \
+      : "=&r" (out)                                   \
+      : "r" (mem2), "r" (RTval)                       \
+      : #RT, #RS, "memory"                            \
+   );                                                 \
+   printf("swl $t0, 3($t1)\nswr $t0, 0($t1)\n"        \
+          " :: RTval: 0x%x, out: 0x%x\n",             \
+          RTval, out);                                \
 }
 
 void ppMem(unsigned int* m, int len)
@@ -222,6 +223,7 @@ int main()
    ppMem(mem1, 16);
    ppMem1(mem, 16);
 
+#if (__mips_isa_rev < 6)
    printf("swl\n");
    TESTINST1("swl $t0, 1($t1)", 0, 1, t0, t1);
    TESTINST1("swl $t0, 3($t1)", 0x31415927, 3, t0, t1);
@@ -349,6 +351,7 @@ int main()
    ppMem0(mem2, 12);
    TESTINSTsw(0x2aaee700, 32, t0, t1);
    ppMem0(mem2, 12);
+#endif
    return 0;
 }
 

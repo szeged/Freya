@@ -6,7 +6,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2011-2013 Philippe Waroquiers
+   Copyright (C) 2011-2017 Philippe Waroquiers
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -329,7 +329,7 @@ Bool waitstopped (pid_t pid, int signal_expected, const char *msg)
 }
 
 /* Stops the given pid, wait for the process to be stopped.
-   Returns True if succesful, False otherwise.
+   Returns True if successful, False otherwise.
    msg is used in tracing and error reporting. */
 static
 Bool stop (pid_t pid, const char *msg)
@@ -348,7 +348,7 @@ Bool stop (pid_t pid, const char *msg)
 }
 
 /* Attaches to given pid, wait for the process to be stopped.
-   Returns True if succesful, False otherwise.
+   Returns True if successful, False otherwise.
    msg is used in tracing and error reporting. */
 static
 Bool attach (pid_t pid, const char *msg)
@@ -510,7 +510,7 @@ void detach_from_all_threads (pid_t pid)
 
    if (!pid_found && pid) {
       /* No threads are live. Process is busy stopping.
-         We need to detach from pid explicitely. */
+         We need to detach from pid explicitly. */
       DEBUG(1, "no thread live => PTRACE_DETACH pid %d\n", pid);
       res = ptrace (PTRACE_DETACH, pid, NULL, NULL);
       if (res != 0)
@@ -572,7 +572,7 @@ Bool getregs (pid_t pid, void *regs, long regs_bsz)
       res = ptrace (PTRACE_GETREGSET, pid, NT_PRSTATUS, &iovec);
       if (res == 0) {
          if (has_working_ptrace_getregset == -1) {
-            // First call to PTRACE_GETREGSET succesful =>
+            // First call to PTRACE_GETREGSET successful =>
             has_working_ptrace_getregset = 1;
             DEBUG(1, "detected a working PTRACE_GETREGSET\n");
          }
@@ -607,7 +607,7 @@ Bool getregs (pid_t pid, void *regs, long regs_bsz)
       res = ptrace (PTRACE_GETREGS, pid, NULL, regs);
       if (res == 0) {
          if (has_working_ptrace_getregs == -1) {
-            // First call to PTRACE_GETREGS succesful =>
+            // First call to PTRACE_GETREGS successful =>
             has_working_ptrace_getregs = 1;
             DEBUG(1, "detected a working PTRACE_GETREGS\n");
          }
@@ -970,14 +970,16 @@ Bool invoker_invoke_gdbserver (pid_t pid)
       // vgdb speaking with a 64 bit executable.
       const int regsize = 8;
       int rw;
-      
+
       /* give check arg in rdi */
       user_mod.regs.rdi = check;
 
       /* push return address on stack : return to breakaddr */
+      sp &= ~0xf; // keep the stack aligned on 16 bytes ...
+      sp = sp - 128; // do not touch the amd64 redzone
       sp = sp - regsize;
       DEBUG(1, "push bad_return return address ptrace_write_memory\n");
-      rw = ptrace_write_memory(pid, sp, 
+      rw = ptrace_write_memory(pid, sp,
                                &bad_return,
                                sizeof(bad_return));
       if (rw != 0) {

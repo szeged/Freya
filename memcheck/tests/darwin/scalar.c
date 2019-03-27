@@ -222,7 +222,8 @@ int main(void)
 
    GO_UNIMP(110, "old sigsetmask");
 
-   // __NR_sigsuspend 111
+   GO(__NR_sigsuspend, 111, "ignore");
+   // (I don't know how to test this...)
 
    GO_UNIMP(112, "old sigstack");
 
@@ -259,7 +260,10 @@ int main(void)
    GO_UNIMP(130, "old ftruncate");
 
    // __NR_flock 131
-   // __NR_mkfifo 132
+
+   GO(__NR_mkfifo, 132, "2s 1m");
+   SY(__NR_mkfifo, x0, x0); FAIL;
+
    // __NR_sendto 133
    // __NR_shutdown 134
    // __NR_socketpair 135
@@ -585,7 +589,9 @@ int main(void)
    GO(__NR___pthread_kill, 328, "2s 0m");
    SY(__NR___pthread_kill, x0, x0); FAIL;
 
-   // __NR___pthread_sigmask 329
+   GO(__NR___pthread_sigmask, 329, "3s 0m");
+   SY(__NR___pthread_sigmask, x0, x0, x0); SUCC;
+
    // __NR___sigwait 330
    // __NR_sigwait 330) // GrP fixme hack
    // __NR___disable_threadsignal 331
@@ -654,7 +660,17 @@ int main(void)
    // __NR_workq_open 367
    // __NR_workq_ops 368
 
-   GO_UNIMP(369-379, "unused");
+   GO_UNIMP(369-373, "unused");
+
+#if DARWIN_VERS >= DARWIN_10_11
+   {
+      long args[8] = { x0+8, x0+0xffffffee, x0+1, x0+1, x0+1, x0+1, x0+1, x0+1 };
+      GO(__NR_kevent_qos, 374, "1s 8m");
+      SY(__NR_kevent_qos, args+x0); FAIL;
+   }
+#endif /* DARWIN_VERS >= DARWIN_10_11 */
+
+   GO_UNIMP(375-379, "unused");
 
    // __NR___mac_execve 380
    // __NR___mac_syscall 381
@@ -670,7 +686,17 @@ int main(void)
    // __NR___mac_get_lcid 391
    // __NR___mac_get_lctx 392
    // __NR___mac_set_lctx 393
+
+#if DARWIN_VERS >= DARWIN_10_11
+   {
+      long args[6] = { x0+8, x0+0xffffffee, x0+1, x0+1, x0+1, x0+1 };
+      GO(__NR_pselect, 394, "1s 6m");
+      SY(__NR_pselect, args+x0); FAIL;
+   }
+#else
    // __NR_setlcid 394
+#endif /* DARWIN_VERS >= DARWIN_10_11 */
+
    // __NR_getlcid 395
 
    // The nocancel syscalls (396--423) are tested in scalar_nocancel.c.
@@ -1648,8 +1674,8 @@ int main(void)
    #define FUTEX_WAIT   0
    #endif
    // XXX: again, glibc not doing 6th arg means we have only 5s errors
-   GO(__NR_futex, "5s 2m");
-   SY(__NR_futex, x0+FUTEX_WAIT, x0, x0, x0+1, x0, x0); FAIL;
+   GO(__NR_futex, "4s 2m");
+   SY(__NR_futex, x0+FUTEX_WAIT, x0, x0, x0+1); FAIL;
 
    // __NR_sched_setaffinity 241
    GO(__NR_sched_setaffinity, "3s 1m");

@@ -107,7 +107,7 @@ void reset_valgrind_sink(const char *info)
        && initial_valgrind_sink_saved) {
       VG_(log_output_sink).fd = initial_valgrind_sink.fd;
       VG_(umsg) ("Reset valgrind output to log (%s)\n",
-                 (info = NULL ? "" : info));
+                 (info == NULL ? "" : info));
    }
 }
 
@@ -157,7 +157,10 @@ void VG_(print_all_stats) (Bool memory_stats, Bool tool_stats)
       VG_(message)(Vg_DebugMsg, 
          "------ Valgrind's internal memory use stats follow ------\n" );
       VG_(sanity_check_malloc_all)();
-      VG_(message)(Vg_DebugMsg, "------\n" );
+       VG_(message)
+          (Vg_DebugMsg,
+           "------ %'13llu bytes have already been mmap-ed ANONYMOUS.\n",
+           VG_(am_get_anonsize_total)());
       VG_(print_all_arena_stats)();
       if (VG_(clo_profile_heap))
          VG_(print_arena_cc_analysis) ();
@@ -191,6 +194,8 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
    const char *endptr;
    int   kwdid;
    int int_value;
+
+   const DiEpoch cur_ep = VG_(current_DiEpoch)();
 
    vg_assert (initial_valgrind_sink_saved);
 
@@ -241,10 +246,11 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
 "  v.do   expensive_sanity_check_general : do an expensive sanity check now\n"
 "  v.info gdbserver_status : show gdbserver status\n"
 "  v.info memory [aspacemgr] : show valgrind heap memory stats\n"
-"     (with aspacemgr arg, also shows valgrind segments on log ouput)\n"
+"     (with aspacemgr arg, also shows valgrind segments on log output)\n"
 "  v.info exectxt          : show stacktraces and stats of all execontexts\n"
 "  v.info scheduler        : show valgrind thread state and stacktrace\n"
 "  v.info stats            : show various valgrind and tool stats\n"
+"  v.info unwind <addr> [<len>] : show unwind debug info for <addr> .. <addr+len>\n"
 "  v.set debuglog <level>  : set valgrind debug log level to <level>\n"
 "  v.set hostvisibility [yes*|no] : (en/dis)ables access by gdb/gdbserver to\n"
 "    Valgrind internal host status/memory\n"
@@ -308,7 +314,8 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
          (*sink_wanted_at_return).fd = initial_valgrind_sink.fd;
          command_output_to_log = False;
          VG_(gdb_printf)
-            ("valgrind output will go to log, interactive output will go to gdb\n");
+            ("valgrind output will go to log, "
+             "interactive output will go to gdb\n");
          break;
       case 6: /* hostvisibility */
          wcmd = strtok_r (NULL, " ", &ssaveptr);
@@ -329,8 +336,13 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
          }
          if (hostvisibility) {
             const DebugInfo *tooldi 
-               = VG_(find_DebugInfo) ((Addr)handle_gdb_valgrind_command);
-            const NSegment *toolseg 
+               = VG_(find_DebugInfo) (cur_ep, (Addr)handle_gdb_valgrind_command);
+            /* Normally, we should always find the tooldi. In case we
+               do not, suggest a 'likely somewhat working' address: */
+            const Addr tool_text_start
+               = tooldi ?
+               VG_(DebugInfo_get_text_avma) (tooldi) : 0x58000000;
+            const NSegment *toolseg
                = tooldi ?
                  VG_(am_find_nsegment) (VG_(DebugInfo_get_text_avma) (tooldi))
                  : NULL;
@@ -341,7 +353,7 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
                 "add-symbol-file %s %p\n", 
                 toolseg ? VG_(am_get_filename)(toolseg)
                 : "<toolfile> <address> e.g.",
-                toolseg ? (void*)toolseg->start : (void*)0x38000000);
+                (void*)tool_text_start);
          } else
             VG_(gdb_printf)
                ("Disabled access to Valgrind memory/status by GDB\n");
@@ -355,7 +367,7 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
       wcmd = strtok_r (NULL, " ", &ssaveptr);
       switch (kwdid = VG_(keyword_id) 
               ("all_errors n_errs_found last_error gdbserver_status memory"
-               " scheduler stats open_fds exectxt location",
+               " scheduler stats open_fds exectxt location unwind",
                wcmd, kwd_report_all)) {
       case -2:
       case -1: 
@@ -365,7 +377,7 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
          VG_(show_all_errors)(/* verbosity */ 2, /* xml */ False);
          break;
       case  1: // n_errs_found
-         VG_(printf) ("n_errs_found %d n_errs_shown %d (vgdb-error %d) %s\n",
+         VG_(printf) ("n_errs_found %u n_errs_shown %u (vgdb-error %d) %s\n",
                       VG_(get_n_errs_found) (),
                       VG_(get_n_errs_shown) (),
                       VG_(dyn_vgdb_error),
@@ -378,7 +390,7 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
          VG_(gdbserver_status_output)();
          break;
       case  4: /* memory */
-         VG_(printf) ("%llu bytes have already been allocated.\n",
+         VG_(printf) ("%'13llu bytes have already been mmap-ed ANONYMOUS.\n",
                       VG_(am_get_anonsize_total)());
          VG_(print_all_arena_stats) ();
          if (VG_(clo_profile_heap))
@@ -428,17 +440,18 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
             GDB equivalent command of 'v.info location' is 'info symbol'. */
          Addr address;
          SizeT dummy_sz = 0x1234;
-         if (VG_(strtok_get_address_and_size) (&address, &dummy_sz, &ssaveptr)) {
+         if (VG_(strtok_get_address_and_size) (&address, 
+                                               &dummy_sz, &ssaveptr)) {
             // If tool provides location information, use that.
             if (VG_(needs).info_location) {
-               VG_TDICT_CALL(tool_info_location, address);
+               VG_TDICT_CALL(tool_info_location, cur_ep, address);
             } 
-            // If tool does not provide location information, use the common one.
+            // If tool does not provide location info, use the common one.
             // Also use the common to compare with tool when debug log is set.
             if (!VG_(needs).info_location || VG_(debugLog_getLevel)() > 0 ) {
                AddrInfo ai;
                ai.tag = Addr_Undescribed;
-               VG_(describe_addr) (address, &ai);
+               VG_(describe_addr) (cur_ep, address, &ai);
                VG_(pp_addrinfo) (address, &ai);
                VG_(clear_addrinfo) (&ai);
             }
@@ -446,6 +459,17 @@ int handle_gdb_valgrind_command (char *mon, OutputSink *sink_wanted_at_return)
          ret = 1;
          break;
       }
+      case 10: { /* unwind */
+         Addr address;
+         SizeT sz = 1;
+         if (VG_(strtok_get_address_and_size) (&address, 
+                                               &sz, &ssaveptr)) {
+            VG_(ppUnwindInfo) (address, address + sz - 1);
+         }
+         ret = 1;
+         break;
+      }
+
       default:
          vg_assert(0);
       }
@@ -544,6 +568,9 @@ int handle_gdb_monitor_command (char *mon)
    // one we have when entering. It can however be changed by the standard
    // valgrind command handling.
    OutputSink sink_wanted_at_return = VG_(log_output_sink);
+   // When using gdbserver, we temporarily disable xml output.
+   Bool save_clo_xml = VG_(clo_xml);
+   VG_(clo_xml) = False;
 
    if (!initial_valgrind_sink_saved) {
       /* first time we enter here, we save the valgrind default log sink */
@@ -580,6 +607,8 @@ int handle_gdb_monitor_command (char *mon)
 
    /* restore or set the desired output */
    VG_(log_output_sink).fd = sink_wanted_at_return.fd;
+   VG_(clo_xml) = save_clo_xml;
+
    if (ret | tool_ret)
       return 1;
    else
@@ -593,6 +622,52 @@ void handle_set (char *arg_own_buf, int *new_packet_len_p)
 {
    if (strcmp ("QStartNoAckMode", arg_own_buf) == 0) {
       noack_mode = True;
+      write_ok (arg_own_buf);
+      return;
+   }
+
+   if (strcmp ("QCatchSyscalls:0", arg_own_buf) == 0) {
+      dlog (3, "catch syscall all off\n");
+      catching_syscalls = False;
+      write_ok (arg_own_buf);
+      return;
+   }
+
+   const char *q1 = "QCatchSyscalls:1";
+   if (strncmp (q1, arg_own_buf, strlen(q1)) == 0) {
+      Int i;
+      const char *p;
+
+      if (syscalls_to_catch != NULL) {
+         free (syscalls_to_catch);
+         syscalls_to_catch = NULL;
+      }
+      syscalls_to_catch_size = 0;
+      p = arg_own_buf + strlen(q1);
+      while (*p) {
+         if (*p++ == ';')
+	    syscalls_to_catch_size++;
+      }
+      if (syscalls_to_catch_size > 0) {
+         CORE_ADDR sysno;
+         char *from, *to;
+
+         syscalls_to_catch = malloc (syscalls_to_catch_size * sizeof (int));
+
+         from = strchr (arg_own_buf, ';') + 1;
+         for (i = 0; i < syscalls_to_catch_size; i++) {
+            to = strchr (from, ';');
+            if (to == NULL)
+               to = arg_own_buf + strlen (arg_own_buf);
+            decode_address (&sysno, from, to - from);
+            syscalls_to_catch[i] = (Int)sysno;
+            dlog(4, "catch syscall sysno %d\n", (int)sysno);
+            from = to;
+            if (*from == ';') from++;
+         }
+      } else
+         dlog (4, "catch syscall all sysno\n");
+      catching_syscalls = True;
       write_ok (arg_own_buf);
       return;
    }
@@ -611,7 +686,7 @@ void handle_set (char *arg_own_buf, int *new_packet_len_p)
          if (to == NULL) to = end;
          decode_address (&sig, from, to - from);
          pass_signals[(int)sig] = 1;
-         dlog(1, "pass_signal gdb_nr %d %s\n",
+         dlog(3, "pass_signal gdb_nr %d %s\n",
               (int)sig, target_signal_to_name(sig));
          from = to;
          if (*from == ';') from++;
@@ -736,12 +811,12 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
             len = (PBUFSIZ + POVERHSIZ) / 2;
          char status[len];
          if (tst->thread_name) {
-            VG_(snprintf) (status, sizeof(status), "tid %d %s %s",
+            VG_(snprintf) (status, sizeof(status), "tid %u %s %s",
                            tst->tid, 
                            VG_(name_of_ThreadStatus)(tst->status),
                            tst->thread_name);
          } else {
-            VG_(snprintf) (status, sizeof(status), "tid %d %s",
+            VG_(snprintf) (status, sizeof(status), "tid %u %s",
                            tst->tid, 
                            VG_(name_of_ThreadStatus)(tst->status));
          }
@@ -763,6 +838,12 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
    if (strcmp ("qSymbol::", arg_own_buf) == 0) {
       /* We have no symbol to read. */
       write_ok (arg_own_buf);
+      return;
+   }
+
+   if (strcmp ("qC", arg_own_buf) == 0) {
+      VG_(sprintf) (arg_own_buf, "QC%x",
+                    thread_to_gdb_id (current_inferior));
       return;
    }
 
@@ -842,8 +923,10 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
          }
          VG_(lseek) (fd, ofs, VKI_SEEK_SET);
          len_read = VG_(read) (fd, toread, len);
-         *new_packet_len_p = write_qxfer_response (arg_own_buf, (unsigned char *)toread,
-                                                   len_read, ofs + len_read < doc_len);
+         *new_packet_len_p = write_qxfer_response (arg_own_buf,
+                                                   (unsigned char *)toread,
+                                                   len_read,
+                                                   ofs + len_read < doc_len);
          VG_(close) (fd);
          return;
       }
@@ -863,15 +946,15 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
          return;
       }
 
-      if (len > PBUFSIZ - 2)
-         len = PBUFSIZ - 2;
+      if (len > PBUFSIZ - POVERHSIZ)
+         len = PBUFSIZ - POVERHSIZ;
       data = malloc (len);
 
       {
          UWord *client_auxv = VG_(client_auxv);
          unsigned int client_auxv_len = 0;
          while (*client_auxv != 0) {
-            dlog(4, "auxv %lld %llx\n",
+            dlog(4, "auxv %llu %llx\n",
                  (ULong)*client_auxv,
                  (ULong)*(client_auxv+1));
             client_auxv++;
@@ -879,7 +962,7 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
             client_auxv_len += 2 * sizeof(UWord);
          }
          client_auxv_len += 2 * sizeof(UWord);
-         dlog(4, "auxv len %d\n", client_auxv_len);
+         dlog(4, "auxv len %u\n", client_auxv_len);
 
          if (ofs >= client_auxv_len)
             n = -1;
@@ -901,16 +984,113 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
       return;
    }
 
+   if (strncmp ("qXfer:exec-file:read:", arg_own_buf, 21) == 0) {
+      unsigned char *data;
+      int n;
+      CORE_ADDR ofs;
+      unsigned int len;
+      const char *annex;
+      unsigned long pid;
+      const HChar *name;
+
+      /* grab the annex, offset and length.  */
+      if (decode_xfer_read (arg_own_buf + 21, &annex, &ofs, &len) < 0) {
+         strcpy (arg_own_buf, "E00");
+         return;
+      }
+      
+      /* Reject any annex with invalid/unexpected pid */
+      if (strlen(annex) > 0)
+         pid = strtoul (annex, NULL, 16);
+      else
+         pid = 0;
+      if ((int)pid != VG_(getpid)() && pid != 0) {
+         VG_(sprintf) (arg_own_buf, 
+                       "E.Valgrind gdbserver pid is %d."
+                       " Cannot give info for pid %d",
+                       VG_(getpid)(), (int) pid);
+         return;
+      }
+
+      if (len > PBUFSIZ - 2)
+         len = PBUFSIZ - 2;
+      data = malloc (len);
+
+      if (!VG_(resolve_filename)(VG_(cl_exec_fd), &name)) {
+         VG_(sprintf) (arg_own_buf, 
+                       "E.Valgrind gdbserver could not"
+                       " resolve pid %d exec filename.",
+                       VG_(getpid)());
+         return;
+      }
+
+      if (ofs >= strlen(name))
+         n = -1;
+      else {
+         n = strlen(name) - ofs;
+         VG_(memcpy) (data, name, n);
+      }
+
+      if (n < 0)
+         write_enn (arg_own_buf);
+      else if (n > len)
+         *new_packet_len_p = write_qxfer_response (arg_own_buf, data, len, 1);
+      else
+         *new_packet_len_p = write_qxfer_response (arg_own_buf, data, n, 0);
+      
+      free (data);
+      
+      return;
+   }
+
+   if (strncmp ("qXfer:siginfo:read:", arg_own_buf, 19) == 0) {
+      vki_siginfo_t info;
+      int n;
+      CORE_ADDR ofs;
+      unsigned int len;
+      const char *annex;
+
+      /* Reject any annex; grab the offset and length.  */
+      if (decode_xfer_read (arg_own_buf + 19, &annex, &ofs, &len) < 0
+          || annex[0] != '\0') {
+         strcpy (arg_own_buf, "E00");
+         return;
+      }
+      
+      if (len > PBUFSIZ - POVERHSIZ)
+         len = PBUFSIZ - POVERHSIZ;
+
+      gdbserver_pending_signal_to_report(&info);
+
+      if (ofs >= sizeof(info))
+         n = -1;
+      else
+         n = sizeof(info) - ofs;
+
+      if (n < 0)
+         write_enn (arg_own_buf);
+      else if (n > len)
+         *new_packet_len_p = write_qxfer_response (arg_own_buf, 
+                                                   (unsigned char *)&info,
+                                                   len, 1);
+      else
+         *new_packet_len_p = write_qxfer_response (arg_own_buf, 
+                                                   (unsigned char *)&info,
+                                                   n, 0);
+      
+      return;
+   }
 
    /* Protocol features query.  */
    if (strncmp ("qSupported", arg_own_buf, 10) == 0
        && (arg_own_buf[10] == ':' || arg_own_buf[10] == '\0')) {
-      VG_(sprintf) (arg_own_buf, "PacketSize=%x", PBUFSIZ - 1);
+      VG_(sprintf) (arg_own_buf, "PacketSize=%x", (UInt)PBUFSIZ - 1);
       /* Note: max packet size including frame and checksum, but without
          trailing null byte, which is not sent/received. */
-      
+
       strcat (arg_own_buf, ";QStartNoAckMode+");
       strcat (arg_own_buf, ";QPassSignals+");
+      strcat (arg_own_buf, ";QCatchSyscalls+");
       if (VG_(client_auxv))
          strcat (arg_own_buf, ";qXfer:auxv:read+");
 
@@ -927,6 +1107,8 @@ void handle_query (char *arg_own_buf, int *new_packet_len_p)
             not properly connect. */
          initialize_shadow_low(False);
       }
+      strcat (arg_own_buf, ";qXfer:exec-file:read+");
+      strcat (arg_own_buf, ";qXfer:siginfo:read+");
       return;
    }
 
@@ -1024,7 +1206,7 @@ void server_main (void)
          putpkt (own_buf);
       }
 
-      /* If we our status is terminal (exit or fatal signal) get out
+      /* If our status is terminal (exit or fatal signal) get out
          as quickly as we can. We won't be able to handle any request
          anymore.  */
       if (status == 'W' || status == 'X') {
@@ -1287,7 +1469,7 @@ void server_main (void)
          VG_(umsg) ("\nChild exited with status %d\n", zignal);
       if (status == 'X')
          VG_(umsg) ("\nChild terminated with signal = 0x%x (%s)\n",
-                    target_signal_to_host (zignal),
+                    (UInt)target_signal_to_host (zignal),
                     target_signal_to_name (zignal));
       if (status == 'W' || status == 'X') {
          VG_(umsg) ("Process exiting\n");

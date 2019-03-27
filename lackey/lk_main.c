@@ -7,7 +7,7 @@
    This file is part of Lackey, an example Valgrind tool that does
    some simple program measurement and tracing.
 
-   Copyright (C) 2002-2013 Nicholas Nethercote
+   Copyright (C) 2002-2017 Nicholas Nethercote
       njn@valgrind.org
 
    This program is free software; you can redistribute it and/or
@@ -664,6 +664,7 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
    Addr       iaddr = 0, dst;
    UInt       ilen = 0;
    Bool       condition_inverted = False;
+   DiEpoch    ep = VG_(current_DiEpoch)();
 
    if (gWordTy != hWordTy) {
       /* We don't currently support this case. */
@@ -750,7 +751,7 @@ IRSB* lk_instrument ( VgCallbackClosure* closure,
                tl_assert(clo_fnname);
                tl_assert(clo_fnname[0]);
                const HChar *fnname;
-               if (VG_(get_fnname_if_entry)(st->Ist.IMark.addr, 
+               if (VG_(get_fnname_if_entry)(ep, st->Ist.IMark.addr,
                                             &fnname)
                    && 0 == VG_(strcmp)(fnname, clo_fnname)) {
                   di = unsafeIRDirty_0_N( 
@@ -1011,7 +1012,7 @@ static void lk_fini(Int exitcode)
       VG_(umsg)("Jccs:\n");
       VG_(umsg)("  total:         %'llu\n", total_Jccs);
       VG_(umsg)("  taken:         %'llu (%.0f%%)\n",
-                taken_Jccs, taken_Jccs * 100.0 / total_Jccs ?: 1);
+                taken_Jccs, taken_Jccs * 100.0 / (total_Jccs ? total_Jccs : 1));
       
       VG_(umsg)("\n");
       VG_(umsg)("Executed:\n");
@@ -1050,7 +1051,7 @@ static void lk_pre_clo_init(void)
    VG_(details_version)         (NULL);
    VG_(details_description)     ("an example Valgrind tool");
    VG_(details_copyright_author)(
-      "Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote.");
+      "Copyright (C) 2002-2017, and GNU GPL'd, by Nicholas Nethercote.");
    VG_(details_bug_reports_to)  (VG_BUGS_TO);
    VG_(details_avg_translation_sizeB) ( 200 );
 

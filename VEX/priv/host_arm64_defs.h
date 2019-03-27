@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2013-2013 OpenWorks
+   Copyright (C) 2013-2017 OpenWorks
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -38,47 +38,43 @@
 
 /* --------- Registers. --------- */
 
-/* The usual HReg abstraction.
-    There are 31 general purpose regs.
-*/
+#define ST_IN static inline
+ST_IN HReg hregARM64_X22 ( void ) { return mkHReg(False, HRcInt64,  22,  0); }
+ST_IN HReg hregARM64_X23 ( void ) { return mkHReg(False, HRcInt64,  23,  1); }
+ST_IN HReg hregARM64_X24 ( void ) { return mkHReg(False, HRcInt64,  24,  2); }
+ST_IN HReg hregARM64_X25 ( void ) { return mkHReg(False, HRcInt64,  25,  3); }
+ST_IN HReg hregARM64_X26 ( void ) { return mkHReg(False, HRcInt64,  26,  4); }
+ST_IN HReg hregARM64_X27 ( void ) { return mkHReg(False, HRcInt64,  27,  5); }
+ST_IN HReg hregARM64_X28 ( void ) { return mkHReg(False, HRcInt64,  28,  6); }
 
-extern void ppHRegARM64 ( HReg );
+ST_IN HReg hregARM64_X0  ( void ) { return mkHReg(False, HRcInt64,  0,   7); }
+ST_IN HReg hregARM64_X1  ( void ) { return mkHReg(False, HRcInt64,  1,   8); }
+ST_IN HReg hregARM64_X2  ( void ) { return mkHReg(False, HRcInt64,  2,   9); }
+ST_IN HReg hregARM64_X3  ( void ) { return mkHReg(False, HRcInt64,  3,  10); }
+ST_IN HReg hregARM64_X4  ( void ) { return mkHReg(False, HRcInt64,  4,  11); }
+ST_IN HReg hregARM64_X5  ( void ) { return mkHReg(False, HRcInt64,  5,  12); }
+ST_IN HReg hregARM64_X6  ( void ) { return mkHReg(False, HRcInt64,  6,  13); }
+ST_IN HReg hregARM64_X7  ( void ) { return mkHReg(False, HRcInt64,  7,  14); }
 
-extern HReg hregARM64_X0  ( void );
-extern HReg hregARM64_X1  ( void );
-extern HReg hregARM64_X2  ( void );
-extern HReg hregARM64_X3  ( void );
-extern HReg hregARM64_X4  ( void );
-extern HReg hregARM64_X5  ( void );
-extern HReg hregARM64_X6  ( void );
-extern HReg hregARM64_X7  ( void );
-extern HReg hregARM64_X8  ( void );
-extern HReg hregARM64_X9  ( void );
-extern HReg hregARM64_X10 ( void );
-extern HReg hregARM64_X11 ( void );
-extern HReg hregARM64_X12 ( void );
-extern HReg hregARM64_X13 ( void );
-extern HReg hregARM64_X14 ( void );
-extern HReg hregARM64_X15 ( void );
-extern HReg hregARM64_X21 ( void );
-extern HReg hregARM64_X22 ( void );
-extern HReg hregARM64_X23 ( void );
-extern HReg hregARM64_X24 ( void );
-extern HReg hregARM64_X25 ( void );
-extern HReg hregARM64_X26 ( void );
-extern HReg hregARM64_X27 ( void );
-extern HReg hregARM64_X28 ( void );
-extern HReg hregARM64_D8  ( void );
-extern HReg hregARM64_D9  ( void );
-extern HReg hregARM64_D10 ( void );
-extern HReg hregARM64_D11 ( void );
-extern HReg hregARM64_D12 ( void );
-extern HReg hregARM64_D13 ( void );
-extern HReg hregARM64_Q16 ( void );
-extern HReg hregARM64_Q17 ( void );
-extern HReg hregARM64_Q18 ( void );
-extern HReg hregARM64_Q19 ( void );
-extern HReg hregARM64_Q20 ( void );
+ST_IN HReg hregARM64_Q16 ( void ) { return mkHReg(False, HRcVec128, 16, 15); }
+ST_IN HReg hregARM64_Q17 ( void ) { return mkHReg(False, HRcVec128, 17, 16); }
+ST_IN HReg hregARM64_Q18 ( void ) { return mkHReg(False, HRcVec128, 18, 17); }
+ST_IN HReg hregARM64_Q19 ( void ) { return mkHReg(False, HRcVec128, 19, 18); }
+ST_IN HReg hregARM64_Q20 ( void ) { return mkHReg(False, HRcVec128, 20, 19); }
+
+ST_IN HReg hregARM64_D8  ( void ) { return mkHReg(False, HRcFlt64,  8,  20); }
+ST_IN HReg hregARM64_D9  ( void ) { return mkHReg(False, HRcFlt64,  9,  21); }
+ST_IN HReg hregARM64_D10 ( void ) { return mkHReg(False, HRcFlt64,  10, 22); }
+ST_IN HReg hregARM64_D11 ( void ) { return mkHReg(False, HRcFlt64,  11, 23); }
+ST_IN HReg hregARM64_D12 ( void ) { return mkHReg(False, HRcFlt64,  12, 24); }
+ST_IN HReg hregARM64_D13 ( void ) { return mkHReg(False, HRcFlt64,  13, 25); }
+
+ST_IN HReg hregARM64_X8  ( void ) { return mkHReg(False, HRcInt64,  8,  26); }
+ST_IN HReg hregARM64_X9  ( void ) { return mkHReg(False, HRcInt64,  9,  27); }
+ST_IN HReg hregARM64_X21 ( void ) { return mkHReg(False, HRcInt64, 21,  28); }
+#undef ST_IN
+
+extern UInt ppHRegARM64 ( HReg );
 
 /* Number of registers used arg passing in function calls */
 #define ARM64_N_ARGREGS 8   /* x0 .. x7 */
@@ -418,6 +414,7 @@ typedef
       ARM64vecu_URSQRTE32x4,
       ARM64vecu_FRECPE64x2,   ARM64vecu_FRECPE32x4,
       ARM64vecu_FRSQRTE64x2,  ARM64vecu_FRSQRTE32x4,
+      ARM64vecu_FSQRT64x2,    ARM64vecu_FSQRT32x4,
       ARM64vecu_INVALID
    }
    ARM64VecUnaryOp;
@@ -484,14 +481,19 @@ typedef
       ARM64in_Mul,
       ARM64in_LdrEX,
       ARM64in_StrEX,
+      ARM64in_CAS,
       ARM64in_MFence,
+      ARM64in_ClrEX,
       /* ARM64in_V*: scalar ops involving vector registers */
-      ARM64in_VLdStS,   /* 32-bit FP load/store, with imm offset  */
-      ARM64in_VLdStD,   /* 64-bit FP load/store, with imm offset  */
-      ARM64in_VLdStQ,
+      ARM64in_VLdStH,   /* ld/st to/from low 16 bits of vec reg, imm offset */
+      ARM64in_VLdStS,   /* ld/st to/from low 32 bits of vec reg, imm offset */
+      ARM64in_VLdStD,   /* ld/st to/from low 64 bits of vec reg, imm offset */
+      ARM64in_VLdStQ,   /* ld/st to/from all 128 bits of vec reg, no offset */
       ARM64in_VCvtI2F,
       ARM64in_VCvtF2I,
-      ARM64in_VCvtSD,
+      ARM64in_VCvtSD,   /* scalar 32 bit FP <--> 64 bit FP */
+      ARM64in_VCvtHS,   /* scalar 16 bit FP <--> 32 bit FP */
+      ARM64in_VCvtHD,   /* scalar 16 bit FP <--> 64 bit FP */
       ARM64in_VUnaryD,
       ARM64in_VUnaryS,
       ARM64in_VBinD,
@@ -667,28 +669,64 @@ typedef
          struct {
             Int  szB; /* 1, 2, 4 or 8 */
          } StrEX;
+         /* x1 = CAS(x3(addr), x5(expected) -> x7(new)),
+            where x1[8*szB-1 : 0] == x5[8*szB-1 : 0] indicates success,
+                  x1[8*szB-1 : 0] != x5[8*szB-1 : 0] indicates failure.
+            Uses x8 as scratch (but that's not allocatable).
+            Hence: RD x3, x5, x7; WR x1
+
+            (szB=8)  mov  x8, x5
+            (szB=4)  and  x8, x5, #0xFFFFFFFF
+            (szB=2)  and  x8, x5, #0xFFFF
+            (szB=1)  and  x8, x5, #0xFF
+            -- x8 is correctly zero-extended expected value
+            ldxr    x1, [x3]
+            -- x1 is correctly zero-extended actual value
+            cmp     x1, x8
+            bne     after
+            -- if branch taken, failure; x1[[8*szB-1 : 0] holds old value
+            -- attempt to store
+            stxr    w1, x7, [x3]
+            -- if store successful, x1==0, so the eor is "x1 := x5"
+            -- if store failed,     x1==1, so the eor makes x1 != x5
+            eor     x1, x5, x1
+           after:
+         */
+         struct {
+            Int szB; /* 1, 2, 4 or 8 */
+         } CAS;
          /* Mem fence.  An insn which fences all loads and stores as
             much as possible before continuing.  On ARM64 we emit the
             sequence "dsb sy ; dmb sy ; isb sy", which is probably
             total nuclear overkill, but better safe than sorry. */
          struct {
          } MFence;
+         /* A CLREX instruction. */
+         struct {
+         } ClrEX;
          /* --- INSTRUCTIONS INVOLVING VECTOR REGISTERS --- */
-         /* 32-bit Fp load/store */
+         /* ld/st to/from low 16 bits of vec reg, imm offset */
+         struct {
+            Bool isLoad;
+            HReg hD;
+            HReg rN;
+            UInt uimm12;  /* 0 .. 8190 inclusive, 0 % 2 */
+         } VLdStH;
+         /* ld/st to/from low 32 bits of vec reg, imm offset */
          struct {
             Bool isLoad;
             HReg sD;
             HReg rN;
             UInt uimm12;  /* 0 .. 16380 inclusive, 0 % 4 */
          } VLdStS;
-         /* 64-bit Fp load/store */
+         /* ld/st to/from low 64 bits of vec reg, imm offset */
          struct {
             Bool isLoad;
             HReg dD;
             HReg rN;
             UInt uimm12;  /* 0 .. 32760 inclusive, 0 % 8 */
          } VLdStD;
-         /* 128-bit Vector load/store. */
+         /* ld/st to/from all 128 bits of vec reg, no offset */
          struct {
             Bool isLoad;
             HReg rQ; // data
@@ -708,13 +746,24 @@ typedef
             UChar      armRM; // ARM encoded RM:
                               // 00=nearest, 01=+inf, 10=-inf, 11=zero
          } VCvtF2I;
-         /* Convert between 32-bit and 64-bit FP values (both
-            ways). (FCVT) */
+         /* Convert between 32-bit and 64-bit FP values (both ways). (FCVT) */
          struct {
             Bool sToD; /* True: F32->F64.  False: F64->F32 */
             HReg dst;
             HReg src;
          } VCvtSD;
+         /* Convert between 16-bit and 32-bit FP values (both ways). (FCVT) */
+         struct {
+            Bool hToS; /* True: F16->F32.  False: F32->F16 */
+            HReg dst;
+            HReg src;
+         } VCvtHS;
+         /* Convert between 16-bit and 64-bit FP values (both ways). (FCVT) */
+         struct {
+            Bool hToD; /* True: F16->F64.  False: F64->F16 */
+            HReg dst;
+            HReg src;
+         } VCvtHD;
          /* 64-bit FP unary */
          struct {
             ARM64FpUnaryOp op;
@@ -890,7 +939,11 @@ extern ARM64Instr* ARM64Instr_Mul     ( HReg dst, HReg argL, HReg argR,
                                         ARM64MulOp op );
 extern ARM64Instr* ARM64Instr_LdrEX   ( Int szB );
 extern ARM64Instr* ARM64Instr_StrEX   ( Int szB );
+extern ARM64Instr* ARM64Instr_CAS     ( Int szB );
 extern ARM64Instr* ARM64Instr_MFence  ( void );
+extern ARM64Instr* ARM64Instr_ClrEX   ( void );
+extern ARM64Instr* ARM64Instr_VLdStH  ( Bool isLoad, HReg sD, HReg rN,
+                                        UInt uimm12 /* 0 .. 8190, 0 % 2 */ );
 extern ARM64Instr* ARM64Instr_VLdStS  ( Bool isLoad, HReg sD, HReg rN,
                                         UInt uimm12 /* 0 .. 16380, 0 % 4 */ );
 extern ARM64Instr* ARM64Instr_VLdStD  ( Bool isLoad, HReg dD, HReg rN,
@@ -900,6 +953,8 @@ extern ARM64Instr* ARM64Instr_VCvtI2F ( ARM64CvtOp how, HReg rD, HReg rS );
 extern ARM64Instr* ARM64Instr_VCvtF2I ( ARM64CvtOp how, HReg rD, HReg rS,
                                         UChar armRM );
 extern ARM64Instr* ARM64Instr_VCvtSD  ( Bool sToD, HReg dst, HReg src );
+extern ARM64Instr* ARM64Instr_VCvtHS  ( Bool hToS, HReg dst, HReg src );
+extern ARM64Instr* ARM64Instr_VCvtHD  ( Bool hToD, HReg dst, HReg src );
 extern ARM64Instr* ARM64Instr_VUnaryD ( ARM64FpUnaryOp op, HReg dst, HReg src );
 extern ARM64Instr* ARM64Instr_VUnaryS ( ARM64FpUnaryOp op, HReg dst, HReg src );
 extern ARM64Instr* ARM64Instr_VBinD   ( ARM64FpBinOp op, HReg, HReg, HReg );
@@ -938,7 +993,6 @@ extern void ppARM64Instr ( const ARM64Instr* );
    of the underlying instruction set. */
 extern void getRegUsage_ARM64Instr ( HRegUsage*, const ARM64Instr*, Bool );
 extern void mapRegs_ARM64Instr     ( HRegRemap*, ARM64Instr*, Bool );
-extern Bool isMove_ARM64Instr      ( const ARM64Instr*, HReg*, HReg* );
 extern Int  emit_ARM64Instr        ( /*MB_MOD*/Bool* is_profInc,
                                      UChar* buf, Int nbuf, const ARM64Instr* i,
                                      Bool mode64,
@@ -952,8 +1006,10 @@ extern void genSpill_ARM64  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Int offset, Bool );
 extern void genReload_ARM64 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                               HReg rreg, Int offset, Bool );
+extern ARM64Instr* genMove_ARM64(HReg from, HReg to, Bool);
 
-extern void getAllocableRegs_ARM64 ( Int*, HReg** );
+extern const RRegUniverse* getRRegUniverse_ARM64 ( void );
+
 extern HInstrArray* iselSB_ARM64 ( const IRSB*, 
                                    VexArch,
                                    const VexArchInfo*,

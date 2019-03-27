@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -326,12 +326,12 @@ static IRTemp newTemp ( IRType ty )
 
 static UInt extend_s_8to32( UInt x )
 {
-   return (UInt)((((Int)x) << 24) >> 24);
+   return (UInt)((Int)(x << 24) >> 24);
 }
 
 static UInt extend_s_16to32 ( UInt x )
 {
-   return (UInt)((((Int)x) << 16) >> 16);
+  return (UInt)((Int)(x << 16) >> 16);
 }
 
 /* Fetch a byte from the guest insn stream. */
@@ -1409,6 +1409,7 @@ const HChar* sorbTxt ( UChar sorb )
       case 0x26: return "%es:";
       case 0x64: return "%fs:";
       case 0x65: return "%gs:";
+      case 0x36: return "%ss:";
       default: vpanic("sorbTxt(x86,guest)");
    }
 }
@@ -1433,6 +1434,7 @@ IRExpr* handleSegOverride ( UChar sorb, IRExpr* virtual )
       case 0x26: sreg = R_ES; break;
       case 0x64: sreg = R_FS; break;
       case 0x65: sreg = R_GS; break;
+      case 0x36: sreg = R_SS; break;
       default: vpanic("handleSegOverride(x86,guest)");
    }
 
@@ -1549,7 +1551,7 @@ IRTemp disAMode ( Int* len, UChar sorb, Int delta, HChar* buf )
       /* ! 14 */ case 0x15: case 0x16: case 0x17:
          { UChar rm = toUChar(mod_reg_rm & 7);
            UInt  d  = getUDisp32(delta);
-           DIS(buf, "%s0x%x(%s)", sorbTxt(sorb), (Int)d, nameIReg(4,rm));
+           DIS(buf, "%s0x%x(%s)", sorbTxt(sorb), d, nameIReg(4,rm));
            *len = 5;
            return disAMode_copy2tmp(
                   handleSegOverride(sorb,
@@ -3170,7 +3172,7 @@ UInt dis_Grp5 ( UChar sorb, Bool locked, Int sz, Int delta,
 
 /* Code shared by all the string ops */
 static
-void dis_string_op_increment(Int sz, Int t_inc)
+void dis_string_op_increment(Int sz, IRTemp t_inc)
 {
    if (sz == 4 || sz == 2) {
       assign( t_inc, 
@@ -3784,8 +3786,8 @@ static
 void fp_do_op_ST_ST ( const HChar* op_txt, IROp op, UInt st_src, UInt st_dst,
                       Bool pop_after )
 {
-   DIP("f%s%s st(%d), st(%d)\n", op_txt, pop_after?"p":"", 
-                                 (Int)st_src, (Int)st_dst );
+   DIP("f%s%s st(%u), st(%u)\n", op_txt, pop_after?"p":"",
+                                 st_src, st_dst);
    put_ST_UNCHECKED( 
       st_dst, 
       triop( op, 
@@ -3804,8 +3806,8 @@ static
 void fp_do_oprev_ST_ST ( const HChar* op_txt, IROp op, UInt st_src,
                          UInt st_dst, Bool pop_after )
 {
-   DIP("f%s%s st(%d), st(%d)\n", op_txt, pop_after?"p":"",
-                                 (Int)st_src, (Int)st_dst );
+   DIP("f%s%s st(%u), st(%u)\n", op_txt, pop_after?"p":"",
+                                 st_src, st_dst);
    put_ST_UNCHECKED( 
       st_dst, 
       triop( op, 
@@ -3820,7 +3822,7 @@ void fp_do_oprev_ST_ST ( const HChar* op_txt, IROp op, UInt st_src,
 /* %eflags(Z,P,C) = UCOMI( st(0), st(i) ) */
 static void fp_do_ucomi_ST0_STi ( UInt i, Bool pop_after )
 {
-   DIP("fucomi%s %%st(0),%%st(%d)\n", pop_after ? "p" : "", (Int)i );
+   DIP("fucomi%s %%st(0),%%st(%u)\n", pop_after ? "p" : "", i);
    /* This is a bit of a hack (and isn't really right).  It sets
       Z,P,C,O correctly, but forces A and S to zero, whereas the Intel
       documentation implies A and S are unchanged. 
@@ -3923,7 +3925,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xD8\n");
                goto decode_fail;
          }
@@ -3942,7 +3944,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
             /* Dunno if this is right */
             case 0xD0 ... 0xD7: /* FCOM %st(?),%st(0) */
                r_dst = (UInt)modrm - 0xD0;
-               DIP("fcom %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fcom %%st(0),%%st(%u)\n", r_dst);
                /* This forces C1 to zero, which isn't right. */
                put_C3210( 
                    binop( Iop_And32,
@@ -3956,7 +3958,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
             /* Dunno if this is right */
             case 0xD8 ... 0xDF: /* FCOMP %st(?),%st(0) */
                r_dst = (UInt)modrm - 0xD8;
-               DIP("fcomp %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fcomp %%st(0),%%st(%u)\n", r_dst);
                /* This forces C1 to zero, which isn't right. */
                put_C3210( 
                    binop( Iop_And32,
@@ -4030,7 +4032,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                                 0/*regparms*/, 
                                 "x86g_dirtyhelper_FLDENV", 
                                 &x86g_dirtyhelper_FLDENV,
-                                mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+                                mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
                              );
                d->tmp   = ew;
                /* declare we're reading memory */
@@ -4126,7 +4128,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                                0/*regparms*/, 
                                "x86g_dirtyhelper_FSTENV", 
                                &x86g_dirtyhelper_FSTENV,
-                               mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+                               mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
                             );
                /* declare we're writing memory */
                d->mFx   = Ifx_Write;
@@ -4178,7 +4180,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xD9\n");
                goto decode_fail;
          }
@@ -4189,7 +4191,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC0 ... 0xC7: /* FLD %st(?) */
                r_src = (UInt)modrm - 0xC0;
-               DIP("fld %%st(%d)\n", (Int)r_src);
+               DIP("fld %%st(%u)\n", r_src);
                t1 = newTemp(Ity_F64);
                assign(t1, get_ST(r_src));
                fp_push();
@@ -4198,7 +4200,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC8 ... 0xCF: /* FXCH %st(?) */
                r_src = (UInt)modrm - 0xC8;
-               DIP("fxch %%st(%d)\n", (Int)r_src);
+               DIP("fxch %%st(%u)\n", r_src);
                t1 = newTemp(Ity_F64);
                t2 = newTemp(Ity_F64);
                assign(t1, get_ST(0));
@@ -4624,7 +4626,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDA\n");
                goto decode_fail;
          }
@@ -4636,7 +4638,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC0 ... 0xC7: /* FCMOVB ST(i), ST(0) */
                r_src = (UInt)modrm - 0xC0;
-               DIP("fcmovb %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovb %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondB),
@@ -4645,7 +4647,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC8 ... 0xCF: /* FCMOVE(Z) ST(i), ST(0) */
                r_src = (UInt)modrm - 0xC8;
-               DIP("fcmovz %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovz %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondZ),
@@ -4654,7 +4656,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xD0 ... 0xD7: /* FCMOVBE ST(i), ST(0) */
                r_src = (UInt)modrm - 0xD0;
-               DIP("fcmovbe %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovbe %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondBE),
@@ -4663,7 +4665,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xD8 ... 0xDF: /* FCMOVU ST(i), ST(0) */
                r_src = (UInt)modrm - 0xD8;
-               DIP("fcmovu %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovu %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondP),
@@ -4785,7 +4787,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
             }
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDB\n");
                goto decode_fail;
          }
@@ -4797,7 +4799,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC0 ... 0xC7: /* FCMOVNB ST(i), ST(0) */
                r_src = (UInt)modrm - 0xC0;
-               DIP("fcmovnb %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovnb %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondNB),
@@ -4806,7 +4808,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC8 ... 0xCF: /* FCMOVNE(NZ) ST(i), ST(0) */
                r_src = (UInt)modrm - 0xC8;
-               DIP("fcmovnz %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovnz %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondNZ),
@@ -4815,7 +4817,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xD0 ... 0xD7: /* FCMOVNBE ST(i), ST(0) */
                r_src = (UInt)modrm - 0xD0;
-               DIP("fcmovnbe %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovnbe %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondNBE),
@@ -4824,7 +4826,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xD8 ... 0xDF: /* FCMOVNU ST(i), ST(0) */
                r_src = (UInt)modrm - 0xD8;
-               DIP("fcmovnu %%st(%d), %%st(0)\n", (Int)r_src);
+               DIP("fcmovnu %%st(%u), %%st(0)\n", r_src);
                put_ST_UNCHECKED(0, 
                                 IRExpr_ITE( 
                                     mk_x86g_calculate_condition(X86CondNP),
@@ -4842,7 +4844,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                                 0/*regparms*/, 
                                 "x86g_dirtyhelper_FINIT", 
                                 &x86g_dirtyhelper_FINIT,
-                                mkIRExprVec_1(IRExpr_BBPTR())
+                                mkIRExprVec_1(IRExpr_GSPTR())
                              );
 
                /* declare we're writing guest state */
@@ -4955,7 +4957,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDC\n");
                goto decode_fail;
          }
@@ -5041,7 +5043,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                                 0/*regparms*/, 
                                 "x86g_dirtyhelper_FRSTOR", 
                                 &x86g_dirtyhelper_FRSTOR,
-                                mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+                                mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
                              );
                d->tmp   = ew;
                /* declare we're reading memory */
@@ -5100,7 +5102,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                                0/*regparms*/, 
                                "x86g_dirtyhelper_FSAVE", 
                                &x86g_dirtyhelper_FSAVE,
-                               mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+                               mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
                             );
                /* declare we're writing memory */
                d->mFx   = Ifx_Write;
@@ -5146,7 +5148,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
             }
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDD\n");
                goto decode_fail;
          }
@@ -5156,13 +5158,13 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xC0 ... 0xC7: /* FFREE %st(?) */
                r_dst = (UInt)modrm - 0xC0;
-               DIP("ffree %%st(%d)\n", (Int)r_dst);
+               DIP("ffree %%st(%u)\n", r_dst);
                put_ST_TAG ( r_dst, mkU8(0) );
                break;
 
             case 0xD0 ... 0xD7: /* FST %st(0),%st(?) */
                r_dst = (UInt)modrm - 0xD0;
-               DIP("fst %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fst %%st(0),%%st(%u)\n", r_dst);
                /* P4 manual says: "If the destination operand is a
                   non-empty register, the invalid-operation exception
                   is not generated.  Hence put_ST_UNCHECKED. */
@@ -5171,7 +5173,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xD8 ... 0xDF: /* FSTP %st(0),%st(?) */
                r_dst = (UInt)modrm - 0xD8;
-               DIP("fstp %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fstp %%st(0),%%st(%u)\n", r_dst);
                /* P4 manual says: "If the destination operand is a
                   non-empty register, the invalid-operation exception
                   is not generated.  Hence put_ST_UNCHECKED. */
@@ -5181,7 +5183,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xE0 ... 0xE7: /* FUCOM %st(0),%st(?) */
                r_dst = (UInt)modrm - 0xE0;
-               DIP("fucom %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fucom %%st(0),%%st(%u)\n", r_dst);
                /* This forces C1 to zero, which isn't right. */
                put_C3210( 
                    binop( Iop_And32,
@@ -5194,7 +5196,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
 
             case 0xE8 ... 0xEF: /* FUCOMP %st(0),%st(?) */
                r_dst = (UInt)modrm - 0xE8;
-               DIP("fucomp %%st(0),%%st(%d)\n", (Int)r_dst);
+               DIP("fucomp %%st(0),%%st(%u)\n", r_dst);
                /* This forces C1 to zero, which isn't right. */
                put_C3210( 
                    binop( Iop_And32,
@@ -5310,7 +5312,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDE\n");
                goto decode_fail;
          }
@@ -5422,7 +5424,7 @@ UInt dis_FPU ( Bool* decode_ok, UChar sorb, Int delta )
                break;
 
             default:
-               vex_printf("unhandled opc_aux = 0x%2x\n", gregOfRM(modrm));
+               vex_printf("unhandled opc_aux = 0x%2x\n", (UInt)gregOfRM(modrm));
                vex_printf("first_opcode == 0xDF\n");
                goto decode_fail;
          }
@@ -5642,7 +5644,7 @@ UInt dis_MMXop_regmem_to_reg ( UChar  sorb,
       case 0xFB: op = Iop_Sub64; break;
 
       default: 
-         vex_printf("\n0x%x\n", (Int)opc);
+         vex_printf("\n0x%x\n", opc);
          vpanic("dis_MMXop_regmem_to_reg");
    }
 
@@ -7134,17 +7136,26 @@ static UInt dis_SSE_E_to_G_unary_all (
    Int     alen;
    IRTemp  addr;
    UChar   rm = getIByte(delta);
+   // Sqrt32Fx4 and Sqrt64Fx2 take a rounding mode, which is faked
+   // up in the usual way.
+   Bool needsIRRM = op == Iop_Sqrt32Fx4 || op == Iop_Sqrt64Fx2;
    if (epartIsReg(rm)) {
-      putXMMReg( gregOfRM(rm), 
-                 unop(op, getXMMReg(eregOfRM(rm))) );
+      IRExpr* src = getXMMReg(eregOfRM(rm));
+      /* XXXROUNDINGFIXME */
+      IRExpr* res = needsIRRM ? binop(op, get_FAKE_roundingmode(), src)
+                              : unop(op, src);
+      putXMMReg( gregOfRM(rm), res );
       DIP("%s %s,%s\n", opname,
                         nameXMMReg(eregOfRM(rm)),
                         nameXMMReg(gregOfRM(rm)) );
       return delta+1;
    } else {
       addr = disAMode ( &alen, sorb, delta, dis_buf );
-      putXMMReg( gregOfRM(rm), 
-                 unop(op, loadLE(Ity_V128, mkexpr(addr))) );
+      IRExpr* src = loadLE(Ity_V128, mkexpr(addr));
+      /* XXXROUNDINGFIXME */
+      IRExpr* res = needsIRRM ? binop(op, get_FAKE_roundingmode(), src)
+                              : unop(op, src);
+      putXMMReg( gregOfRM(rm), res );
       DIP("%s %s,%s\n", opname,
                         dis_buf,
                         nameXMMReg(gregOfRM(rm)) );
@@ -7349,7 +7360,7 @@ static UInt dis_SSEcmp_E_to_G ( UChar sorb, Int delta,
                                getXMMReg(eregOfRM(rm))) );
       delta += 2;
       DIP("%s $%d,%s,%s\n", opname,
-                            (Int)imm8,
+                            imm8,
                             nameXMMReg(eregOfRM(rm)),
                             nameXMMReg(gregOfRM(rm)) );
    } else {
@@ -7367,7 +7378,7 @@ static UInt dis_SSEcmp_E_to_G ( UChar sorb, Int delta,
       );
       delta += alen+1;
       DIP("%s $%d,%s,%s\n", opname,
-                            (Int)imm8,
+                            imm8,
                             dis_buf,
                             nameXMMReg(gregOfRM(rm)) );
    }
@@ -8092,7 +8103,7 @@ DisResult disInstr_X86_WRK (
    Int sz = 4;
 
    /* sorb holds the segment-override-prefix byte, if any.  Zero if no
-      prefix has been seen, else one of {0x26, 0x3E, 0x64, 0x65}
+      prefix has been seen, else one of {0x26, 0x36, 0x3E, 0x64, 0x65}
       indicating the prefix.  */
    UChar sorb = 0;
 
@@ -8103,6 +8114,7 @@ DisResult disInstr_X86_WRK (
    dres.whatNext    = Dis_Continue;
    dres.len         = 0;
    dres.continueAt  = 0;
+   dres.hint        = Dis_HintNone;
    dres.jk_StopHere = Ijk_INVALID;
 
    *expect_CAS = False;
@@ -8219,8 +8231,58 @@ DisResult disInstr_X86_WRK (
             goto decode_success;
          }
       }
-   }       
 
+      // Intel CET requires the following opcodes to be treated as NOPs
+      // with any prefix and ModRM, SIB and disp combination:
+      // "0F 19", "0F 1C", "0F 1D", "0F 1E", "0F 1F"
+      UInt opcode_index = 0;
+      // Skip any prefix combination
+      UInt addr_override = 0;
+      UInt temp_sz = 4;
+      Bool is_prefix = True;
+      while (is_prefix) {
+         switch (code[opcode_index]) {
+            case 0x66:
+               temp_sz = 2;
+               opcode_index++;
+               break;
+            case 0x67:
+               addr_override = 1;
+               opcode_index++;
+               break;
+            case 0x26: case 0x3E: // if we set segment override here,
+            case 0x64: case 0x65: //  disAMode segfaults
+            case 0x2E: case 0x36:
+            case 0xF0: case 0xF2: case 0xF3:
+               opcode_index++;
+               break;
+            default: 
+               is_prefix = False;
+         }
+      }
+      // Check the opcode
+      if (code[opcode_index] == 0x0F) {
+         switch (code[opcode_index+1]) {
+            case 0x19:
+            case 0x1C: case 0x1D:
+            case 0x1E: case 0x1F:
+               delta += opcode_index+2;
+               modrm = getUChar(delta);
+               if (epartIsReg(modrm)) {
+                  delta += 1;
+                  DIP("nop%c\n", nameISize(temp_sz));
+               }
+               else {
+                  addr = disAMode(&alen, 0/*"no sorb"*/, delta, dis_buf);
+                  delta += alen - addr_override;
+                  DIP("nop%c %s\n", nameISize(temp_sz), dis_buf);
+               }
+               goto decode_success;
+            default:
+               break;
+         }
+      }
+   }
    /* Normal instruction handling starts here. */
 
    /* Deal with some but not all prefixes: 
@@ -8246,6 +8308,7 @@ DisResult disInstr_X86_WRK (
          case 0x26: /* %ES: */
          case 0x64: /* %FS: */
          case 0x65: /* %GS: */
+         case 0x36: /* %SS: */
             if (sorb != 0) 
                goto decode_failure; /* only one seg override allowed */
             sorb = pre;
@@ -8265,9 +8328,6 @@ DisResult disInstr_X86_WRK (
             }
             break;
          }
-         case 0x36: /* %SS: */
-            /* SS override cases are not handled */
-            goto decode_failure;
          default: 
             goto not_a_prefix;
       }
@@ -8328,7 +8388,7 @@ DisResult disInstr_X86_WRK (
              0/*regparms*/, 
              "x86g_dirtyhelper_FXSAVE", 
              &x86g_dirtyhelper_FXSAVE,
-             mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+             mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
           );
 
       /* declare we're writing memory */
@@ -8402,7 +8462,7 @@ DisResult disInstr_X86_WRK (
              0/*regparms*/, 
              "x86g_dirtyhelper_FXRSTOR", 
              &x86g_dirtyhelper_FXRSTOR,
-             mkIRExprVec_2( IRExpr_BBPTR(), mkexpr(addr) )
+             mkIRExprVec_2( IRExpr_GSPTR(), mkexpr(addr) )
           );
 
       /* declare we're reading memory */
@@ -8556,8 +8616,10 @@ DisResult disInstr_X86_WRK (
       vassert(sz == 4);
 
       modrm = getIByte(delta+2);
-      do_MMX_preamble();
       if (epartIsReg(modrm)) {
+         /* Only switch to MMX mode if the source is a MMX register.
+            See comments on CVTPI2PD for details.  Fixes #357059. */
+         do_MMX_preamble();
          assign( arg64, getMMXReg(eregOfRM(modrm)) );
          delta += 2+1;
          DIP("cvtpi2ps %s,%s\n", nameMMXReg(eregOfRM(modrm)),
@@ -8881,7 +8943,7 @@ DisResult disInstr_X86_WRK (
          assign(t4, getIReg(2, eregOfRM(modrm)));
          delta += 3+1;
          lane = insn[3+1-1];
-         DIP("pinsrw $%d,%s,%s\n", (Int)lane, 
+         DIP("pinsrw $%d,%s,%s\n", lane,
                                    nameIReg(2,eregOfRM(modrm)),
                                    nameMMXReg(gregOfRM(modrm)));
       } else {
@@ -8889,7 +8951,7 @@ DisResult disInstr_X86_WRK (
          delta += 3+alen;
          lane = insn[3+alen-1];
          assign(t4, loadLE(Ity_I16, mkexpr(addr)));
-         DIP("pinsrw $%d,%s,%s\n", (Int)lane, 
+         DIP("pinsrw $%d,%s,%s\n", lane,
                                    dis_buf,
                                    nameMMXReg(gregOfRM(modrm)));
       }
@@ -10965,7 +11027,7 @@ DisResult disInstr_X86_WRK (
          assign(t4, getIReg(2, eregOfRM(modrm)));
          delta += 3+1;
          lane = insn[3+1-1];
-         DIP("pinsrw $%d,%s,%s\n", (Int)lane, 
+         DIP("pinsrw $%d,%s,%s\n", lane,
                                    nameIReg(2,eregOfRM(modrm)),
                                    nameXMMReg(gregOfRM(modrm)));
       } else {
@@ -10973,7 +11035,7 @@ DisResult disInstr_X86_WRK (
          delta += 3+alen;
          lane = insn[3+alen-1];
          assign(t4, loadLE(Ity_I16, mkexpr(addr)));
-         DIP("pinsrw $%d,%s,%s\n", (Int)lane, 
+         DIP("pinsrw $%d,%s,%s\n", lane,
                                    dis_buf,
                                    nameXMMReg(gregOfRM(modrm)));
       }
@@ -12558,7 +12620,7 @@ DisResult disInstr_X86_WRK (
          assign( sV, getMMXReg(eregOfRM(modrm)) );
          d32 = (UInt)insn[3+1];
          delta += 3+1+1;
-         DIP("palignr $%d,%s,%s\n",  (Int)d32, 
+         DIP("palignr $%u,%s,%s\n",  d32,
                                      nameMMXReg(eregOfRM(modrm)),
                                      nameMMXReg(gregOfRM(modrm)));
       } else {
@@ -12566,7 +12628,7 @@ DisResult disInstr_X86_WRK (
          assign( sV, loadLE(Ity_I64, mkexpr(addr)) );
          d32 = (UInt)insn[3+alen];
          delta += 3+alen+1;
-         DIP("palignr $%d%s,%s\n", (Int)d32,
+         DIP("palignr $%u%s,%s\n", d32,
                                    dis_buf,
                                    nameMMXReg(gregOfRM(modrm)));
       }
@@ -12616,7 +12678,7 @@ DisResult disInstr_X86_WRK (
          assign( sV, getXMMReg(eregOfRM(modrm)) );
          d32 = (UInt)insn[3+1];
          delta += 3+1+1;
-         DIP("palignr $%d,%s,%s\n", (Int)d32,
+         DIP("palignr $%u,%s,%s\n", d32,
                                     nameXMMReg(eregOfRM(modrm)),
                                     nameXMMReg(gregOfRM(modrm)));
       } else {
@@ -12625,7 +12687,7 @@ DisResult disInstr_X86_WRK (
          assign( sV, loadLE(Ity_V128, mkexpr(addr)) );
          d32 = (UInt)insn[3+alen];
          delta += 3+alen+1;
-         DIP("palignr $%d,%s,%s\n", (Int)d32,
+         DIP("palignr $%u,%s,%s\n", d32,
                                     dis_buf,
                                     nameXMMReg(gregOfRM(modrm)));
       }
@@ -12876,7 +12938,7 @@ DisResult disInstr_X86_WRK (
    */
    if (sz == 2 
        && insn[0] == 0x0F && insn[1] == 0x3A
-       && (/*insn[2] == 0x0B || */insn[2] == 0x0A)) {
+       && (insn[2] == 0x0B || insn[2] == 0x0A)) {
 
       Bool   isD = insn[2] == 0x0B;
       IRTemp src = newTemp(isD ? Ity_F64 : Ity_F32);
@@ -13005,6 +13067,11 @@ DisResult disInstr_X86_WRK (
        goto decode_success;
    }
 
+   /* 67 E8 = CALL with redundant addr16 prefix */
+   if (insn[0] == 0x67 && insn[1] == 0xE8) {
+      delta++;
+   }
+
    /* ---------------------------------------------------- */
    /* --- start of the baseline insn decoder            -- */
    /* ---------------------------------------------------- */
@@ -13023,7 +13090,7 @@ DisResult disInstr_X86_WRK (
       d32 = getUDisp16(delta); 
       delta += 2;
       dis_ret(&dres, d32);
-      DIP("ret %d\n", (Int)d32);
+      DIP("ret %u\n", d32);
       break;
    case 0xC3: /* RET */
       dis_ret(&dres, 0);
@@ -13352,41 +13419,43 @@ DisResult disInstr_X86_WRK (
       if (d32 >= 0x3F && d32 <= 0x4F) {
          jmp_lit(&dres, Ijk_SigSEGV, ((Addr32)guest_EIP_bbstart)+delta-2);
          vassert(dres.whatNext == Dis_StopHere);
-         DIP("int $0x%x\n", (Int)d32);
+         DIP("int $0x%x\n", d32);
          break;
       }
 
       /* Handle int $0x80 (linux syscalls), int $0x81 and $0x82
-         (darwin syscalls).  As part of this, note where we are, so we
+         (darwin syscalls), int $0x91 (Solaris syscalls) and int $0xD2
+         (Solaris fasttrap syscalls).  As part of this, note where we are, so we
          can back up the guest to this point if the syscall needs to
          be restarted. */
-      if (d32 == 0x80) {
-         stmt( IRStmt_Put( OFFB_IP_AT_SYSCALL,
-                           mkU32(guest_EIP_curr_instr) ) );
-         jmp_lit(&dres, Ijk_Sys_int128, ((Addr32)guest_EIP_bbstart)+delta);
-         vassert(dres.whatNext == Dis_StopHere);
-         DIP("int $0x80\n");
+      IRJumpKind jump_kind;
+      switch (d32) {
+      case 0x80:
+         jump_kind = Ijk_Sys_int128;
          break;
-      }
-      if (d32 == 0x81) {
-         stmt( IRStmt_Put( OFFB_IP_AT_SYSCALL,
-                           mkU32(guest_EIP_curr_instr) ) );
-         jmp_lit(&dres, Ijk_Sys_int129, ((Addr32)guest_EIP_bbstart)+delta);
-         vassert(dres.whatNext == Dis_StopHere);
-         DIP("int $0x81\n");
+      case 0x81:
+         jump_kind = Ijk_Sys_int129;
          break;
-      }
-      if (d32 == 0x82) {
-         stmt( IRStmt_Put( OFFB_IP_AT_SYSCALL,
-                           mkU32(guest_EIP_curr_instr) ) );
-         jmp_lit(&dres, Ijk_Sys_int130, ((Addr32)guest_EIP_bbstart)+delta);
-         vassert(dres.whatNext == Dis_StopHere);
-         DIP("int $0x82\n");
+      case 0x82:
+         jump_kind = Ijk_Sys_int130;
          break;
+      case 0x91:
+         jump_kind = Ijk_Sys_int145;
+         break;
+      case 0xD2:
+         jump_kind = Ijk_Sys_int210;
+         break;
+      default:
+         /* none of the above */
+         goto decode_failure;
       }
 
-      /* none of the above */
-      goto decode_failure;
+      stmt( IRStmt_Put( OFFB_IP_AT_SYSCALL,
+                        mkU32(guest_EIP_curr_instr) ) );
+      jmp_lit(&dres, jump_kind, ((Addr32)guest_EIP_bbstart)+delta);
+      vassert(dres.whatNext == Dis_StopHere);
+      DIP("int $0x%x\n", d32);
+      break;
 
    /* ------------------------ Jcond, byte offset --------- */
 
@@ -14404,14 +14473,14 @@ DisResult disInstr_X86_WRK (
       t1 = newTemp(Ity_I32);
       abyte = getIByte(delta); delta++;
       assign(t1, mkU32( abyte & 0xFF ));
-      DIP("in%c $%d,%s\n", nameISize(sz), (Int)abyte, nameIReg(sz,R_EAX));
+      DIP("in%c $%d,%s\n", nameISize(sz), abyte, nameIReg(sz,R_EAX));
       goto do_IN;
    case 0xE5: /* IN imm8, eAX */
       vassert(sz == 2 || sz == 4);
       t1 = newTemp(Ity_I32);
       abyte = getIByte(delta); delta++;
       assign(t1, mkU32( abyte & 0xFF ));
-      DIP("in%c $%d,%s\n", nameISize(sz), (Int)abyte, nameIReg(sz,R_EAX));
+      DIP("in%c $%d,%s\n", nameISize(sz), abyte, nameIReg(sz,R_EAX));
       goto do_IN;
    case 0xEC: /* IN %DX, AL */
       sz = 1; 
@@ -14452,14 +14521,14 @@ DisResult disInstr_X86_WRK (
       t1 = newTemp(Ity_I32);
       abyte = getIByte(delta); delta++;
       assign( t1, mkU32( abyte & 0xFF ) );
-      DIP("out%c %s,$%d\n", nameISize(sz), nameIReg(sz,R_EAX), (Int)abyte);
+      DIP("out%c %s,$%d\n", nameISize(sz), nameIReg(sz,R_EAX), abyte);
       goto do_OUT;
    case 0xE7: /* OUT eAX, imm8 */
       vassert(sz == 2 || sz == 4);
       t1 = newTemp(Ity_I32);
       abyte = getIByte(delta); delta++;
       assign( t1, mkU32( abyte & 0xFF ) );
-      DIP("out%c %s,$%d\n", nameISize(sz), nameIReg(sz,R_EAX), (Int)abyte);
+      DIP("out%c %s,$%d\n", nameISize(sz), nameIReg(sz,R_EAX), abyte);
       goto do_OUT;
    case 0xEE: /* OUT AL, %DX */
       sz = 1;
@@ -14833,6 +14902,11 @@ DisResult disInstr_X86_WRK (
          IRDirty* d     = NULL;
          void*    fAddr = NULL;
          const HChar* fName = NULL;
+         if (archinfo->hwcaps & VEX_HWCAPS_X86_SSE3) {
+            fName = "x86g_dirtyhelper_CPUID_sse3";
+            fAddr = &x86g_dirtyhelper_CPUID_sse3; 
+         } 
+         else
          if (archinfo->hwcaps & VEX_HWCAPS_X86_SSE2) {
             fName = "x86g_dirtyhelper_CPUID_sse2";
             fAddr = &x86g_dirtyhelper_CPUID_sse2; 
@@ -14856,7 +14930,7 @@ DisResult disInstr_X86_WRK (
 
          vassert(fName); vassert(fAddr);
          d = unsafeIRDirty_0_N ( 0/*regparms*/, 
-                                 fName, fAddr, mkIRExprVec_1(IRExpr_BBPTR()) );
+                                 fName, fAddr, mkIRExprVec_1(IRExpr_GSPTR()) );
          /* declare guest state effects */
          d->nFxState = 4;
          vex_bzero(&d->fxState, sizeof(d->fxState));
@@ -15300,11 +15374,11 @@ DisResult disInstr_X86_WRK (
              see it (pass-through semantics).  I can't see any way to
              construct a faked-up value, so don't bother to try. */
          modrm = getUChar(delta);
-         addr = disAMode ( &alen, sorb, delta, dis_buf );
-         delta += alen;
          if (epartIsReg(modrm)) goto decode_failure;
          if (gregOfRM(modrm) != 0 && gregOfRM(modrm) != 1)
             goto decode_failure;
+         addr = disAMode ( &alen, sorb, delta, dis_buf );
+         delta += alen;
          switch (gregOfRM(modrm)) {
             case 0: DIP("sgdt %s\n", dis_buf); break;
             case 1: DIP("sidt %s\n", dis_buf); break;
@@ -15328,10 +15402,19 @@ DisResult disInstr_X86_WRK (
 
       case 0x05: /* AMD's syscall */
          stmt( IRStmt_Put( OFFB_IP_AT_SYSCALL,
-              mkU32(guest_EIP_curr_instr) ) );
+                           mkU32(guest_EIP_curr_instr) ) );
          jmp_lit(&dres, Ijk_Sys_syscall, ((Addr32)guest_EIP_bbstart)+delta);
          vassert(dres.whatNext == Dis_StopHere);
          DIP("syscall\n");
+         break;
+
+      /* =-=-=-=-=-=-=-=-=-=- UD2 =-=-=-=-=-=-=-=-=-=-=-= */
+
+      case 0x0B: /* UD2 */
+         stmt( IRStmt_Put( OFFB_EIP, mkU32(guest_EIP_curr_instr) ) );
+         jmp_lit(&dres, Ijk_NoDecode, guest_EIP_curr_instr);
+         vassert(dres.whatNext == Dis_StopHere);
+         DIP("ud2\n");
          break;
 
       /* =-=-=-=-=-=-=-=-=- unimp2 =-=-=-=-=-=-=-=-=-=-= */
@@ -15350,10 +15433,10 @@ DisResult disInstr_X86_WRK (
    if (sigill_diag) {
       vex_printf("vex x86->IR: unhandled instruction bytes: "
                  "0x%x 0x%x 0x%x 0x%x\n",
-                 (Int)getIByte(delta_start+0),
-                 (Int)getIByte(delta_start+1),
-                 (Int)getIByte(delta_start+2),
-                 (Int)getIByte(delta_start+3) );
+                 getIByte(delta_start+0),
+                 getIByte(delta_start+1),
+                 getIByte(delta_start+2),
+                 getIByte(delta_start+3));
    }
 
    /* Tell the dispatcher that this insn cannot be decoded, and so has

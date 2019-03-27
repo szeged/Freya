@@ -7,7 +7,7 @@
   This file is part of Valgrind, a dynamic binary instrumentation
   framework.
 
-   Copyright (C) 2010-2013 RT-RK
+   Copyright (C) 2010-2017 RT-RK
       mips-valgrind@rt-rk.com
 
    This program is free software; you can redistribute it and/or
@@ -28,9 +28,10 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
+#include "pub_core_basics_asm.h"
+
 #if defined(VGP_mips64_linux)
 
-#include "pub_core_basics_asm.h"
 #include "pub_core_vkiscnums_asm.h"
 #include "libvex_guest_offsets.h"
 
@@ -139,16 +140,24 @@ ML_(do_syscall_for_client_WRK):
 .globl ML_(blksys_complete)
 .globl ML_(blksys_committed)
 .globl ML_(blksys_finished)
+#if defined(VGABI_N32)
+ML_(blksys_setup):      .int 1b
+ML_(blksys_restart):    .int 2b
+ML_(blksys_complete):   .int 3b
+ML_(blksys_committed):  .int 4b
+ML_(blksys_finished):   .int 5b
+#else
 ML_(blksys_setup):      .quad 1b
 ML_(blksys_restart):    .quad 2b
 ML_(blksys_complete):   .quad 3b
 ML_(blksys_committed):  .quad 4b
 ML_(blksys_finished):   .quad 5b
-.previous
-/* Let the linker know we don't need an executable stack */
-.section .note.GNU-stack,"",%progbits
+#endif
 
 #endif // defined(VGP_mips64_linux)
+
+/* Let the linker know we don't need an executable stack */
+MARK_STACK_NO_EXEC
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -52,11 +52,14 @@
    into memory, the rate falls by about a factor of 3. 
 */
 
-/* Allocated memory as returned by LibVEX_Alloc will be aligned on this
-   boundary. */
-#define REQ_ALIGN 8
-
+#if defined(ENABLE_INNER)
+/* 5 times more memory to be on the safe side:  consider each allocation is
+   8 bytes, and we need 16 bytes redzone before and after. */
+#define N_TEMPORARY_BYTES (5*5000000)
+static Bool mempools_created = False;
+#else
 #define N_TEMPORARY_BYTES 5000000
+#endif
 
 static HChar  temporary[N_TEMPORARY_BYTES] __attribute__((aligned(REQ_ALIGN)));
 static HChar* temporary_first = &temporary[0];
@@ -65,16 +68,21 @@ static HChar* temporary_last  = &temporary[N_TEMPORARY_BYTES-1];
 
 static ULong  temporary_bytes_allocd_TOT = 0;
 
+#if defined(ENABLE_INNER)
+/* See N_TEMPORARY_BYTES */
+#define N_PERMANENT_BYTES (5*10000)
+#else
 #define N_PERMANENT_BYTES 10000
+#endif
 
 static HChar  permanent[N_PERMANENT_BYTES] __attribute__((aligned(REQ_ALIGN)));
 static HChar* permanent_first = &permanent[0];
 static HChar* permanent_curr  = &permanent[0];
 static HChar* permanent_last  = &permanent[N_PERMANENT_BYTES-1];
 
-static HChar* private_LibVEX_alloc_first = &temporary[0];
-static HChar* private_LibVEX_alloc_curr  = &temporary[0];
-static HChar* private_LibVEX_alloc_last  = &temporary[N_TEMPORARY_BYTES-1];
+HChar* private_LibVEX_alloc_first = &temporary[0];
+HChar* private_LibVEX_alloc_curr  = &temporary[0];
+HChar* private_LibVEX_alloc_last  = &temporary[N_TEMPORARY_BYTES-1];
 
 
 static VexAllocMode mode = VexAllocModeTEMP;
@@ -160,7 +168,7 @@ VexAllocMode vexGetAllocMode ( void )
 }
 
 __attribute__((noreturn))
-static void private_LibVEX_alloc_OOM(void)
+void private_LibVEX_alloc_OOM(void)
 {
    const HChar* pool = "???";
    if (private_LibVEX_alloc_first == &temporary[0]) pool = "TEMP";
@@ -182,6 +190,18 @@ void vexSetAllocModeTEMP_and_clear ( void )
    temporary_bytes_allocd_TOT 
       += (ULong)(private_LibVEX_alloc_curr - private_LibVEX_alloc_first);
 
+#if defined(ENABLE_INNER)
+   if (mempools_created) {
+      VALGRIND_MEMPOOL_TRIM(&temporary[0], &temporary[0], 0);
+   } else {
+      VALGRIND_CREATE_MEMPOOL(&temporary[0], VEX_REDZONE_SIZEB, 0);
+      VALGRIND_CREATE_MEMPOOL(&permanent[0], VEX_REDZONE_SIZEB, 0);
+      VALGRIND_MAKE_MEM_NOACCESS(&permanent[0], N_PERMANENT_BYTES);
+      mempools_created = True;
+   }
+   VALGRIND_MAKE_MEM_NOACCESS(&temporary[0], N_TEMPORARY_BYTES);
+#endif
+
    mode = VexAllocModeTEMP;
    temporary_curr            = &temporary[0];
    private_LibVEX_alloc_curr = &temporary[0];
@@ -201,54 +221,6 @@ void vexSetAllocModeTEMP_and_clear ( void )
 
 /* Exported to library client. */
 
-/* Allocate in Vex's temporary allocation area.  Be careful with this.
-   You can only call it inside an instrumentation or optimisation
-   callback that you have previously specified in a call to
-   LibVEX_Translate.  The storage allocated will only stay alive until
-   translation of the current basic block is complete.
- */
-
-void* LibVEX_Alloc ( SizeT nbytes )
-{
-   struct align {
-      char c;
-      union {
-         char c;
-         short s;
-         int i;
-         long l;
-         long long ll;
-         float f;
-         double d;
-         /* long double is currently not used and would increase alignment
-            unnecessarily. */
-         /* long double ld; */
-         void *pto;
-         void (*ptf)(void);
-      } x;
-   };
-
-   /* Make sure the compiler does no surprise us */
-   vassert(offsetof(struct align,x) <= REQ_ALIGN);
-
-#if 0
-  /* Nasty debugging hack, do not use. */
-  return malloc(nbytes);
-#else
-   HChar* curr;
-   HChar* next;
-   SizeT  ALIGN;
-   ALIGN  = offsetof(struct align,x) - 1;
-   nbytes = (nbytes + ALIGN) & ~ALIGN;
-   curr   = private_LibVEX_alloc_curr;
-   next   = curr + nbytes;
-   if (next >= private_LibVEX_alloc_last)
-      private_LibVEX_alloc_OOM();
-   private_LibVEX_alloc_curr = next;
-   return curr;
-#endif
-}
-
 void LibVEX_ShowAllocStats ( void )
 {
    vex_printf("vex storage: T total %lld bytes allocated\n",
@@ -257,6 +229,10 @@ void LibVEX_ShowAllocStats ( void )
               (Long)(permanent_curr - permanent_first) );
 }
 
+void *LibVEX_Alloc ( SizeT nbytes )
+{
+   return LibVEX_Alloc_inline(nbytes);
+}
 
 /*---------------------------------------------------------*/
 /*--- Bombing out                                       ---*/
@@ -307,13 +283,40 @@ Bool vex_streq ( const HChar* s1, const HChar* s2 )
    }
 }
 
+/* Vectorised memset, copied from Valgrind's m_libcbase.c. */
 void vex_bzero ( void* sV, SizeT n )
 {
-   SizeT i;
-   UChar* s = (UChar*)sV;
-   /* No laughing, please.  Just don't call this too often.  Thank you
-      for your attention. */
-   for (i = 0; i < n; i++) s[i] = 0;
+#  define IS_4_ALIGNED(aaa_p) (0 == (((HWord)(aaa_p)) & ((HWord)0x3)))
+
+   UChar* d = sV;
+
+   while ((!IS_4_ALIGNED(d)) && n >= 1) {
+      d[0] = 0;
+      d++;
+      n--;
+   }
+   if (n == 0)
+      return;
+   while (n >= 16) {
+      ((UInt*)d)[0] = 0;
+      ((UInt*)d)[1] = 0;
+      ((UInt*)d)[2] = 0;
+      ((UInt*)d)[3] = 0;
+      d += 16;
+      n -= 16;
+   }
+   while (n >= 4) {
+      ((UInt*)d)[0] = 0;
+      d += 4;
+      n -= 4;
+   }
+   while (n >= 1) {
+      d[0] = 0;
+      d++;
+      n--;
+   }
+   return;
+#  undef IS_4_ALIGNED
 }
 
 
@@ -625,6 +628,59 @@ UInt vex_sprintf ( HChar* buf, const HChar *format, ... )
 
    vassert(vex_strlen(buf) == ret);
    return ret;
+}
+
+
+/*---------------------------------------------------------*/
+/*--- Misaligned memory access support                  ---*/
+/*---------------------------------------------------------*/
+
+UInt read_misaligned_UInt_LE ( void* addr )
+{
+   UChar* p = (UChar*)addr;
+   UInt   w = 0;
+   w = (w << 8) | p[3];
+   w = (w << 8) | p[2];
+   w = (w << 8) | p[1];
+   w = (w << 8) | p[0];
+   return w;
+}
+
+ULong read_misaligned_ULong_LE ( void* addr )
+{
+   UChar* p = (UChar*)addr;
+   ULong  w = 0;
+   w = (w << 8) | p[7];
+   w = (w << 8) | p[6];
+   w = (w << 8) | p[5];
+   w = (w << 8) | p[4];
+   w = (w << 8) | p[3];
+   w = (w << 8) | p[2];
+   w = (w << 8) | p[1];
+   w = (w << 8) | p[0];
+   return w;
+}
+
+void write_misaligned_UInt_LE ( void* addr, UInt w )
+{
+   UChar* p = (UChar*)addr;
+   p[0] = (w & 0xFF); w >>= 8;
+   p[1] = (w & 0xFF); w >>= 8;
+   p[2] = (w & 0xFF); w >>= 8;
+   p[3] = (w & 0xFF); w >>= 8;
+}
+
+void write_misaligned_ULong_LE ( void* addr, ULong w )
+{
+   UChar* p = (UChar*)addr;
+   p[0] = (w & 0xFF); w >>= 8;
+   p[1] = (w & 0xFF); w >>= 8;
+   p[2] = (w & 0xFF); w >>= 8;
+   p[3] = (w & 0xFF); w >>= 8;
+   p[4] = (w & 0xFF); w >>= 8;
+   p[5] = (w & 0xFF); w >>= 8;
+   p[6] = (w & 0xFF); w >>= 8;
+   p[7] = (w & 0xFF); w >>= 8;
 }
 
 

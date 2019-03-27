@@ -64,6 +64,11 @@ primitives, you can describe their behaviour to Helgrind using the
 <varname>ANNOTATE_*</varname> macros defined
 in <varname>helgrind.h</varname>.</para>
 
+<para>Helgrind also provides <xref linkend="manual-core.xtree"/> memory
+  profiling using the command line
+  option <computeroutput>--xtree-memory</computeroutput> and the monitor command
+   <computeroutput>xtmemory</computeroutput>.</para>
+
 
 
 <para>Following those is a section containing 
@@ -1144,6 +1149,58 @@ unlock(mx)                             unlock(mx)
         <option>--history-level=none</option>.</para>
     </listitem>
   </varlistentry>
+  
+  <varlistentry id="opt.delta-stacktrace"
+                xreflabel="--delta-stacktrace">
+    <term>
+      <option><![CDATA[--delta-stacktrace=no|yes
+      [default: yes on linux amd64/x86] ]]></option>
+    </term>
+    <listitem>
+      <para>This flag only has any effect
+        at <option>--history-level=full</option>.</para>
+      <para><option>--delta-stacktrace</option> configures the way Helgrind
+        captures the stacktraces for the
+        option <option>--history-level=full</option>. Such a stacktrace is
+        typically needed each time a new piece of memory is read or written in a
+        basic block of instructions. </para>
+      <para><option>--delta-stacktrace=no</option> causes
+        Helgrind to compute a full history stacktrace from the unwind info
+        each time a stacktrace is needed.</para>
+      <para><option>--delta-stacktrace=yes</option> indicates to Helgrind to
+        derive a new stacktrace from the previous stacktrace, as long as there
+        was no call instruction, no return instruction, or any other instruction
+        changing the call stack since the previous stacktrace was captured. If
+        no such instruction was executed, the new stacktrace can be derived from
+        the previous stacktrace by just changing the top frame to the current
+        program counter. This option can speed up Helgrind by 25% when
+        using <option>--history-level=full</option>. </para>
+      <para>The following aspects have to be considered when
+        using <option>--delta-stacktrace=yes</option> :
+        <itemizedlist>
+          <listitem>In some cases (for example in a function prologue), the
+            valgrind unwinder might not properly unwind the stack, due to some
+            limitations and/or due to wrong unwind info. When using
+            --delta-stacktrace=yes, the wrong stack trace captured in the
+            function prologue will be kept till the next call or return.
+          </listitem>
+          <listitem>On the other hand, --delta-stacktrace=yes sometimes helps to
+            obtain a correct stacktrace, for example when the unwind info allows
+            a correct stacktrace to be done in the beginning of the sequence,
+            but not later on in the instruction sequence.</listitem>
+          <listitem>Determining which instructions are changing the callstack is
+            partially based on platform dependent heuristics, which have to be
+            tuned/validated specifically for the platform. Also, unwinding in a
+            function prologue must be good enough to allow using
+            --delta-stacktrace=yes. Currently, the option --delta-stacktrace=yes
+            has been reasonably validated only on linux x86 32 bits and linux
+            amd64 64 bits. For more details about how to validate
+            --delta-stacktrace=yes, see debug option --hg-sanity-flags and the
+            function check_cached_rcec_ok in libhb_core.c.</listitem>
+        </itemizedlist>
+      </para>
+    </listitem>
+  </varlistentry>
 
   <varlistentry id="opt.conflict-cache-size"
                 xreflabel="--conflict-cache-size">
@@ -1187,6 +1244,51 @@ unlock(mx)                             unlock(mx)
         performance, but comes at the cost of missing races on
         stack-allocated data.
       </para>
+    </listitem>
+  </varlistentry>
+
+  <varlistentry id="opt.ignore-thread-creation"
+                xreflabel="--ignore-thread-creation">
+    <term>
+      <option><![CDATA[--ignore-thread-creation=<yes|no>
+      [default: no]]]></option>
+    </term>
+    <listitem>
+      <para>
+        Controls whether all activities during thread creation should be
+        ignored. By default enabled only on Solaris.
+        Solaris provides higher throughput, parallelism and scalability than
+        other operating systems, at the cost of more fine-grained locking
+        activity. This means for example that when a thread is created under
+        glibc, just one big lock is used for all thread setup. Solaris libc
+        uses several fine-grained locks and the creator thread resumes its
+        activities as soon as possible, leaving for example stack and TLS setup
+        sequence to the created thread.
+        This situation confuses Helgrind as it assumes there is some false
+        ordering in place between creator and created thread; and therefore many
+        types of race conditions in the application would not be reported.
+        To prevent such false ordering, this command line option is set to
+        <computeroutput>yes</computeroutput> by default on Solaris.
+        All activity (loads, stores, client requests) is therefore ignored
+        during:</para>
+      <itemizedlist>
+        <listitem>
+          <para>
+            pthread_create() call in the creator thread
+          </para>
+        </listitem>
+        <listitem>
+          <para>
+            thread creation phase (stack and TLS setup) in the created thread
+          </para>
+        </listitem>
+      </itemizedlist>
+      <para>
+         Also new memory allocated during thread creation is untracked,
+         that is race reporting is suppressed there. DRD does the same thing
+         implicitly. This is necessary because Solaris libc caches many objects
+         and reuses them for different threads and that confuses
+         Helgrind.</para>
     </listitem>
   </varlistentry>
 
@@ -1271,20 +1373,24 @@ built-in gdbserver (see <xref linkend="manual-core-adv.gdbserver-commandhandling
 </para>
 <itemizedlist>
   <listitem>
-    <para><varname>info locks</varname> shows the list of locks and their
-    status. </para>
+    <para><varname>info locks [lock_addr]</varname> shows the list of locks
+    and their status. If  <varname>lock_addr</varname> is given, only shows
+    the lock located at this address. </para>
     <para>
-    In the following example, helgrind knows about one lock.
-    This lock is located at the guest address <varname>ga 0x8049a20</varname>.
-    The lock kind is <varname>rdwr</varname> indicating a reader-writer lock.
-    Other possible lock kinds are <varname>nonRec</varname> (simple mutex, non recursive)
+    In the following example, helgrind knows about one lock.  This
+    lock is located at the guest address <varname>ga
+    0x8049a20</varname>.  The lock kind is <varname>rdwr</varname>
+    indicating a reader-writer lock.  Other possible lock kinds
+    are <varname>nonRec</varname> (simple mutex, non recursive)
     and <varname>mbRec</varname> (simple mutex, possibly recursive).
-    The lock kind is then followed by the list of threads helding the lock.
-    In the below example, <varname>R1:thread #6 tid 3</varname> indicates that the
-    helgrind thread #6 has acquired (once, as the counter following the letter R is one)
-    the lock in read mode. The helgrind thread nr is incremented for each started thread.
-    The presence of 'tid 3' indicates that the thread #6 is has not exited yet and is the
-    valgrind tid 3. If a thread has terminated, then this is indicated with 'tid (exited)'.
+    The lock kind is then followed by the list of threads helding the
+    lock.  In the below example, <varname>R1:thread #6 tid 3</varname>
+    indicates that the helgrind thread #6 has acquired (once, as the
+    counter following the letter R is one) the lock in read mode. The
+    helgrind thread nr is incremented for each started thread.  The
+    presence of 'tid 3' indicates that the thread #6 is has not exited
+    yet and is the valgrind tid 3. If a thread has terminated, then
+    this is indicated with 'tid (exited)'.
     </para>
 <programlisting><![CDATA[
 (gdb) monitor info locks
@@ -1295,9 +1401,9 @@ Lock ga 0x8049a20 {
 (gdb) 
 ]]></programlisting>
 
-    <para> If you give the option <varname>--read-var-info=yes</varname>, then more
-    information will be provided about the lock location, such as the global variable
-    or the heap block that contains the lock:
+    <para> If you give the option <varname>--read-var-info=yes</varname>,
+    then more information will be provided about the lock location, such as
+    the global variable or the heap block that contains the lock:
     </para>
 <programlisting><![CDATA[
 Lock ga 0x8049a20 {
@@ -1308,6 +1414,50 @@ Lock ga 0x8049a20 {
 }
 ]]></programlisting>
 
+  </listitem>
+
+  <listitem>
+    <para><varname>accesshistory  &lt;addr&gt; [&lt;len&gt;]</varname>
+    shows the  access history recorded for &lt;len&gt; (default 1) bytes
+    starting at &lt;addr&gt;. For each recorded access that overlaps
+    with the given range, <varname>accesshistory</varname> shows the operation
+    type (read or write), the address and size read or written, the helgrind
+    thread nr/valgrind tid number that did the operation and the locks held
+    by the thread at the time of the operation.
+    The oldest access is shown first, the most recent access is shown last.
+    </para>
+    <para>
+    In the following example, we see first a recorded write of 4 bytes by
+    thread #7 that has modified the given 2 bytes range.
+    The second recorded write is the most recent recorded write : thread #9
+    modified the same 2 bytes as part of a 4 bytes write operation.
+    The list of locks held by each thread at the time of the write operation
+    are also shown.
+    </para>
+<programlisting><![CDATA[
+(gdb) monitor accesshistory 0x8049D8A 2
+write of size 4 at 0x8049D88 by thread #7 tid 3
+==6319== Locks held: 2, at address 0x8049D8C (and 1 that can't be shown)
+==6319==    at 0x804865F: child_fn1 (locked_vs_unlocked2.c:29)
+==6319==    by 0x400AE61: mythread_wrapper (hg_intercepts.c:234)
+==6319==    by 0x39B924: start_thread (pthread_create.c:297)
+==6319==    by 0x2F107D: clone (clone.S:130)
+
+write of size 4 at 0x8049D88 by thread #9 tid 2
+==6319== Locks held: 2, at addresses 0x8049DA4 0x8049DD4
+==6319==    at 0x804877B: child_fn2 (locked_vs_unlocked2.c:45)
+==6319==    by 0x400AE61: mythread_wrapper (hg_intercepts.c:234)
+==6319==    by 0x39B924: start_thread (pthread_create.c:297)
+==6319==    by 0x2F107D: clone (clone.S:130)
+
+]]></programlisting>
+
+  </listitem>
+  <listitem>
+    <para><varname>xtmemory [&lt;filename&gt; default xtmemory.kcg.%p.%n]</varname>
+      requests Helgrind tool to produce an xtree heap memory report.
+      See <xref linkend="manual-core.xtree"/> for
+      a detailed explanation about execution trees. </para>
   </listitem>
 
 </itemizedlist>

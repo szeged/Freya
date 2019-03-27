@@ -40,7 +40,6 @@
 #include "pub_core_libcassert.h"
 #include "pub_core_libcbase.h"
 #include "pub_core_options.h"
-#include "pub_core_libcsetjmp.h"
 #include "pub_core_threadstate.h"
 #include "pub_core_gdbserver.h"
 #include "pub_core_vki.h"
@@ -116,6 +115,14 @@ extern Addr thumb_pc (Addr pc);
    vgdb means use the running_tid if there is one running
    or tid 1 otherwise). */
 extern ThreadId vgdb_interrupted_tid;
+
+/* True if GDB is catching client syscalls. */
+extern Bool catching_syscalls;
+
+/* Size of the syscalls_to_catch. Only useful if catching_syscalls True.
+   syscalls_to_catch_size 0 means all syscalls are caught. */
+extern Int syscalls_to_catch_size;
+extern Int *syscalls_to_catch;
 
 /*------------ end of interface to low level gdbserver */
 
@@ -207,11 +214,17 @@ struct thread_info;
    A call to call_gdbserver is needed to send the resume reply to GDB.
    After this call, gdbserver_deliver_signal indicates if the signal
    is effectively to be delivered to the guest process. */
-extern void gdbserver_signal_encountered (Int vki_sigNo);
-/* between these two calls, call call_gdbserver */
+extern void gdbserver_signal_encountered (const vki_siginfo_t *info);
+/* between these two calls, call call_gdbserver.
+   Between these 2 calls the signal to report to GDB can be retrieved using
+   gdbserver_pending_signal_to_report. */
 /* If gdbserver_deliver_signal True, then gdb did not ask
    to ignore the signal, so signal can be delivered to the guest. */
-extern Bool gdbserver_deliver_signal (Int vki_sigNo);
+extern Bool gdbserver_deliver_signal (vki_siginfo_t *info);
+
+/* Signal info last provided with gdbserver_signal_encountered.
+   It is what is/will be reported to GDB. */
+extern void gdbserver_pending_signal_to_report (vki_siginfo_t /* OUT */ *info);
 
 /* Called when a process is about to go with reason ('W' or 'X') and code.
    This sets global variables that will be used to return the process

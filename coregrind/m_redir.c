@@ -7,9 +7,9 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
-   Copyright (C) 2003-2013 Jeremy Fitzhardinge
+   Copyright (C) 2003-2017 Jeremy Fitzhardinge
       jeremy@goop.org
 
    This program is free software; you can redistribute it and/or
@@ -49,7 +49,7 @@
 #include "pub_core_machine.h"      // VG_(fnptr_to_fnentry)
 #include "pub_core_aspacemgr.h"    // VG_(am_find_nsegment)
 #include "pub_core_xarray.h"
-#include "pub_core_clientstate.h"  // VG_(client___libc_freeres_wrapper)
+#include "pub_core_clientstate.h"  // VG_(client_freeres_wrapper)
 #include "pub_core_demangle.h"     // VG_(maybe_Z_demangle)
 #include "pub_core_libcproc.h"     // VG_(libdir)
 
@@ -233,6 +233,7 @@ typedef
       HChar* from_fnpatt;  /* from fnname pattern  */
       Addr   to_addr;      /* where redirecting to */
       Bool   isWrap;       /* wrap or replacement? */
+      Bool   isGlobal;     /* must the symbol to replace be global? */
       Int    becTag; /* 0 through 9999.  Behavioural equivalance class tag.
                         If two wrappers have the same (non-zero) tag, they
                         are promising that they behave identically. */
@@ -388,7 +389,7 @@ static HChar const* advance_to_comma ( HChar const* c ) {
 
 void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
 {
-   Bool         ok, isWrap;
+   Bool         ok, isWrap, isGlobal;
    Int          i, nsyms, becTag, becPrio;
    Spec*        specList;
    Spec*        spec;
@@ -406,6 +407,11 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
    const HChar* const pthread_soname = "libpthread.so.0";
    const HChar* const pthread_stack_cache_actsize_varname
       = "stack_cache_actsize";
+#if defined(VGO_solaris)
+   Bool         vg_vfork_fildes_var_search = False;
+   const HChar* const vg_preload_core_soname = "vgpreload_core.so.0";
+   const HChar* const vg_vfork_fildes_varname = "vg_vfork_fildes";
+#endif
 
 #  if defined(VG_PLAT_USES_PPCTOC)
    check_ppcTOCs = True;
@@ -504,17 +510,23 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
       SimHintiS(SimHint_no_nptl_pthread_stackcache, VG_(clo_sim_hints))
       && 0 == VG_(strcmp)(newdi_soname, pthread_soname);
 
+#if defined(VGO_solaris)
+   vg_vfork_fildes_var_search =
+      0 == VG_(strcmp)(newdi_soname, vg_preload_core_soname);
+#endif
+
    nsyms = VG_(DebugInfo_syms_howmany)( newdi );
    for (i = 0; i < nsyms; i++) {
       VG_(DebugInfo_syms_getidx)( newdi, i, &sym_avmas,
                                   NULL, &sym_name_pri, &sym_names_sec,
-                                  &isText, NULL );
+                                  &isText, NULL, NULL );
       /* Set up to conveniently iterate over all names for this symbol. */
       const HChar*  twoslots[2];
       const HChar** names_init =
          alloc_symname_array(sym_name_pri, sym_names_sec, &twoslots[0]);
       const HChar** names;
       for (names = names_init; *names; names++) {
+         isGlobal = False;
          ok = VG_(maybe_Z_demangle)( *names,
                                      &demangled_sopatt,
                                      &demangled_fnpatt,
@@ -534,6 +546,18 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
                VG_(client__stack_cache_actsize__addr) = (SizeT*) sym_avmas.main;
                dehacktivate_pthread_stack_cache_var_search = False;
             }
+#if defined(VGO_solaris)
+            if (vg_vfork_fildes_var_search
+                && 0 == VG_(strcmp)(*names, vg_vfork_fildes_varname)) {
+               if ( VG_(clo_verbosity) > 1 ) {
+                  VG_(message)( Vg_DebugMsg,
+                                "vfork kludge: found symbol %s at addr %p\n",
+                                *names, (void*) sym_avmas.main);
+               }
+               VG_(vfork_fildes_addr) = (Int*) sym_avmas.main;
+               vg_vfork_fildes_var_search = False;
+            }
+#endif
             continue;
          }
          if (!ok) {
@@ -557,15 +581,12 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
                have a matching lib synonym, then replace the sopatt.
                Otherwise, just ignore this redirection spec. */
 
-            if (!VG_(clo_soname_synonyms))
-               continue; // No synonyms => skip the redir.
-
             /* Search for a matching synonym=newname*/
             SizeT const sopatt_syn_len 
                = VG_(strlen)(demangled_sopatt+VG_SO_SYN_PREFIX_LEN);
             HChar const* last = VG_(clo_soname_synonyms);
             
-            while (*last) {
+            while (last != NULL && *last) {
                HChar const* first = last;
                last = advance_to_equal(first);
                
@@ -589,6 +610,17 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
                   last++;
             }
             
+	    // If the user didn't set it then somalloc is special. We
+	    // want to match public/global symbols that match the
+	    // fnpatt everywhere.
+	    if (replaced_sopatt == NULL
+		&& VG_(strcmp) ( demangled_sopatt, SO_SYN_MALLOC_NAME ) == 0)
+	      {
+		replaced_sopatt = dinfo_strdup("m_redir.rnnD.1", "*");
+		demangled_sopatt = replaced_sopatt;
+		isGlobal = True;
+	      }
+
             // If we have not replaced the sopatt, then skip the redir.
             if (replaced_sopatt == NULL)
                continue;
@@ -599,6 +631,7 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
          spec->from_fnpatt = dinfo_strdup("redir.rnnD.3", demangled_fnpatt);
          spec->to_addr = sym_avmas.main;
          spec->isWrap = isWrap;
+         spec->isGlobal = isGlobal;
          spec->becTag = becTag;
          spec->becPrio = becPrio;
          /* check we're not adding manifestly stupid destinations */
@@ -607,6 +640,14 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
          spec->mark = False; /* not significant */
          spec->done = False; /* not significant */
          specList = spec;
+         /* The demangler is the owner of the demangled_sopatt memory,
+            unless it was replaced. In this case, we have to free the
+            replace_sopatt(==demangled_sopatt).  We can free it,
+            because it was dinfo_strup-ed into spec->from_sopatt. */
+         if (replaced_sopatt != NULL) {
+            vg_assert(demangled_sopatt == replaced_sopatt);
+            dinfo_free(replaced_sopatt);
+         }
       }
       free_symname_array(names_init, &twoslots[0]);
    }
@@ -617,12 +658,21 @@ void VG_(redir_notify_new_DebugInfo)( const DebugInfo* newdi )
       VG_(message)(Vg_DebugMsg,
                    "=> pthread stack cache cannot be disabled!\n");
    }
+#if defined(VGO_solaris)
+   if (vg_vfork_fildes_var_search) {
+      VG_(message)(Vg_DebugMsg,
+                   "WARNING: could not find symbol for var %s in %s\n",
+                   vg_vfork_fildes_varname, vg_preload_core_soname);
+      VG_(message)(Vg_DebugMsg,
+                   "=> posix_spawn() will not work correctly!\n");
+   }
+#endif
 
    if (check_ppcTOCs) {
       for (i = 0; i < nsyms; i++) {
          VG_(DebugInfo_syms_getidx)( newdi, i, &sym_avmas,
                                      NULL, &sym_name_pri, &sym_names_sec,
-                                     &isText, NULL );
+                                     &isText, NULL, NULL );
          const HChar*  twoslots[2];
          const HChar** names_init =
             alloc_symname_array(sym_name_pri, sym_names_sec, &twoslots[0]);
@@ -754,7 +804,7 @@ void generate_and_add_actives (
      )
 {
    Spec*   sp;
-   Bool    anyMark, isText, isIFunc;
+   Bool    anyMark, isText, isIFunc, isGlobal;
    Active  act;
    Int     nsyms, i;
    SymAVMAs  sym_avmas;
@@ -767,8 +817,19 @@ void generate_and_add_actives (
    anyMark = False;
    for (sp = specs; sp; sp = sp->next) {
       sp->done = False;
-      sp->mark = VG_(string_match)( sp->from_sopatt, 
-                                    VG_(DebugInfo_get_soname)(di) );
+      const HChar *soname = VG_(DebugInfo_get_soname)(di);
+
+      /* When searching for global public symbols (like for the somalloc
+         synonym symbols), exclude the dynamic (runtime) linker as it is very
+         special. See https://bugs.kde.org/show_bug.cgi?id=355454 */
+      if ((VG_(strcmp)(sp->from_sopatt, "*") == 0) &&
+          (sp->isGlobal == True) &&
+          VG_(is_soname_ld_so)(soname)) {
+         sp->mark = False;
+         continue;
+      }
+
+      sp->mark = VG_(string_match)( sp->from_sopatt, soname );
       anyMark = anyMark || sp->mark;
    }
 
@@ -782,7 +843,7 @@ void generate_and_add_actives (
    for (i = 0; i < nsyms; i++) {
       VG_(DebugInfo_syms_getidx)( di, i, &sym_avmas,
                                   NULL, &sym_name_pri, &sym_names_sec,
-                                  &isText, &isIFunc );
+                                  &isText, &isIFunc, &isGlobal );
       const HChar*  twoslots[2];
       const HChar** names_init =
          alloc_symname_array(sym_name_pri, sym_names_sec, &twoslots[0]);
@@ -796,7 +857,8 @@ void generate_and_add_actives (
          for (sp = specs; sp; sp = sp->next) {
             if (!sp->mark)
                continue; /* soname doesn't match */
-            if (VG_(string_match)( sp->from_fnpatt, *names )) {
+            if (VG_(string_match)( sp->from_fnpatt, *names )
+		&& (sp->isGlobal == False || isGlobal == True)) {
                /* got a new binding.  Add to collection. */
                act.from_addr   = sym_avmas.main;
                act.to_addr     = sp->to_addr;
@@ -1123,8 +1185,10 @@ void VG_(redir_notify_delete_DebugInfo)( const DebugInfo* delsi )
 Addr VG_(redir_do_lookup) ( Addr orig, Bool* isWrap )
 {
    Active* r = VG_(OSetGen_Lookup)(activeSet, &orig);
-   if (r == NULL)
+   if (r == NULL) {
+      if (isWrap) *isWrap = False;
       return orig;
+   }
 
    vg_assert(r->to_addr != 0);
    if (isWrap)
@@ -1136,6 +1200,29 @@ Addr VG_(redir_do_lookup) ( Addr orig, Bool* isWrap )
    return r->to_addr;
 }
 
+/* Does the soname represent a dynamic (runtime) linker?
+   Considers various VG_U_LD* entries from pub_tool_redir.h. */
+Bool VG_(is_soname_ld_so) (const HChar *soname)
+{
+#  if defined(VGO_linux)
+   if (VG_STREQ(soname, VG_U_LD_LINUX_SO_3))         return True;
+   if (VG_STREQ(soname, VG_U_LD_LINUX_SO_2))         return True;
+   if (VG_STREQ(soname, VG_U_LD_LINUX_X86_64_SO_2))  return True;
+   if (VG_STREQ(soname, VG_U_LD64_SO_1))             return True;
+   if (VG_STREQ(soname, VG_U_LD64_SO_2))             return True;
+   if (VG_STREQ(soname, VG_U_LD_SO_1))               return True;
+   if (VG_STREQ(soname, VG_U_LD_LINUX_AARCH64_SO_1)) return True;
+   if (VG_STREQ(soname, VG_U_LD_LINUX_ARMHF_SO_3))   return True;
+#  elif defined(VGO_darwin)
+   if (VG_STREQ(soname, VG_U_DYLD)) return True;
+#  elif defined(VGO_solaris)
+   if (VG_STREQ(soname, VG_U_LD_SO_1)) return True;
+#  else
+#    error "Unsupported OS"
+#  endif
+
+   return False;
+}
 
 /*------------------------------------------------------------*/
 /*--- INITIALISATION                                       ---*/
@@ -1189,6 +1276,7 @@ static void add_hardwired_spec (const  HChar* sopatt, const HChar* fnpatt,
    spec->from_fnpatt = CONST_CAST(HChar *,fnpatt);
    spec->to_addr     = to_addr;
    spec->isWrap      = False;
+   spec->isGlobal    = False;
    spec->mandatory   = mandatory;
    /* VARIABLE PARTS */
    spec->mark        = False; /* not significant */
@@ -1211,6 +1299,10 @@ static const HChar* complain_about_stripped_glibc_ldso[]
     "",
     "  On Debian, Ubuntu:                 libc6-dbg",
     "  On SuSE, openSuSE, Fedora, RHEL:   glibc-debuginfo",
+    "",
+    "Note that if you are debugging a 32 bit process on a",
+    "64 bit system, you will need a corresponding 32 bit debuginfo",
+    "package (e.g. libc6-dbg:i386).",
     NULL
   };
 
@@ -1274,6 +1366,9 @@ void VG_(redir_initialise) ( void )
       the start, otherwise ld.so makes a lot of noise. */
    if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
 
+      add_hardwired_spec(
+         "ld-linux-x86-64.so.2", "index",
+         (Addr)&VG_(amd64_linux_REDIR_FOR_index), NULL);
       add_hardwired_spec(
          "ld-linux-x86-64.so.2", "strlen",
          (Addr)&VG_(amd64_linux_REDIR_FOR_strlen),
@@ -1392,6 +1487,17 @@ void VG_(redir_initialise) ( void )
          (Addr)&VG_(arm_linux_REDIR_FOR_strcmp),
          complain_about_stripped_glibc_ldso
       );
+      /* index */
+      add_hardwired_spec(
+         "ld-linux.so.3", "index",
+         (Addr)&VG_(arm_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+      add_hardwired_spec(
+         "ld-linux-armhf.so.3", "index",
+         (Addr)&VG_(arm_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
    }
 
 #  elif defined(VGP_arm64_linux)
@@ -1471,24 +1577,93 @@ void VG_(redir_initialise) ( void )
 
 #  elif defined(VGP_mips32_linux)
    if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
-
       /* this is mandatory - can't sanely continue without it */
       add_hardwired_spec(
-         "ld.so.3", "strlen",
+         "ld.so.1", "strlen",
          (Addr)&VG_(mips32_linux_REDIR_FOR_strlen),
          complain_about_stripped_glibc_ldso
       );
+      add_hardwired_spec(
+         "ld.so.1", "index",
+         (Addr)&VG_(mips32_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+#     if defined(VGPV_mips32_linux_android)
+      add_hardwired_spec(
+         "NONE", "__dl_strlen",
+         (Addr)&VG_(mips32_linux_REDIR_FOR_strlen),
+         NULL
+      );
+#     endif
    }
 
 #  elif defined(VGP_mips64_linux)
    if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
-
       /* this is mandatory - can't sanely continue without it */
       add_hardwired_spec(
-         "ld.so.3", "strlen",
+         "ld.so.1", "strlen",
          (Addr)&VG_(mips64_linux_REDIR_FOR_strlen),
          complain_about_stripped_glibc_ldso
       );
+      add_hardwired_spec(
+         "ld.so.1", "index",
+         (Addr)&VG_(mips64_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+#     if defined(VGABI_64)
+      add_hardwired_spec(
+         "ld-linux-mipsn8.so.1", "strlen",
+         (Addr)&VG_(mips64_linux_REDIR_FOR_strlen),
+         complain_about_stripped_glibc_ldso
+      );
+      add_hardwired_spec(
+         "ld-linux-mipsn8.so.1", "index",
+         (Addr)&VG_(mips64_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+#     elif defined(VGABI_N32)
+      add_hardwired_spec(
+         "ld.so.1", "strchr",
+         (Addr)&VG_(mips64_linux_REDIR_FOR_index),
+         complain_about_stripped_glibc_ldso
+      );
+#     else
+#     error unknown mips64 ABI
+#     endif
+   }
+
+#  elif defined(VGP_x86_solaris)
+   /* If we're using memcheck, use these intercepts right from
+      the start, otherwise ld.so makes a lot of noise. */
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/ld.so.1", "strcmp",
+                         (Addr)&VG_(x86_solaris_REDIR_FOR_strcmp), NULL);
+   }
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/ld.so.1", "strlen",
+                         (Addr)&VG_(x86_solaris_REDIR_FOR_strlen), NULL);
+   }
+
+#  elif defined(VGP_amd64_solaris)
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/amd64/ld.so.1", "strcpy",
+                         (Addr)&VG_(amd64_solaris_REDIR_FOR_strcpy), NULL);
+   }
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/amd64/ld.so.1", "strncpy",
+                         (Addr)&VG_(amd64_solaris_REDIR_FOR_strncpy), NULL);
+   }
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/amd64/ld.so.1", "strcmp",
+                         (Addr)&VG_(amd64_solaris_REDIR_FOR_strcmp), NULL);
+   }
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/amd64/ld.so.1", "strcat",
+                         (Addr)&VG_(amd64_solaris_REDIR_FOR_strcat), NULL);
+   }
+   if (0==VG_(strcmp)("Memcheck", VG_(details).name)) {
+      add_hardwired_spec("/lib/amd64/ld.so.1", "strlen",
+                         (Addr)&VG_(amd64_solaris_REDIR_FOR_strlen), NULL);
    }
 
 #  else
@@ -1528,7 +1703,8 @@ static Bool is_plausible_guest_addr(Addr a)
 {
    NSegment const* seg = VG_(am_find_nsegment)(a);
    return seg != NULL
-          && (seg->kind == SkAnonC || seg->kind == SkFileC)
+          && (seg->kind == SkAnonC || seg->kind == SkFileC ||
+              seg->kind == SkShmC)
           && (seg->hasX || seg->hasR); /* crude x86-specific hack */
 }
 
@@ -1563,7 +1739,7 @@ void handle_maybe_load_notifier( const HChar* soname,
       return;
 
    if (VG_(strcmp)(symbol, VG_STRINGIFY(VG_NOTIFY_ON_LOAD(freeres))) == 0)
-      VG_(client___libc_freeres_wrapper) = addr;
+      VG_(client_freeres_wrapper) = addr;
    else
    if (VG_(strcmp)(symbol, VG_STRINGIFY(VG_NOTIFY_ON_LOAD(ifunc_wrapper))) == 0)
       iFuncWrapper = addr;
@@ -1644,7 +1820,7 @@ static void handle_require_text_symbols ( const DebugInfo* di )
          const HChar** sym_names_sec = NULL;
          VG_(DebugInfo_syms_getidx)( di, j, NULL,
                                      NULL, &sym_name_pri, &sym_names_sec,
-                                     &isText, NULL );
+                                     &isText, NULL, NULL );
          const HChar*  twoslots[2];
          const HChar** names_init =
             alloc_symname_array(sym_name_pri, sym_names_sec, &twoslots[0]);
@@ -1687,6 +1863,8 @@ static void handle_require_text_symbols ( const DebugInfo* di )
    }
 
    /* All required specs were found.  Just free memory and return. */
+   for (i = 0; i < VG_(sizeXA)(fnpatts); i++)
+      VG_(free)(*(HChar**) VG_(indexXA)(fnpatts, i));
    VG_(deleteXA)(fnpatts);
 }
 
@@ -1698,10 +1876,11 @@ static void handle_require_text_symbols ( const DebugInfo* di )
 static void show_spec ( const HChar* left, const Spec* spec )
 {
    VG_(message)( Vg_DebugMsg, 
-                 "%s%-25s %-30s %s-> (%04d.%d) 0x%08lx\n",
+                 "%s%-25s %-30s %s%s-> (%04d.%d) 0x%08lx\n",
                  left,
                  spec->from_sopatt, spec->from_fnpatt,
                  spec->isWrap ? "W" : "R",
+                 spec->isGlobal ? "G" : "L",
                  spec->becTag, spec->becPrio,
                  spec->to_addr );
 }
@@ -1710,15 +1889,16 @@ static void show_active ( const HChar* left, const Active* act )
 {
    Bool ok;
    const HChar *buf;
- 
-   ok = VG_(get_fnname_w_offset)(act->from_addr, &buf);
+
+   DiEpoch ep = VG_(current_DiEpoch)();
+   ok = VG_(get_fnname_w_offset)(ep, act->from_addr, &buf);
    if (!ok) buf = "???";
    // Stash away name1
    HChar name1[VG_(strlen)(buf) + 1];
    VG_(strcpy)(name1, buf);
 
    const HChar *name2;
-   ok = VG_(get_fnname_w_offset)(act->to_addr, &name2);
+   ok = VG_(get_fnname_w_offset)(ep, act->to_addr, &name2);
    if (!ok) name2 = "???";
 
    VG_(message)(Vg_DebugMsg, "%s0x%08lx (%-20s) %s-> (%04d.%d) 0x%08lx %s\n", 

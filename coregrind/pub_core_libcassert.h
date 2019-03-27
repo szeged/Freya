@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward
+   Copyright (C) 2000-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -75,22 +75,9 @@ extern void VG_(exit_now)( Int status );
 
 /* Called when some unhandleable client behaviour is detected.
    Prints a msg and aborts. */
-extern void VG_(unimplemented) ( const HChar* msg )
-            __attribute__((__noreturn__));
-
-/* Show the state of various threads related information, such
-   as the guest stacktrace for each thread.
-   Mostly for debugging V.
-   The following activates optional output:
-     host_stacktrace : shows the host stacktrace.
-     stack_usage True means:
-                   shows how much of the valgrind stack was used.
-                   shows the client stack range
-     exited_thread_slots : show information for thread slots that were used
-        but the thread has now exited. */
-extern void VG_(show_sched_status) ( Bool host_stacktrace,
-                                     Bool stack_usage,
-                                     Bool exited_threads);
+extern void VG_(unimplemented) ( const HChar* format, ... )
+            __attribute__((__noreturn__))
+            PRINTF_CHECK(1, 2);
 
 #endif   // __PUB_CORE_LIBCASSERT_H
 

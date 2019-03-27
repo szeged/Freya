@@ -229,7 +229,11 @@ static Addr mips_adjust_breakpoint_address (Addr pc)
    /* Make sure we don't scan back before the beginning of the current
       function, since we may fetch constant data or insns that look like
       a jump. */
-   if (VG_(get_inst_offset_in_function) (bpaddr, &offset)) {
+
+   // Placing a breakpoint, so pc should be in di of current epoch.
+   const DiEpoch cur_ep = VG_(current_DiEpoch)();
+
+   if (VG_(get_inst_offset_in_function) (cur_ep, bpaddr, &offset)) {
       func_addr = bpaddr - offset;
       if (func_addr > boundary && func_addr <= bpaddr)
          boundary = func_addr;
@@ -357,9 +361,11 @@ const char* target_xml (Bool shadow_mode)
 static CORE_ADDR** target_get_dtv (ThreadState *tst)
 {
    VexGuestMIPS64State* mips64 = (VexGuestMIPS64State*)&tst->arch.vex;
-   // mips64 dtv location similar to ppc64
-   return (CORE_ADDR**)((CORE_ADDR)mips64->guest_ULR 
-                        - 0x7000 - sizeof(CORE_ADDR));
+   // Top of MIPS tcbhead structure is located 0x7000 bytes before the value
+   // of ULR. Dtv is the first of two pointers in tcbhead structure.
+   // More details can be found in GLIBC/sysdeps/nptl/tls.h.
+   return (CORE_ADDR**)((CORE_ADDR)mips64->guest_ULR
+                        - 0x7000 - 2 * sizeof(CORE_ADDR));
 }
 
 static struct valgrind_target_ops low_target = {

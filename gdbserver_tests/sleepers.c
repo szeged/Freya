@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <errno.h>
 #include <string.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -26,7 +27,8 @@ static pid_t gettid()
 static void whoami(char *msg) __attribute__((unused));
 static void whoami(char *msg)
 {
-   fprintf(stderr, "pid %d Thread %d %s\n", getpid(), gettid(), msg);
+   fprintf(stderr, "pid %ld Thread %ld %s\n", (long) getpid(), (long) gettid(),
+           msg);
    fflush(stderr);
 }
 
@@ -82,8 +84,8 @@ static void *sleeper_or_burner(void *v)
          t[s->t].tv_sec = sleepms / 1000;
          t[s->t].tv_usec = (sleepms % 1000) * 1000;
          ret = select (0, NULL, NULL, NULL, &t[s->t]);
-         /* We only expect a timeout result from the above. */
-         if (ret != 0)
+         /* We only expect a timeout result or EINTR from the above. */
+         if (ret != 0 && errno != EINTR)
             perror("unexpected result from select");
       }
       if (burn > 0 && s->burn)
@@ -135,7 +137,7 @@ int main (int argc, char *argv[])
   pthread_t ebbr, egll, zzzz;
   struct spec b, l, p, m;
   char *some_mem __attribute__((unused)) = malloc(100);
-  setaffinity();
+  if (argc > 5 && atoi(argv[5])) setaffinity();
   setup_sigusr_handler();
   if (argc > 1)
      loops = atoi(argv[1]);
@@ -151,8 +153,8 @@ int main (int argc, char *argv[])
   else
      threads_spec = "BSBSBSBS";
   
-  fprintf(stderr, "loops/sleep_ms/burn/threads_spec:  %d %d %d %s\n",
-          loops, sleepms, burn, threads_spec);
+  fprintf(stderr, "loops/sleep_ms/burn/threads_spec/affinity:  %d %d %d %s %d\n",
+          loops, sleepms, burn, threads_spec, argc > 5 && atoi(argv[5]));
   fflush(stderr);
 
   b.name = "Brussels";

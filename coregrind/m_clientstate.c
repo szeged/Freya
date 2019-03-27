@@ -9,7 +9,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -31,6 +31,7 @@
 */
 
 #include "pub_core_basics.h"
+#include "pub_core_threadstate.h"
 #include "pub_core_vki.h"
 #include "pub_core_xarray.h"
 #include "pub_core_clientstate.h"
@@ -50,10 +51,14 @@
 Addr  VG_(clstk_start_base)  = 0;
 /* Initial highest address of the stack segment of the main thread. */
 Addr  VG_(clstk_end)   = 0;
-UWord VG_(clstk_id)    = 0;
+UWord VG_(clstk_id)    = NULL_STK_ID;
+/* Maximum size of the main thread's client stack. */
+SizeT VG_(clstk_max_size) = 0;
 
-/* linux only: where is the client auxv ? */
-/* This is set up as part of setup_client_stack in initimg-linux.c. */
+/* Solaris and Linux only, specifies where the client auxv is.
+
+   This is set up as part of setup_client_stack() in
+   initimg-{linux,solaris}.c. */
 UWord* VG_(client_auxv) = NULL;
 
 Addr  VG_(brk_base)    = 0;       /* start of brk */
@@ -67,6 +72,11 @@ Int VG_(cl_cmdline_fd) = -1;
 
 /* A fd which refers to the fake /proc/<pid>/auxv in /tmp. */
 Int VG_(cl_auxv_fd) = -1;
+
+#if defined(VGO_solaris)
+/* A fd which refers to the fake /proc/<pid>/psinfo in /tmp. */
+Int VG_(cl_psinfo_fd) = -1;
+#endif /* VGO_solaris */
 
 // Command line pieces, after they have been extracted from argv in
 // m_main.main().  The payload vectors are allocated in VG_AR_CORE
@@ -97,9 +107,9 @@ HChar* VG_(name_of_launcher) = NULL;
 Int VG_(fd_soft_limit) = -1;
 Int VG_(fd_hard_limit) = -1;
 
-/* Useful addresses extracted from the client */
-/* Where is the __libc_freeres_wrapper routine we made? */
-Addr VG_(client___libc_freeres_wrapper) = 0;
+/* Useful addresses extracted from the client. */
+/* Where is the freeres_wrapper routine we made? */
+Addr VG_(client_freeres_wrapper) = 0;
 
 /* x86-linux only: where is glibc's _dl_sysinfo_int80 function?
    Finding it isn't essential, but knowing where it is does sometimes
@@ -112,6 +122,12 @@ Addr VG_(client__dl_sysinfo_int80) = 0;
       static size_t stack_cache_actsize;
    in nptl/allocatestack.c */
 SizeT* VG_(client__stack_cache_actsize__addr) = 0;
+
+#if defined(VGO_solaris)
+/* Address of variable vg_vfork_fildes in vgpreload_core.so.0
+   (vg_preloaded.c). */
+Int* VG_(vfork_fildes_addr) = 0;
+#endif
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -28,7 +28,7 @@
    The GNU General Public License is contained in the file COPYING.
 */
 
-#if defined(VGO_linux)
+#if defined(VGO_linux) || defined(VGO_solaris)
 
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
@@ -47,10 +47,20 @@
 #include "priv_ume.h"
 
 /* --- !!! --- EXTERNAL HEADERS start --- !!! --- */
-#define _GNU_SOURCE
-#define _FILE_OFFSET_BITS 64
+#if defined(VGO_linux)
+#  define _GNU_SOURCE
+#  define _FILE_OFFSET_BITS 64
+#endif
 /* This is for ELF types etc, and also the AT_ constants. */
 #include <elf.h>
+#if defined(VGO_solaris)
+#  include <sys/fasttrap.h> // PT_SUNWDTRACE_SIZE
+#  if defined(SOLARIS_PT_SUNDWTRACE_THRP)
+#     define PT_SUNWDTRACE_PROTECTION (PF_R)
+#  else
+#     define PT_SUNWDTRACE_PROTECTION (PF_R | PF_W | PF_X)
+#  endif
+#endif
 /* --- !!! --- EXTERNAL HEADERS end --- !!! --- */
 
 
@@ -68,6 +78,237 @@ struct elfinfo
    ESZ(Phdr)    *p;
    Int          fd;
 };
+
+#if defined(VGO_linux)
+
+/*
+   arch_elf_pt_proc() - check a PT_LOPROC..PT_HIPROC ELF program header
+      @ehdr: The main ELF header
+      @phdr: The program header to check
+      @fd:  The ELF file filedescriptor
+      @is_interpreter:  True if the phdr is from the interpreter of the ELF
+      being loaded, else false.
+      @state:  Architecture-specific state preserved throughout the process
+      of loading the ELF.
+
+   Inspects the program header phdr to validate its correctness and/or
+   suitability for the system. Called once per ELF program header in the
+   range PT_LOPROC to PT_HIPROC, for both the ELF being loaded and its
+   interpreter.
+
+   Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
+           with that return code.
+
+   arch_check_elf()
+      @ehdr: The main ELF header
+      @has_interpreter: True if the ELF has an interpreter, else false.
+      @state:  Architecture-specific state preserved throughout the process
+      of loading the ELF.
+
+   Provides a final opportunity for architecture code to reject the loading
+   of the ELF. This is called after all program headers to be checked by
+   arch_elf_pt_proc have been.
+
+   Return: Zero to proceed with the ELF load, non-zero to fail the ELF load
+           with that return code.
+
+   Ref: linux/fs/binfmt_elf.c
+ */
+
+#   if defined(VGP_mips32_linux)
+
+/* Ref: linux/arch/mips/kernel/elf.c */
+static inline Int arch_elf_pt_proc(ESZ(Ehdr) *ehdr,
+                                   ESZ(Phdr) *phdr,
+                                   Int fd, Bool is_interpreter,
+                                   struct vki_arch_elf_state *state)
+{
+   struct vki_mips_elf_abiflags_v0 abiflags;
+   SysRes sres;
+
+   if ( (ehdr->e_ident[EI_CLASS] == ELFCLASS32) &&
+        (ehdr->e_flags & VKI_EF_MIPS_FP64) ) {
+      /*
+       * Set MIPS_ABI_FP_OLD_64 for EF_MIPS_FP64. We will override it
+       * later if needed
+       */
+      if (is_interpreter)
+         state->interp_fp_abi = VKI_MIPS_ABI_FP_OLD_64;
+      else
+         state->fp_abi = VKI_MIPS_ABI_FP_OLD_64;
+   }
+
+   if (phdr->p_type != VKI_PT_MIPS_ABIFLAGS)
+      return 0;
+
+   if (phdr->p_filesz < sizeof(abiflags))
+      return VKI_EINVAL;
+
+   sres = VG_(pread)(fd, &abiflags, sizeof(abiflags), phdr->p_offset);
+
+   if (sr_isError(sres))
+      return sr_Err(sres);
+
+   if (sr_Res(sres) != sizeof(abiflags))
+      return VKI_EIO;
+
+   /* Record the required FP ABIs for use by arch_check_elf */
+   if (is_interpreter)
+      state->interp_fp_abi = abiflags.fp_abi;
+   else
+      state->fp_abi = abiflags.fp_abi;
+
+   return 0;
+}
+
+/* Ref: linux/arch/mips/kernel/elf.c */
+static inline Int arch_check_elf(ESZ(Ehdr) *ehdr,
+                                 Bool has_interpreter,
+                                 struct vki_arch_elf_state *state)
+{
+   struct mode_req {
+      Bool single;
+      Bool soft;
+      Bool fr1;
+      Bool frdefault;
+      Bool fre;
+   };
+
+   struct mode_req fpu_reqs[] = {
+      [VKI_MIPS_ABI_FP_ANY]    = { True,  True,  True,  True,  True  },
+      [VKI_MIPS_ABI_FP_DOUBLE] = { False, False, False, True,  True  },
+      [VKI_MIPS_ABI_FP_SINGLE] = { True,  False, False, False, False },
+      [VKI_MIPS_ABI_FP_SOFT]   = { False, True,  False, False, False },
+      [VKI_MIPS_ABI_FP_OLD_64] = { False, False, False, False, False },
+      [VKI_MIPS_ABI_FP_XX]     = { False, False, True,  True,  True  },
+      [VKI_MIPS_ABI_FP_64]     = { False, False, True,  False, False },
+      [VKI_MIPS_ABI_FP_64A]    = { False, False, True,  False, True  }
+   };
+
+   /* Mode requirements when .MIPS.abiflags is not present in the ELF.
+      Not present means that everything is acceptable except FR1. */
+   struct mode_req none_req = { True, True, False, True, True };
+
+   struct mode_req prog_req, interp_req;
+   Int fp_abi, interp_fp_abi, abi0, abi1, max_abi;
+   Bool is_mips64;
+
+   VexArchInfo vai;
+   VG_(machine_get_VexArchInfo)(NULL, &vai);
+
+   fp_abi = state->fp_abi;
+
+   if (has_interpreter) {
+      interp_fp_abi = state->interp_fp_abi;
+
+      abi0 = VG_MIN(fp_abi, interp_fp_abi);
+      abi1 = VG_MAX(fp_abi, interp_fp_abi);
+   } else {
+      abi0 = abi1 = fp_abi;
+   }
+
+   is_mips64 = (ehdr->e_ident[EI_CLASS] == ELFCLASS64) ||
+               (ehdr->e_flags & EF_MIPS_ABI2);
+
+   if (is_mips64) {
+      /* MIPS64 code always uses FR=1, thus the default is easy */
+      state->overall_fp_mode = VKI_FP_FR1;
+
+      /* Disallow access to the various FPXX & FP64 ABIs */
+      max_abi = VKI_MIPS_ABI_FP_SOFT;
+   } else {
+      /* Default to a mode capable of running code expecting FR=0 */
+
+      /* TODO: Should be changed during implementation of MIPS-R6 support.
+         state->overall_fp_mode = cpu_has_mips_r6 ? VKI_FP_FRE : VKI_FP_FR0; */
+      state->overall_fp_mode = VKI_FP_FR0;
+
+      /* Allow all ABIs we know about */
+      max_abi = VKI_MIPS_ABI_FP_64A;
+   }
+
+   if ((abi0 > max_abi && abi0 != VKI_MIPS_ABI_FP_UNKNOWN) ||
+       (abi1 > max_abi && abi1 != VKI_MIPS_ABI_FP_UNKNOWN))
+      return VKI_ELIBBAD;
+
+   /* It's time to determine the FPU mode requirements */
+   prog_req = (abi0 == VKI_MIPS_ABI_FP_UNKNOWN) ? none_req : fpu_reqs[abi0];
+   interp_req = (abi1 == VKI_MIPS_ABI_FP_UNKNOWN) ? none_req : fpu_reqs[abi1];
+
+   /* Check whether the program's and interp's ABIs have a matching FPU
+      mode requirement. */
+   prog_req.single = interp_req.single && prog_req.single;
+   prog_req.soft = interp_req.soft && prog_req.soft;
+   prog_req.fr1 = interp_req.fr1 && prog_req.fr1;
+   prog_req.frdefault = interp_req.frdefault && prog_req.frdefault;
+   prog_req.fre = interp_req.fre && prog_req.fre;
+
+   /* Determine the desired FPU mode
+
+      Decision making:
+
+      - We want FR_FRE if FRE=1 and both FR=1 and FR=0 are false. This
+        means that we have a combination of program and interpreter
+        that inherently require the hybrid FP mode.
+      - If FR1 and FRDEFAULT is true, that means we hit the any-abi or
+        fpxx case. This is because, in any-ABI (or no-ABI) we have no FPU
+        instructions so we don't care about the mode. We will simply use
+        the one preferred by the hardware. In fpxx case, that ABI can
+        handle both FR=1 and FR=0, so, again, we simply choose the one
+        preferred by the hardware. Next, if we only use single-precision
+        FPU instructions, and the default ABI FPU mode is not good
+        (ie single + any ABI combination), we set again the FPU mode to the
+        one is preferred by the hardware. Next, if we know that the code
+        will only use single-precision instructions, shown by single being
+        true but frdefault being false, then we again set the FPU mode to
+        the one that is preferred by the hardware.
+      - We want FP_FR1 if that's the only matching mode and the default one
+        is not good.
+      - Return with ELIBADD if we can't find a matching FPU mode. */
+   if (prog_req.fre && !prog_req.frdefault && !prog_req.fr1)
+      state->overall_fp_mode = VKI_FP_FRE;
+   else if ((prog_req.fr1 && prog_req.frdefault) ||
+            (prog_req.single && !prog_req.frdefault))
+      state->overall_fp_mode = VEX_MIPS_HOST_FP_MODE(vai.hwcaps) ?
+                               VKI_FP_FR1 : VKI_FP_FR0;
+   else if (prog_req.fr1)
+      state->overall_fp_mode = VKI_FP_FR1;
+   else if (!prog_req.fre && !prog_req.frdefault &&
+            !prog_req.fr1 && !prog_req.single && !prog_req.soft)
+      return VKI_ELIBBAD;
+
+  /* TODO: Currently, Valgrind doesn't support FRE and doesn't support FR1
+     emulation on FR0 system, so in those cases we are forced to
+     reject the ELF. */
+     if ((state->overall_fp_mode == VKI_FP_FRE) ||
+         ((state->overall_fp_mode == VKI_FP_FR1) &&
+          !VEX_MIPS_HOST_FP_MODE(vai.hwcaps)))
+        return VKI_ELIBBAD;
+
+  return 0;
+}
+
+#   else
+
+static inline Int arch_elf_pt_proc(ESZ(Ehdr) *ehdr,
+                                   ESZ(Phdr) *phdr,
+                                   Int fd, Bool is_interpreter,
+                                   struct vki_arch_elf_state *state)
+{
+  /* Dummy implementation, always proceed */
+  return 0;
+}
+
+static inline Int arch_check_elf(ESZ(Ehdr) *ehdr,
+                                 Bool has_interpreter,
+                                 struct vki_arch_elf_state *state)
+{
+  /* Dummy implementation, always proceed */
+  return 0;
+}
+
+#   endif
+#endif
 
 static void check_mmap(SysRes res, Addr base, SizeT len)
 {
@@ -244,7 +485,7 @@ ESZ(Addr) mapelf(struct elfinfo *e, ESZ(Addr) base)
    return elfbrk;
 }
 
-Bool VG_(match_ELF)(const void *hdr, Int len)
+Bool VG_(match_ELF)(const void *hdr, SizeT len)
 {
    const ESZ(Ehdr) *e = hdr;
    return (len > sizeof(*e)) && VG_(memcmp)(&e->e_ident[0], ELFMAG, SELFMAG) == 0;
@@ -307,6 +548,13 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
    Int i;
    void *entry;
    ESZ(Addr) ebase = 0;
+#  if defined(VGO_solaris)
+   ESZ(Addr) thrptr_addr = 0;
+#  endif
+
+#  if defined(VGO_linux)
+   Int retval;
+#  endif
 
 #  if defined(HAVE_PIE)
    ebase = info->exe_base;
@@ -330,7 +578,7 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
       /* Later .. it appears ppc32-linux tries to put [vdso] at 1MB,
          which totally screws things up, because nothing else can go
          there.  The size of [vdso] is around 2 or 3 pages, so bump
-         the hacky load addess along by 8 * VKI_PAGE_SIZE to be safe. */
+         the hacky load address along by 8 * VKI_PAGE_SIZE to be safe. */
       /* Later .. on mips64 we can't use 0x108000, because mapelf will
          fail. */
 #     if defined(VGP_mips64_linux)
@@ -341,6 +589,11 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
       ESZ(Addr) hacky_load_address = 0x100000 + 8 * VKI_PAGE_SIZE;
       if (ebase < hacky_load_address)
          ebase = hacky_load_address;
+#     endif
+
+#     if defined(VGO_solaris)
+      /* Record for later use in AT_BASE. */
+      info->interp_offset = ebase;
 #     endif
    }
 
@@ -355,6 +608,9 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
       switch(ph->p_type) {
       case PT_PHDR:
          info->phdr = ph->p_vaddr + ebase;
+#        if defined(VGO_solaris)
+         info->real_phdr_present = True;
+#        endif
          break;
 
       case PT_LOAD:
@@ -363,6 +619,21 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
          if (ph->p_vaddr+ph->p_memsz > maxaddr)
             maxaddr = ph->p_vaddr+ph->p_memsz;
          break;
+
+#     if defined(VGO_solaris)
+      case PT_SUNWDTRACE:
+         if (ph->p_memsz < PT_SUNWDTRACE_SIZE) {
+            VG_(printf)("valgrind: m_ume.c: too small SUNWDTRACE size\n");
+            return VKI_ENOEXEC;
+         }
+         if ((ph->p_flags & (PF_R | PF_W | PF_X)) != PT_SUNWDTRACE_PROTECTION) {
+            VG_(printf)("valgrind: m_ume.c: SUNWDTRACE protection mismatch\n");
+            return VKI_ENOEXEC;
+         }
+
+         info->init_thrptr = ph->p_vaddr + ebase;
+         break;
+#     endif
                         
       case PT_INTERP: {
          HChar *buf = VG_(malloc)("ume.LE.1", ph->p_filesz+1);
@@ -392,6 +663,34 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
             ESZ(Phdr) *iph = &interp->p[j];
             ESZ(Addr) end;
 
+#           if defined(VGO_solaris)
+            if (iph->p_type == PT_SUNWDTRACE) {
+               if (iph->p_memsz < PT_SUNWDTRACE_SIZE) {
+                  VG_(printf)("valgrind: m_ume.c: too small SUNWDTRACE size\n");
+                  return VKI_ENOEXEC;
+               }
+               if ((iph->p_flags & (PF_R | PF_W | PF_X))
+                      != PT_SUNWDTRACE_PROTECTION) {
+                  VG_(printf)("valgrind: m_ume.c: SUNWDTRACE protection "
+                              "mismatch\n");
+                  return VKI_ENOEXEC;
+               }
+
+               /* Store the thrptr value into a temporary because we do not
+                  know yet where the interpreter is mapped. */
+               thrptr_addr = iph->p_vaddr;
+            }
+#           endif
+
+#           if defined(VGO_linux)
+            if ((iph->p_type >= PT_LOPROC) && (iph->p_type <= PT_HIPROC)) {
+               retval = arch_elf_pt_proc(&interp->e, iph, intfd, True,
+                                         info->arch_elf_state);
+               if (retval)
+                 return retval;
+            }
+#           endif
+
             if (iph->p_type != PT_LOAD || iph->p_memsz == 0)
                continue;
             
@@ -408,13 +707,41 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
                interp_size = end;
          }
          break;
+         }
 
+#     if defined(PT_GNU_STACK) || defined(PT_SUNWSTACK)
 #     if defined(PT_GNU_STACK)
       /* Android's elf.h doesn't appear to have PT_GNU_STACK. */
       case PT_GNU_STACK:
+#     endif
+#     if defined(PT_SUNWSTACK)
+      /* Solaris-specific program header. */
+      case PT_SUNWSTACK:
+#     endif
          if ((ph->p_flags & PF_X) == 0) info->stack_prot &= ~VKI_PROT_EXEC;
          if ((ph->p_flags & PF_W) == 0) info->stack_prot &= ~VKI_PROT_WRITE;
          if ((ph->p_flags & PF_R) == 0) info->stack_prot &= ~VKI_PROT_READ;
+         break;
+#     endif
+
+#     if defined(PT_SUNW_SYSSTAT)
+      /* Solaris-specific program header which requires link-time support. */
+      case PT_SUNW_SYSSTAT:
+         VG_(unimplemented)("Support for program header PT_SUNW_SYSSTAT.");
+         break;
+#     endif
+#     if defined(PT_SUNW_SYSSTAT_ZONE)
+      /* Solaris-specific program header which requires link-time support. */
+      case PT_SUNW_SYSSTAT_ZONE:
+         VG_(unimplemented)("Support for program header PT_SUNW_SYSSTAT_ZONE.");
+         break;
+#     endif
+
+#     if defined(VGO_linux)
+      case PT_LOPROC ... PT_HIPROC:
+         retval = arch_elf_pt_proc(&e->e, ph, fd, False, info->arch_elf_state);
+         if (retval)
+            return retval;
          break;
 #     endif
 
@@ -422,8 +749,15 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
          // do nothing
          break;
       }
-      }
    }
+
+#  if defined(VGO_linux)
+   retval = arch_check_elf(&e->e,
+                           interp != NULL,
+                           info->arch_elf_state);
+   if (retval)
+      return retval;
+#  endif
 
    if (info->phdr == 0)
       info->phdr = minaddr + ebase + e->e.e_phoff;
@@ -494,11 +828,21 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
       entry = (void *)(advised - interp_addr + interp->e.e_entry);
 
       info->interp_offset = advised - interp_addr;
+#     if defined(VGO_solaris)
+      if (thrptr_addr)
+         info->init_thrptr = thrptr_addr + info->interp_offset;
+#     endif
 
       VG_(free)(interp->p);
       VG_(free)(interp);
-   } else
+   } else {
       entry = (void *)(ebase + e->e.e_entry);
+
+#     if defined(VGO_solaris)
+      if (e->e.e_type == ET_DYN)
+         info->ldsoexec = True;
+#     endif
+   }
 
    info->exe_base = minaddr + ebase;
    info->exe_end  = maxaddr + ebase;
@@ -526,7 +870,7 @@ Int VG_(load_ELF)(Int fd, const HChar* name, /*MOD*/ExeInfo* info)
    return 0;
 }
 
-#endif // defined(VGO_linux)
+#endif // defined(VGO_linux) || defined(VGO_solaris)
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

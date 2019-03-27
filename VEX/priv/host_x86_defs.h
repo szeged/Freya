@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -46,32 +46,35 @@
    6 real float regs, and 8 real vector regs. 
 */
 
-extern void ppHRegX86 ( HReg );
+#define ST_IN static inline
+ST_IN HReg hregX86_EBX   ( void ) { return mkHReg(False, HRcInt32,  3,  0); }
+ST_IN HReg hregX86_ESI   ( void ) { return mkHReg(False, HRcInt32,  6,  1); }
+ST_IN HReg hregX86_EDI   ( void ) { return mkHReg(False, HRcInt32,  7,  2); }
+ST_IN HReg hregX86_EAX   ( void ) { return mkHReg(False, HRcInt32,  0,  3); }
+ST_IN HReg hregX86_ECX   ( void ) { return mkHReg(False, HRcInt32,  1,  4); }
+ST_IN HReg hregX86_EDX   ( void ) { return mkHReg(False, HRcInt32,  2,  5); }
 
-extern HReg hregX86_EAX ( void );
-extern HReg hregX86_EBX ( void );
-extern HReg hregX86_ECX ( void );
-extern HReg hregX86_EDX ( void );
-extern HReg hregX86_ESP ( void );
-extern HReg hregX86_EBP ( void );
-extern HReg hregX86_ESI ( void );
-extern HReg hregX86_EDI ( void );
+ST_IN HReg hregX86_FAKE0 ( void ) { return mkHReg(False, HRcFlt64,  0,  6); }
+ST_IN HReg hregX86_FAKE1 ( void ) { return mkHReg(False, HRcFlt64,  1,  7); }
+ST_IN HReg hregX86_FAKE2 ( void ) { return mkHReg(False, HRcFlt64,  2,  8); }
+ST_IN HReg hregX86_FAKE3 ( void ) { return mkHReg(False, HRcFlt64,  3,  9); }
+ST_IN HReg hregX86_FAKE4 ( void ) { return mkHReg(False, HRcFlt64,  4, 10); }
+ST_IN HReg hregX86_FAKE5 ( void ) { return mkHReg(False, HRcFlt64,  5, 11); }
 
-extern HReg hregX86_FAKE0 ( void );
-extern HReg hregX86_FAKE1 ( void );
-extern HReg hregX86_FAKE2 ( void );
-extern HReg hregX86_FAKE3 ( void );
-extern HReg hregX86_FAKE4 ( void );
-extern HReg hregX86_FAKE5 ( void );
+ST_IN HReg hregX86_XMM0  ( void ) { return mkHReg(False, HRcVec128, 0, 12); }
+ST_IN HReg hregX86_XMM1  ( void ) { return mkHReg(False, HRcVec128, 1, 13); }
+ST_IN HReg hregX86_XMM2  ( void ) { return mkHReg(False, HRcVec128, 2, 14); }
+ST_IN HReg hregX86_XMM3  ( void ) { return mkHReg(False, HRcVec128, 3, 15); }
+ST_IN HReg hregX86_XMM4  ( void ) { return mkHReg(False, HRcVec128, 4, 16); }
+ST_IN HReg hregX86_XMM5  ( void ) { return mkHReg(False, HRcVec128, 5, 17); }
+ST_IN HReg hregX86_XMM6  ( void ) { return mkHReg(False, HRcVec128, 6, 18); }
+ST_IN HReg hregX86_XMM7  ( void ) { return mkHReg(False, HRcVec128, 7, 19); }
 
-extern HReg hregX86_XMM0 ( void );
-extern HReg hregX86_XMM1 ( void );
-extern HReg hregX86_XMM2 ( void );
-extern HReg hregX86_XMM3 ( void );
-extern HReg hregX86_XMM4 ( void );
-extern HReg hregX86_XMM5 ( void );
-extern HReg hregX86_XMM6 ( void );
-extern HReg hregX86_XMM7 ( void );
+ST_IN HReg hregX86_ESP   ( void ) { return mkHReg(False, HRcInt32,  4, 20); }
+ST_IN HReg hregX86_EBP   ( void ) { return mkHReg(False, HRcInt32,  5, 21); }
+#undef ST_IN
+
+extern UInt ppHRegX86 ( HReg );
 
 
 /* --------- Condition codes, Intel encoding. --------- */
@@ -713,7 +716,6 @@ extern void ppX86Instr ( const X86Instr*, Bool );
    of the underlying instruction set. */
 extern void         getRegUsage_X86Instr ( HRegUsage*, const X86Instr*, Bool );
 extern void         mapRegs_X86Instr     ( HRegRemap*, X86Instr*, Bool );
-extern Bool         isMove_X86Instr      ( const X86Instr*, HReg*, HReg* );
 extern Int          emit_X86Instr   ( /*MB_MOD*/Bool* is_profInc,
                                       UChar* buf, Int nbuf, const X86Instr* i, 
                                       Bool mode64,
@@ -727,10 +729,11 @@ extern void genSpill_X86  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offset, Bool );
 extern void genReload_X86 ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offset, Bool );
+extern X86Instr* genMove_X86(HReg from, HReg to, Bool);
+extern X86Instr* directReload_X86 ( X86Instr* i, HReg vreg, Short spill_off );
 
-extern X86Instr*    directReload_X86     ( X86Instr* i, 
-                                           HReg vreg, Short spill_off );
-extern void         getAllocableRegs_X86 ( Int*, HReg** );
+extern const RRegUniverse* getRRegUniverse_X86 ( void );
+
 extern HInstrArray* iselSB_X86           ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,

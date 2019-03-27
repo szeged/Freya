@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -113,7 +113,7 @@ static const UChar parity_table[256] = {
 inline static Int lshift ( Int x, Int n )
 {
    if (n >= 0)
-      return x << n;
+      return (UInt)x << n;
    else
       return x >> (-n);
 }
@@ -130,7 +130,7 @@ static inline ULong idULong ( ULong x )
       = __data_bits==8 ? 0xFF 					\
                        : (__data_bits==16 ? 0xFFFF 		\
                                           : 0xFFFFFFFF); 	\
-   /* const */ UInt SIGN_MASK = 1 << (__data_bits - 1);		\
+   /* const */ UInt SIGN_MASK = 1u << (__data_bits - 1);	\
    /* const */ UInt CC_DEP1 = cc_dep1_formal;			\
    /* const */ UInt CC_DEP2 = cc_dep2_formal;			\
    /* const */ UInt CC_NDEP = cc_ndep_formal;			\
@@ -148,8 +148,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_ADD(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, res;					\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, res;					\
      argL = CC_DEP1;						\
      argR = CC_DEP2;						\
      res  = argL + argR;					\
@@ -169,8 +169,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_SUB(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, res;					\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, res;					\
      argL = CC_DEP1;						\
      argR = CC_DEP2;						\
      res  = argL - argR;					\
@@ -190,8 +190,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_ADC(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, oldC, res;		       			\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, oldC, res;		       		\
      oldC = CC_NDEP & X86G_CC_MASK_C;				\
      argL = CC_DEP1;						\
      argR = CC_DEP2 ^ oldC;	       				\
@@ -215,8 +215,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_SBB(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, oldC, res;		       			\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, oldC, res;		       		\
      oldC = CC_NDEP & X86G_CC_MASK_C;				\
      argL = CC_DEP1;						\
      argR = CC_DEP2 ^ oldC;	       				\
@@ -240,7 +240,7 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_LOGIC(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
+   { UInt cf, pf, af, zf, sf, of;				\
      cf = 0;							\
      pf = parity_table[(UChar)CC_DEP1];				\
      af = 0;							\
@@ -256,8 +256,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_INC(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, res;					\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, res;					\
      res  = CC_DEP1;						\
      argL = res - 1;						\
      argR = 1;							\
@@ -276,8 +276,8 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_DEC(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
-     Int argL, argR, res;					\
+   { UInt cf, pf, af, zf, sf, of;				\
+     UInt argL, argR, res;					\
      res  = CC_DEP1;						\
      argL = res + 1;						\
      argR = 1;							\
@@ -297,7 +297,7 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_SHL(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int cf, pf, af, zf, sf, of;				\
+   { UInt cf, pf, af, zf, sf, of;				\
      cf = (CC_DEP2 >> (DATA_BITS - 1)) & X86G_CC_MASK_C;	\
      pf = parity_table[(UChar)CC_DEP1];				\
      af = 0; /* undefined */					\
@@ -315,7 +315,7 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_SHR(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);  					\
-   { Int cf, pf, af, zf, sf, of;				\
+   { UInt cf, pf, af, zf, sf, of;				\
      cf = CC_DEP2 & 1;						\
      pf = parity_table[(UChar)CC_DEP1];				\
      af = 0; /* undefined */					\
@@ -335,7 +335,7 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_ROL(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int fl 							\
+   { UInt fl 							\
         = (CC_NDEP & ~(X86G_CC_MASK_O | X86G_CC_MASK_C))	\
           | (X86G_CC_MASK_C & CC_DEP1)				\
           | (X86G_CC_MASK_O & (lshift(CC_DEP1,  		\
@@ -352,7 +352,7 @@ static inline ULong idULong ( ULong x )
 #define ACTIONS_ROR(DATA_BITS,DATA_UTYPE)			\
 {								\
    PREAMBLE(DATA_BITS);						\
-   { Int fl 							\
+   { UInt fl 							\
         = (CC_NDEP & ~(X86G_CC_MASK_O | X86G_CC_MASK_C))	\
           | (X86G_CC_MASK_C & (CC_DEP1 >> (DATA_BITS-1)))	\
           | (X86G_CC_MASK_O & (lshift(CC_DEP1, 			\
@@ -368,7 +368,7 @@ static inline ULong idULong ( ULong x )
                                 DATA_U2TYPE, NARROWto2U)        \
 {                                                               \
    PREAMBLE(DATA_BITS);                                         \
-   { Int cf, pf, af, zf, sf, of;                                \
+   { UInt cf, pf, af, zf, sf, of;                               \
      DATA_UTYPE  hi;                                            \
      DATA_UTYPE  lo                                             \
         = NARROWtoU( ((DATA_UTYPE)CC_DEP1)                      \
@@ -394,11 +394,11 @@ static inline ULong idULong ( ULong x )
                                 DATA_S2TYPE, NARROWto2S)        \
 {                                                               \
    PREAMBLE(DATA_BITS);                                         \
-   { Int cf, pf, af, zf, sf, of;                                \
+   { UInt cf, pf, af, zf, sf, of;                               \
      DATA_STYPE  hi;                                            \
      DATA_STYPE  lo                                             \
-        = NARROWtoS( ((DATA_STYPE)CC_DEP1)                      \
-                     * ((DATA_STYPE)CC_DEP2) );                 \
+        = NARROWtoS( ((DATA_S2TYPE)(DATA_STYPE)CC_DEP1)         \
+                     * ((DATA_S2TYPE)(DATA_STYPE)CC_DEP2) );    \
      DATA_S2TYPE rr                                             \
         = NARROWto2S(                                           \
              ((DATA_S2TYPE)((DATA_STYPE)CC_DEP1))               \
@@ -724,13 +724,50 @@ UInt LibVEX_GuestX86_get_eflags ( /*IN*/const VexGuestX86State* vex_state )
    UInt dflag = vex_state->guest_DFLAG;
    vassert(dflag == 1 || dflag == 0xFFFFFFFF);
    if (dflag == 0xFFFFFFFF)
-      eflags |= (1<<10);
+      eflags |= X86G_CC_MASK_D;
    if (vex_state->guest_IDFLAG == 1)
-      eflags |= (1<<21);
+      eflags |= X86G_CC_MASK_ID;
    if (vex_state->guest_ACFLAG == 1)
-      eflags |= (1<<18);
+      eflags |= X86G_CC_MASK_AC;
 					     
    return eflags;
+}
+
+/* VISIBLE TO LIBVEX CLIENT */
+void
+LibVEX_GuestX86_put_eflags ( UInt eflags,
+                             /*MOD*/VexGuestX86State* vex_state )
+{
+   /* D flag */
+   if (eflags & X86G_CC_MASK_D) {
+      vex_state->guest_DFLAG = 0xFFFFFFFF;
+      eflags &= ~X86G_CC_MASK_D;
+   }
+   else
+      vex_state->guest_DFLAG = 1;
+
+   /* ID flag */
+   if (eflags & X86G_CC_MASK_ID) {
+      vex_state->guest_IDFLAG = 1;
+      eflags &= ~X86G_CC_MASK_ID;
+   }
+   else
+      vex_state->guest_IDFLAG = 0;
+
+   /* AC flag */
+   if (eflags & X86G_CC_MASK_AC) {
+      vex_state->guest_ACFLAG = 1;
+      eflags &= ~X86G_CC_MASK_AC;
+   }
+   else
+      vex_state->guest_ACFLAG = 0;
+
+   UInt cc_mask = X86G_CC_MASK_O | X86G_CC_MASK_S | X86G_CC_MASK_Z |
+                  X86G_CC_MASK_A | X86G_CC_MASK_C | X86G_CC_MASK_P;
+   vex_state->guest_CC_OP   = X86G_CC_OP_COPY;
+   vex_state->guest_CC_DEP1 = eflags & cc_mask;
+   vex_state->guest_CC_DEP2 = 0;
+   vex_state->guest_CC_NDEP = 0;
 }
 
 /* VISIBLE TO LIBVEX CLIENT */
@@ -819,6 +856,7 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
 
       /*---------------- SUBL ----------------*/
 
+      /* 4, 5 */
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondZ)) {
          /* long sub/cmp, then Z --> test dst==src */
          return unop(Iop_1Uto32,
@@ -830,6 +868,7 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
                      binop(Iop_CmpNE32, cc_dep1, cc_dep2));
       }
 
+      /* 12, 13 */
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondL)) {
          /* long sub/cmp, then L (signed less than) 
             --> test dst <s src */
@@ -845,6 +884,7 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
                       mkU32(1));
       }
 
+      /* 14, 15 */
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondLE)) {
          /* long sub/cmp, then LE (signed less than or equal)
             --> test dst <=s src */
@@ -861,6 +901,7 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
                       mkU32(1));
       }
 
+      /* 6, 7 */
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondBE)) {
          /* long sub/cmp, then BE (unsigned less than or equal)
             --> test dst <=u src */
@@ -876,6 +917,7 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
                       mkU32(1));
       }
 
+      /* 2, 3 */
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondB)) {
          /* long sub/cmp, then B (unsigned less than)
             --> test dst <u src */
@@ -889,6 +931,28 @@ IRExpr* guest_x86_spechelper ( const HChar* function_name,
                       unop(Iop_1Uto32,
                            binop(Iop_CmpLT32U, cc_dep1, cc_dep2)),
                       mkU32(1));
+      }
+
+      /* 8, 9 */
+      if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondS)
+                                        && isU32(cc_dep2, 0)) {
+         /* long sub/cmp of zero, then S --> test (dst-0 <s 0)
+                                         --> test dst <s 0
+                                         --> (UInt)dst[31] */
+         return binop(Iop_And32,
+                      binop(Iop_Shr32,cc_dep1,mkU8(31)),
+                      mkU32(1));
+      }
+      if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondNS)
+                                        && isU32(cc_dep2, 0)) {
+         /* long sub/cmp of zero, then NS --> test !(dst-0 <s 0)
+                                          --> test !(dst <s 0)
+                                          --> (UInt) !dst[31] */
+         return binop(Iop_Xor32,
+                      binop(Iop_And32,
+                            binop(Iop_Shr32,cc_dep1,mkU8(31)),
+                            mkU32(1)),
+                mkU32(1));
       }
 
       if (isU32(cc_op, X86G_CC_OP_SUBL) && isU32(cond, X86CondS)) {
@@ -1562,18 +1626,17 @@ void x86g_dirtyhelper_FINIT ( VexGuestX86State* gst )
    themselves are not transferred into the guest state. */
 static
 VexEmNote do_put_x87 ( Bool moveRegs,
-                       /*IN*/UChar* x87_state,
+                       /*IN*/Fpu_State* x87_state,
                        /*OUT*/VexGuestX86State* vex_state )
 {
    Int        stno, preg;
    UInt       tag;
    ULong*     vexRegs = (ULong*)(&vex_state->guest_FPREG[0]);
    UChar*     vexTags = (UChar*)(&vex_state->guest_FPTAG[0]);
-   Fpu_State* x87     = (Fpu_State*)x87_state;
-   UInt       ftop    = (x87->env[FP_ENV_STAT] >> 11) & 7;
-   UInt       tagw    = x87->env[FP_ENV_TAG];
-   UInt       fpucw   = x87->env[FP_ENV_CTRL];
-   UInt       c3210   = x87->env[FP_ENV_STAT] & 0x4700;
+   UInt       ftop    = (x87_state->env[FP_ENV_STAT] >> 11) & 7;
+   UInt       tagw    = x87_state->env[FP_ENV_TAG];
+   UInt       fpucw   = x87_state->env[FP_ENV_CTRL];
+   UInt       c3210   = x87_state->env[FP_ENV_STAT] & 0x4700;
    VexEmNote  ew;
    UInt       fpround;
    ULong      pair;
@@ -1594,7 +1657,7 @@ VexEmNote do_put_x87 ( Bool moveRegs,
       } else {
          /* register is non-empty */
          if (moveRegs)
-            convert_f80le_to_f64le( &x87->reg[10*stno], 
+            convert_f80le_to_f64le( &x87_state->reg[10*stno], 
                                     (UChar*)&vexRegs[preg] );
          vexTags[preg] = 1;
       }
@@ -1623,23 +1686,23 @@ VexEmNote do_put_x87 ( Bool moveRegs,
    we can approximate it. */
 static
 void do_get_x87 ( /*IN*/VexGuestX86State* vex_state,
-                  /*OUT*/UChar* x87_state )
+                  /*OUT*/Fpu_State* x87_state )
 {
    Int        i, stno, preg;
    UInt       tagw;
    ULong*     vexRegs = (ULong*)(&vex_state->guest_FPREG[0]);
    UChar*     vexTags = (UChar*)(&vex_state->guest_FPTAG[0]);
-   Fpu_State* x87     = (Fpu_State*)x87_state;
    UInt       ftop    = vex_state->guest_FTOP;
    UInt       c3210   = vex_state->guest_FC3210;
 
    for (i = 0; i < 14; i++)
-      x87->env[i] = 0;
+      x87_state->env[i] = 0;
 
-   x87->env[1] = x87->env[3] = x87->env[5] = x87->env[13] = 0xFFFF;
-   x87->env[FP_ENV_STAT] 
+   x87_state->env[1] = x87_state->env[3] = x87_state->env[5]
+      = x87_state->env[13] = 0xFFFF;
+   x87_state->env[FP_ENV_STAT] 
       = toUShort(((ftop & 7) << 11) | (c3210 & 0x4700));
-   x87->env[FP_ENV_CTRL] 
+   x87_state->env[FP_ENV_CTRL] 
       = toUShort(x86g_create_fpucw( vex_state->guest_FPROUND ));
 
    /* Dump the register stack in ST order. */
@@ -1650,15 +1713,15 @@ void do_get_x87 ( /*IN*/VexGuestX86State* vex_state,
          /* register is empty */
          tagw |= (3 << (2*preg));
          convert_f64le_to_f80le( (UChar*)&vexRegs[preg], 
-                                 &x87->reg[10*stno] );
+                                 &x87_state->reg[10*stno] );
       } else {
          /* register is full. */
          tagw |= (0 << (2*preg));
          convert_f64le_to_f80le( (UChar*)&vexRegs[preg], 
-                                 &x87->reg[10*stno] );
+                                 &x87_state->reg[10*stno] );
       }
    }
-   x87->env[FP_ENV_TAG] = toUShort(tagw);
+   x87_state->env[FP_ENV_TAG] = toUShort(tagw);
 }
 
 
@@ -1677,7 +1740,7 @@ void x86g_dirtyhelper_FXSAVE ( VexGuestX86State* gst, HWord addr )
    Int       r, stno;
    UShort    *srcS, *dstS;
 
-   do_get_x87( gst, (UChar*)&tmp );
+   do_get_x87( gst, &tmp );
    mxcsr = x86g_create_mxcsr( gst->guest_SSEROUND );
 
    /* Now build the proper fxsave image from the x87 image we just
@@ -1800,6 +1863,7 @@ VexEmNote x86g_dirtyhelper_FXRSTOR ( VexGuestX86State* gst, HWord addr )
    /* Code that seems to trigger the problem:
       for (i = 0; i < 14; i++) tmp.env[i] = 0; */
    for (i = 0; i < 7; i++) tmp.env[i+0] = 0;
+   __asm__ __volatile__("" ::: "memory");
    for (i = 0; i < 7; i++) tmp.env[i+7] = 0;
    
    for (i = 0; i < 80; i++) tmp.reg[i] = 0;
@@ -1827,7 +1891,7 @@ VexEmNote x86g_dirtyhelper_FXRSTOR ( VexGuestX86State* gst, HWord addr )
    tmp.env[FP_ENV_TAG] = fp_tags;
 
    /* Now write 'tmp' into the guest state. */
-   warnX87 = do_put_x87( True/*moveRegs*/, (UChar*)&tmp, gst );
+   warnX87 = do_put_x87( True/*moveRegs*/, &tmp, gst );
 
    { UInt w32 = (((UInt)addrS[12]) & 0xFFFF)
                 | ((((UInt)addrS[13]) & 0xFFFF) << 16);
@@ -1835,7 +1899,7 @@ VexEmNote x86g_dirtyhelper_FXRSTOR ( VexGuestX86State* gst, HWord addr )
 
      warnXMM = (VexEmNote)(w64 >> 32);
 
-     gst->guest_SSEROUND = (UInt)w64;
+     gst->guest_SSEROUND = w64 & 0xFFFFFFFF;
    }
 
    /* Prefer an X87 emwarn over an XMM one, if both exist. */
@@ -1850,14 +1914,14 @@ VexEmNote x86g_dirtyhelper_FXRSTOR ( VexGuestX86State* gst, HWord addr )
 /* DIRTY HELPER (reads guest state, writes guest mem) */
 void x86g_dirtyhelper_FSAVE ( VexGuestX86State* gst, HWord addr )
 {
-   do_get_x87( gst, (UChar*)addr );
+   do_get_x87( gst, (Fpu_State*)addr );
 }
 
 /* CALLED FROM GENERATED CODE */
 /* DIRTY HELPER (writes guest state, reads guest mem) */
 VexEmNote x86g_dirtyhelper_FRSTOR ( VexGuestX86State* gst, HWord addr )
 {
-   return do_put_x87( True/*regs too*/, (UChar*)addr, gst );
+   return do_put_x87( True/*regs too*/, (Fpu_State*)addr, gst );
 }
 
 /* CALLED FROM GENERATED CODE */
@@ -1868,7 +1932,7 @@ void x86g_dirtyhelper_FSTENV ( VexGuestX86State* gst, HWord addr )
    Int       i;
    UShort*   addrP = (UShort*)addr;
    Fpu_State tmp;
-   do_get_x87( gst, (UChar*)&tmp );
+   do_get_x87( gst, &tmp );
    for (i = 0; i < 14; i++)
       addrP[i] = tmp.env[i];
 }
@@ -1877,9 +1941,45 @@ void x86g_dirtyhelper_FSTENV ( VexGuestX86State* gst, HWord addr )
 /* DIRTY HELPER (writes guest state, reads guest mem) */
 VexEmNote x86g_dirtyhelper_FLDENV ( VexGuestX86State* gst, HWord addr )
 {
-   return do_put_x87( False/*don't move regs*/, (UChar*)addr, gst);
+   return do_put_x87( False/*don't move regs*/, (Fpu_State*)addr, gst);
 }
 
+/* VISIBLE TO LIBVEX CLIENT */
+/* Do x87 save from the supplied VexGuestX86State structure and store the
+   result at the given address which represents a buffer of at least 108
+   bytes. */
+void LibVEX_GuestX86_get_x87 ( /*IN*/VexGuestX86State* vex_state,
+                               /*OUT*/UChar* x87_state )
+{
+   do_get_x87 ( vex_state, (Fpu_State*)x87_state );
+}
+
+/* VISIBLE TO LIBVEX CLIENT */
+/* Do x87 restore from the supplied address and store read values to the given
+   VexGuestX86State structure. */
+VexEmNote LibVEX_GuestX86_put_x87 ( /*IN*/UChar* x87_state,
+                                    /*MOD*/VexGuestX86State* vex_state )
+{
+   return do_put_x87 ( True/*moveRegs*/, (Fpu_State*)x87_state, vex_state );
+}
+
+/* VISIBLE TO LIBVEX CLIENT */
+/* Return mxcsr from the supplied VexGuestX86State structure. */
+UInt LibVEX_GuestX86_get_mxcsr ( /*IN*/VexGuestX86State* vex_state )
+{
+   return x86g_create_mxcsr ( vex_state->guest_SSEROUND );
+}
+
+/* VISIBLE TO LIBVEX CLIENT */
+/* Modify the given VexGuestX86State structure according to the passed mxcsr
+   value. */
+VexEmNote LibVEX_GuestX86_put_mxcsr ( /*IN*/UInt mxcsr,
+                                      /*MOD*/VexGuestX86State* vex_state)
+{
+   ULong w64 = x86g_check_ldmxcsr( mxcsr );
+   vex_state->guest_SSEROUND = w64 & 0xFFFFFFFF;
+   return (VexEmNote)(w64 >> 32);
+}
 
 /*---------------------------------------------------------------*/
 /*--- Misc integer helpers, including rotates and CPUID.      ---*/
@@ -2297,6 +2397,46 @@ void x86g_dirtyhelper_CPUID_sse1 ( VexGuestX86State* st )
    }
 }
 
+/* Claim to be the following SSE2-capable CPU:
+   vendor_id    : GenuineIntel
+   cpu family   : 15
+   model        : 2
+   model name   : Intel(R) Pentium(R) 4 CPU 3.00GHz
+   stepping     : 9
+   microcode    : 0x17
+   cpu MHz      : 2992.577
+   cache size   : 512 KB
+   flags        : fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov
+                  pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe
+                   pebs bts cid xtpr
+   clflush size : 64
+   cache_alignment : 128
+   address sizes : 36 bits physical, 32 bits virtual
+*/
+void x86g_dirtyhelper_CPUID_sse2 ( VexGuestX86State* st )
+{
+   switch (st->guest_EAX) {
+      case 0: 
+         st->guest_EAX = 0x00000002;
+         st->guest_EBX = 0x756e6547;
+         st->guest_ECX = 0x6c65746e;
+         st->guest_EDX = 0x49656e69;
+         break;
+      case 1: 
+         st->guest_EAX = 0x00000f29;
+         st->guest_EBX = 0x01020809;
+         st->guest_ECX = 0x00004400;
+         st->guest_EDX = 0xbfebfbff;
+         break;
+      default:
+         st->guest_EAX = 0x03020101;
+         st->guest_EBX = 0x00000000;
+         st->guest_ECX = 0x00000000;
+         st->guest_EDX = 0x0c040883;
+         break;
+   }
+}
+
 /* Claim to be the following SSSE3-capable CPU (2 x ...):
    vendor_id       : GenuineIntel
    cpu family      : 6
@@ -2324,7 +2464,7 @@ void x86g_dirtyhelper_CPUID_sse1 ( VexGuestX86State* st )
    address sizes   : 36 bits physical, 48 bits virtual
    power management:
 */
-void x86g_dirtyhelper_CPUID_sse2 ( VexGuestX86State* st )
+void x86g_dirtyhelper_CPUID_sse3 ( VexGuestX86State* st )
 {
 #  define SET_ABCD(_a,_b,_c,_d)               \
       do { st->guest_EAX = (UInt)(_a);        \
@@ -2765,6 +2905,8 @@ void LibVEX_GuestX86_initialise ( /*OUT*/VexGuestX86State* vex_state )
    vex_state->guest_IP_AT_SYSCALL = 0;
 
    vex_state->padding1 = 0;
+   vex_state->padding2 = 0;
+   vex_state->padding3 = 0;
 }
 
 

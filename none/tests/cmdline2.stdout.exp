@@ -39,19 +39,21 @@ usage: valgrind [options] prog-and-args
     --demangle=no|yes         automatically demangle C++ names? [yes]
     --num-callers=<number>    show <number> callers in stack traces [12]
     --error-limit=no|yes      stop showing new errors if too many? [yes]
+    --exit-on-first-error=no|yes exit code on the first error found? [no]
     --error-exitcode=<number> exit code to return if errors found [0=disable]
     --error-markers=<begin>,<end> add lines with begin/end markers before/after
                               each error output in plain text mode [none]
+    --keep-debuginfo=no|yes   Keep symbols etc for unloaded code [no]
+                              This allows saved stack traces (e.g. memory leaks)
+                              to include file/line info for code that has been
+                              dlclose'd (or similar)
     --show-below-main=no|yes  continue stack traces below main() [no]
     --default-suppressions=yes|no
                               load default suppressions [yes]
     --suppressions=<filename> suppress errors described in <filename>
     --gen-suppressions=no|yes|all    print suppressions for errors? [no]
-    --db-attach=no|yes        start debugger when errors detected? [no]
-                              Note: deprecated feature
-    --db-command=<command>    command to start debugger [... -nw %f %p]
     --input-fd=<number>       file descriptor for input [0=stdin]
-    --dsymutil=no|yes         run dsymutil on Mac OS X when helpful? [no]
+    --dsymutil=no|yes         run dsymutil on Mac OS X when helpful? [yes]
     --max-stackframe=<number> assume stack switch for SP changes larger
                               than <number> bytes [2000000]
     --main-stacksize=<number> set size of main thread's stack (in bytes)
@@ -61,6 +63,12 @@ usage: valgrind [options] prog-and-args
     --alignment=<number>      set minimum alignment of heap allocations [not used by this tool]
     --redzone-size=<number>   set minimum size of redzones added before/after
                               heap blocks (in bytes). [not used by this tool]
+    --xtree-memory=none|allocs|full   profile heap memory in an xtree [none]
+                              and produces a report at the end of the execution
+                              none: no profiling, allocs: current allocated
+                              size/blocks, full: profile current and cumulative
+                              allocated size/blocks and freed size/blocks.
+    --xtree-memory-file=<file>   xtree memory report file [xtmemory.kcg.%p]
 
   uncommon user options for all Valgrind tools:
     --fullpath-after=         (with nothing after the '=')
@@ -77,13 +85,13 @@ usage: valgrind [options] prog-and-args
     --allow-mismatched-debuginfo=no|yes  [no]
                               for the above two flags only, accept debuginfo
                               objects that don't "match" the main object
-    --smc-check=none|stack|all|all-non-file [stack]
+    --smc-check=none|stack|all|all-non-file [all-non-file]
                               checks for self-modifying code: none, only for
                               code found in stacks, for all code, or for all
                               code except that from file-backed mappings
     --read-inline-info=yes|no read debug info about inlined function calls
                               and use it to do better stack traces.  [yes]
-                              on Linux/Android for Memcheck/Helgrind/DRD
+                              on Linux/Android/Solaris for Memcheck/Helgrind/DRD
                               only.  [no] for all other tools and platforms.
     --read-var-info=yes|no    read debug info on stack and global variables
                               and use it to print better error messages in
@@ -93,10 +101,12 @@ usage: valgrind [options] prog-and-args
     --vgdb-shadow-registers=no|yes   let gdb see the shadow registers [no]
     --vgdb-prefix=<prefix>    prefix for vgdb FIFOs [.../vgdb-pipe]
     --run-libc-freeres=no|yes free up glibc memory at exit on Linux? [yes]
+    --run-cxx-freeres=no|yes  free up libstdc++ memory at exit on Linux
+                              and Solaris? [yes]
     --sim-hints=hint1,hint2,...  activate unusual sim behaviours [none] 
          where hint is one of:
-           lax-ioctls fuse-compatible enable-outer
-           no-inner-prefix no-nptl-pthread-stackcache none
+           lax-ioctls lax-doors fuse-compatible enable-outer
+           no-inner-prefix no-nptl-pthread-stackcache fallback-llsc none
     --fair-sched=no|yes|try   schedule threads fairly on multicore systems [no]
     --kernel-variant=variant1,variant2,...
          handle non-standard kernel variants [none]
@@ -105,9 +115,13 @@ usage: valgrind [options] prog-and-args
            android-gpu-sgx5xx android-gpu-adreno3xx none
     --merge-recursive-frames=<number>  merge frames between identical
            program counters in max <number> frames) [0]
-    --num-transtab-sectors=<number> size of translated code cache [16]
+    --num-transtab-sectors=<number> size of translated code cache [32]
            more sectors may increase performance, but use more memory.
+    --avg-transtab-entry-size=<number> avg size in bytes of a translated
+           basic block [0, meaning use tool provided default]
     --aspace-minaddr=0xPP     avoid mapping memory below 0xPP [guessed]
+    --valgrind-stacksize=<number> size of valgrind (host) thread's stack
+                               (in bytes) [1048576]
     --show-emwarns=no|yes     show warnings about emulation limits? [no]
     --require-text-symbol=:sonamepattern:symbolpattern    abort run if the
                               stated shared object doesn't have the stated
@@ -155,7 +169,9 @@ usage: valgrind [options] prog-and-args
     --core-redzone-size=<number>  set minimum size of redzones added before/after
                               heap blocks allocated for Valgrind internal use (in bytes) [4]
     --wait-for-gdb=yes|no     pause on startup to wait for gdb attach
-    --sym-offsets=yes|no      show syms in form 'name+offset' ? [no]
+    --sym-offsets=yes|no      show syms in form 'name+offset'? [no]
+    --progress-interval=<number>  report progress every <number>
+                                  CPU seconds [0, meaning disabled]
     --command-line-only=no|yes  only use command line options [no]
 
   Vex options for all Valgrind tools:
@@ -189,6 +205,7 @@ usage: valgrind [options] prog-and-args
          0000 0000   show summary profile only
         (Nb: you need --trace-notbelow and/or --trace-notabove
              with --trace-flags for full details)
+    --vex-regalloc-version=2|3             [3]
 
   debugging options for Valgrind tools that report errors
     --dump-error=<number>     show translation for basic block associated
@@ -196,15 +213,16 @@ usage: valgrind [options] prog-and-args
 
   debugging options for Valgrind tools that replace malloc:
     --trace-malloc=no|yes     show client malloc details? [no]
+    --xtree-compress-strings=no|yes   compress strings in xtree callgrind format [yes]
 
   debugging options for Nulgrind:
     (none)
 
   Extra options read from ~/.valgrindrc, $VALGRIND_OPTS, ./.valgrindrc
 
-  Nulgrind is Copyright (C) 2002-2013, and GNU GPL'd, by Nicholas Nethercote.
-  Valgrind is Copyright (C) 2000-2013, and GNU GPL'd, by Julian Seward et al.
-  LibVEX is Copyright (C) 2004-2013, and GNU GPL'd, by OpenWorks LLP et al.
+  Nulgrind is Copyright (C) 2002-2017, and GNU GPL'd, by Nicholas Nethercote.
+  Valgrind is Copyright (C) 2000-2017, and GNU GPL'd, by Julian Seward et al.
+  LibVEX is Copyright (C) 2004-2017, and GNU GPL'd, by OpenWorks LLP et al.
 
   Bug reports, feedback, admiration, abuse, etc, to: www.valgrind.org.
 

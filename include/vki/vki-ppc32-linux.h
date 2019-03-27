@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2013 Julian Seward
+   Copyright (C) 2005-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -626,8 +626,8 @@ struct vki_termios {
 //#define VKI_TIOCSSOFTCAR	0x541A
 #define VKI_TIOCLINUX		0x541C
 //#define VKI_TIOCCONS		0x541D
-//#define VKI_TIOCGSERIAL	0x541E
-//#define VKI_TIOCSSERIAL	0x541F
+#define VKI_TIOCGSERIAL	0x541E
+#define VKI_TIOCSSERIAL	0x541F
 //#define VKI_TIOCPKT		0x5420
 //# define VKI_TIOCPKT_DATA		 0
 //# define VKI_TIOCPKT_FLUSHREAD	 1
@@ -811,10 +811,9 @@ struct vki_ucontext {
 //.. };
 //.. 
 //.. // [[Nb: for our convenience within Valgrind, use a more specific name]]
-//.. typedef struct vki_user_desc vki_modify_ldt_t;
 
 // CAB: TODO
-typedef void vki_modify_ldt_t;
+typedef char vki_modify_ldt_t;
 
 
 //----------------------------------------------------------------------

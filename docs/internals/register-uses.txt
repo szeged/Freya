@@ -8,7 +8,7 @@ avoid having to endlessly re-look up this info in ABI documents.
 x86-linux
 ~~~~~~~~~
 
-Reg        Callee      Arg   
+Reg        Callee      Arg
 Name       Saves?      Reg?     Comment              Vex-uses?
 --------------------------------------------------------------
 eax        n           n        int[31:0] retreg     y
@@ -31,7 +31,7 @@ registers are EAX, EDX, and ECX respectively.
 amd64-linux
 ~~~~~~~~~~~
 
-Reg        Callee      Arg    
+Reg        Callee      Arg
 Name       Saves?      Reg?     Comment              Vex-uses?
 -------------------------------------------------------------------
 rax        n           n        int[63:0] retreg
@@ -58,7 +58,7 @@ fs                              thread ptr
 ppc32-linux
 ~~~~~~~~~~~
 
-Reg        Callee      Arg    
+Reg        Callee      Arg
 Name       Saves?      Reg?     Comment              Vex-uses?
 -------------------------------------------------------------------
 r0         n           n        sometimes RAZ
@@ -95,7 +95,7 @@ fpscr
 
 ppc64-linux
 ~~~~~~~~~~~
-Reg        Callee      Arg    
+Reg        Callee      Arg
 Name       Saves?      Reg?     Comment              Vex-uses?
 -------------------------------------------------------------------
 r13        n           n        thread ptr
@@ -142,7 +142,7 @@ Name       Saves?     Reg?       Comment              Vex-uses?
 ---------------------------------------------------------------
 r0                    int#0      ret#0 (??)
 r1                    int#1      ret#1 (??)
-r2-7                  int#2..7 
+r2-7                  int#2..7
 r8                              "Indirect res loc reg" ProfInc scratch
 r9                              "Temporary regs"      chaining scratch
 r10-15                          "Temporary regs"      avail
@@ -214,7 +214,7 @@ selection when register pairs are required.
 ppc32-aix5
 ~~~~~~~~~~
 
-Reg        Callee      Arg    
+Reg        Callee      Arg
 Name       Saves?      Reg?     Comment              Vex-uses?
 -------------------------------------------------------------------
 r0         n           n        sometimes RAZ
@@ -237,7 +237,7 @@ r30        y                                altivec spill temporary
 r31        y                                         & guest state
 f0         n
 f1         n           fp#1     fp retreg
-f2-13      n           fp#2-13  
+f2-13      n           fp#2-13
 f14-31     y                                         y (14-21)
 v0-v19     ?
 v20-31     y                                         y (20-27,29)
@@ -246,3 +246,4 @@ lr         y                    return address
 ctr        n
 xer        n
 fpscr
+

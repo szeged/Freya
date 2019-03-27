@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <malloc.h>  // memalign
 #include <string.h>  // memset
+#include "tests/malloc.h"
 #include <math.h>    // isnormal
 
 typedef  unsigned char           UChar;
@@ -90,16 +91,6 @@ static void showBlock ( const char* msg, V128* block, Int nBlock )
       showV128(&block[i]);
       printf("\n");
    }
-}
-
-__attribute__((unused))
-static void* memalign16(size_t szB)
-{
-   void* x;
-   x = memalign(16, szB);
-   assert(x);
-   assert(0 == ((16-1) & (unsigned long)x));
-   return x;
 }
 
 static ULong dup4x16 ( UInt x )
@@ -3113,8 +3104,8 @@ GEN_BINARY_TEST(pmul, 8b, 8b, 8b)
 
 GEN_BINARY_TEST(pmull,  8h, 8b,  8b)
 GEN_BINARY_TEST(pmull2, 8h, 16b, 16b)
-//GEN_BINARY_TEST(pmull,  1q, 1d,  1d)
-//GEN_BINARY_TEST(pmull,  1q, 2d,  2d)
+GEN_BINARY_TEST(pmull,  1q, 1d,  1d)
+GEN_BINARY_TEST(pmull2, 1q, 2d,  2d)
 
 GEN_UNARY_TEST(rbit, 16b, 16b)
 GEN_UNARY_TEST(rbit, 8b, 8b)
@@ -4532,27 +4523,23 @@ GEN_UNARY_TEST(xtn2, 16b, 8h)
 
 // ======================== CRYPTO ========================
 
-// These tests are believed to be correct but are disabled because
-// GNU assembler (GNU Binutils) 2.24.0.20140311 Linaro 2014.03
-// cannot be persuaded to accept those instructions (AFAICT).
+GEN_TWOVEC_TEST(aesd_16b_16b,    "aesd v6.16b,  v27.16b",  6, 27)
+GEN_TWOVEC_TEST(aese_16b_16b,    "aese v6.16b,  v27.16b",  6, 27)
+GEN_TWOVEC_TEST(aesimc_16b_16b,  "aesimc v6.16b,  v27.16b",  6, 27)
+GEN_TWOVEC_TEST(aesmc_16b_16b,   "aesmc v6.16b,  v27.16b",  6, 27)
 
-//GEN_TWOVEC_TEST(aesd_16b_16b,    "aesd v6.16b,  v27.16b",  6, 27)
-//GEN_TWOVEC_TEST(aese_16b_16b,    "aese v6.16b,  v27.16b",  6, 27)
-//GEN_TWOVEC_TEST(aesimc_16b_16b,  "aesimc v6.16b,  v27.16b",  6, 27)
-//GEN_TWOVEC_TEST(aesmc_16b_16b,   "aesmc v6.16b,  v27.16b",  6, 27)
-//
-//GEN_THREEVEC_TEST(sha1c_q_s_4s,     "sha1c q29, s28, v27.4s", 29,28,27)
-//GEN_TWOVEC_TEST(sha1h_s_s,          "sha1h s6,  s27",  6, 27)
-//GEN_THREEVEC_TEST(sha1m_q_s_4s,     "sha1m q29, s28, v27.4s", 29,28,27)
-//GEN_THREEVEC_TEST(sha1p_q_s_4s,     "sha1p q29, s28, v27.4s", 29,28,27)
-//GEN_THREEVEC_TEST(sha1su0_4s_4s_4s, "sha1su0 v29.4s, v28.4s, v27.4s", 29,28,27)
-//GEN_TWOVEC_TEST(sha1su1_4s_4s,      "sha1su1 v6.4s,  v27.4s",  6, 27)
-//
-//GEN_THREEVEC_TEST(sha256h2_q_q_4s,  "sha256h2 q29, q28, v27.4s", 29,28,27)
-//GEN_THREEVEC_TEST(sha256h_q_q_4s,   "sha256h q29, q28, v27.4s", 29,28,27)
-//GEN_TWOVEC_TEST(sha256su0_4s_4s,    "sha256su0 v6.4s,  v27.4s",  6, 27)
-//GEN_THREEVEC_TEST(sha256su1_4s_4s_4s, "sha256su1 v29.4s, v28.4s, v27.4s", 
-//                                      29,28,27)
+GEN_THREEVEC_TEST(sha1c_q_s_4s,     "sha1c q29, s28, v27.4s", 29,28,27)
+GEN_TWOVEC_TEST(sha1h_s_s,          "sha1h s6,  s27",  6, 27)
+GEN_THREEVEC_TEST(sha1m_q_s_4s,     "sha1m q29, s28, v27.4s", 29,28,27)
+GEN_THREEVEC_TEST(sha1p_q_s_4s,     "sha1p q29, s28, v27.4s", 29,28,27)
+GEN_THREEVEC_TEST(sha1su0_4s_4s_4s, "sha1su0 v29.4s, v28.4s, v27.4s", 29,28,27)
+GEN_TWOVEC_TEST(sha1su1_4s_4s,      "sha1su1 v6.4s,  v27.4s",  6, 27)
+
+GEN_THREEVEC_TEST(sha256h2_q_q_4s,  "sha256h2 q29, q28, v27.4s", 29,28,27)
+GEN_THREEVEC_TEST(sha256h_q_q_4s,   "sha256h q29, q28, v27.4s", 29,28,27)
+GEN_TWOVEC_TEST(sha256su0_4s_4s,    "sha256su0 v6.4s,  v27.4s",  6, 27)
+GEN_THREEVEC_TEST(sha256su1_4s_4s_4s, "sha256su1 v29.4s, v28.4s, v27.4s", 
+                                      29,28,27)
 
 
 /* ---------------------------------------------------------------- */
@@ -4585,9 +4572,9 @@ int main ( void )
    // fsqrt     2d,4s,2s
    if (1) test_fsqrt_d_d(TyDF);
    if (1) test_fsqrt_s_s(TySF);
-   if (0) test_fsqrt_2d_2d(TySF); // need to change primop type
-   if (0) test_fsqrt_4s_4s(TyDF); // ditto
-   if (0) test_fsqrt_2s_2s(TySF); // ditto
+   if (1) test_fsqrt_2d_2d(TySF);
+   if (1) test_fsqrt_4s_4s(TyDF);
+   if (1) test_fsqrt_2s_2s(TySF);
 
    // fadd      d,s
    // fsub      d,s
@@ -5029,22 +5016,22 @@ int main ( void )
    // ======================== CONV ========================
 
    // fcvt      s_h,d_h,h_s,d_s,h_d,s_d (fp convert, scalar)
-   if (0) test_fcvt_s_h(TyHF);
-   if (0) test_fcvt_d_h(TyHF);
-   if (0) test_fcvt_h_s(TySF);
+   if (1) test_fcvt_s_h(TyHF);
+   if (1) test_fcvt_d_h(TyHF);
+   if (1) test_fcvt_h_s(TySF);
    if (1) test_fcvt_d_s(TySF);
-   if (0) test_fcvt_h_d(TyDF);
+   if (1) test_fcvt_h_d(TyDF);
    if (1) test_fcvt_s_d(TyDF);
 
    // fcvtl{2}  4s/4h, 4s/8h, 2d/2s, 2d/4s (float convert to longer form)
-   if (0) test_fcvtl_4s_4h(TyHF);
-   if (0) test_fcvtl_4s_8h(TyHF);
-   if (0) test_fcvtl_2d_2s(TySF);
-   if (0) test_fcvtl_2d_4s(TySF);
+   if (1) test_fcvtl_4s_4h(TyHF);
+   if (1) test_fcvtl_4s_8h(TyHF);
+   if (1) test_fcvtl_2d_2s(TySF);
+   if (1) test_fcvtl_2d_4s(TySF);
 
    // fcvtn{2}  4h/4s, 8h/4s, 2s/2d, 4s/2d (float convert to narrower form)
-   if (0) test_fcvtn_4h_4s(TySF);
-   if (0) test_fcvtn_8h_4s(TySF);
+   if (1) test_fcvtn_4h_4s(TySF);
+   if (1) test_fcvtn_8h_4s(TySF);
    if (1) test_fcvtn_2s_2d(TyDF);
    if (1) test_fcvtn_4s_2d(TyDF);
 
@@ -5054,16 +5041,16 @@ int main ( void )
    // fcvtau    2d,4s,2s
    // fcvtas    w_s,x_s,w_d,x_d
    // fcvtau    w_s,x_s,w_d,x_d
-   if (0) test_fcvtas_d_d(TyDF);
-   if (0) test_fcvtau_d_d(TyDF);
-   if (0) test_fcvtas_s_s(TySF);
-   if (0) test_fcvtau_s_s(TySF);
-   if (0) test_fcvtas_2d_2d(TyDF);
-   if (0) test_fcvtau_2d_2d(TyDF);
-   if (0) test_fcvtas_4s_4s(TySF);
-   if (0) test_fcvtau_4s_4s(TySF);
-   if (0) test_fcvtas_2s_2s(TySF);
-   if (0) test_fcvtau_2s_2s(TySF);
+   if (1) test_fcvtas_d_d(TyDF);
+   if (1) test_fcvtau_d_d(TyDF);
+   if (1) test_fcvtas_s_s(TySF);
+   if (1) test_fcvtau_s_s(TySF);
+   if (1) test_fcvtas_2d_2d(TyDF);
+   if (1) test_fcvtau_2d_2d(TyDF);
+   if (1) test_fcvtas_4s_4s(TySF);
+   if (1) test_fcvtau_4s_4s(TySF);
+   if (1) test_fcvtas_2s_2s(TySF);
+   if (1) test_fcvtau_2s_2s(TySF);
    if (1) test_fcvtas_w_s(TySF);
    if (1) test_fcvtau_w_s(TySF);
    if (1) test_fcvtas_x_s(TySF);
@@ -5079,16 +5066,16 @@ int main ( void )
    // fcvtmu    2d,4s,2s
    // fcvtms    w_s,x_s,w_d,x_d
    // fcvtmu    w_s,x_s,w_d,x_d
-   if (0) test_fcvtms_d_d(TyDF);
-   if (0) test_fcvtmu_d_d(TyDF);
-   if (0) test_fcvtms_s_s(TySF);
-   if (0) test_fcvtmu_s_s(TySF);
-   if (0) test_fcvtms_2d_2d(TyDF);
-   if (0) test_fcvtmu_2d_2d(TyDF);
-   if (0) test_fcvtms_4s_4s(TySF);
-   if (0) test_fcvtmu_4s_4s(TySF);
-   if (0) test_fcvtms_2s_2s(TySF);
-   if (0) test_fcvtmu_2s_2s(TySF);
+   if (1) test_fcvtms_d_d(TyDF);
+   if (1) test_fcvtmu_d_d(TyDF);
+   if (1) test_fcvtms_s_s(TySF);
+   if (1) test_fcvtmu_s_s(TySF);
+   if (1) test_fcvtms_2d_2d(TyDF);
+   if (1) test_fcvtmu_2d_2d(TyDF);
+   if (1) test_fcvtms_4s_4s(TySF);
+   if (1) test_fcvtmu_4s_4s(TySF);
+   if (1) test_fcvtms_2s_2s(TySF);
+   if (1) test_fcvtmu_2s_2s(TySF);
    if (1) test_fcvtms_w_s(TySF);
    if (1) test_fcvtmu_w_s(TySF);
    if (1) test_fcvtms_x_s(TySF);
@@ -5104,16 +5091,16 @@ int main ( void )
    // fcvtnu    2d,4s,2s
    // fcvtns    w_s,x_s,w_d,x_d
    // fcvtnu    w_s,x_s,w_d,x_d
-   if (0) test_fcvtns_d_d(TyDF);
-   if (0) test_fcvtnu_d_d(TyDF);
-   if (0) test_fcvtns_s_s(TySF);
-   if (0) test_fcvtnu_s_s(TySF);
-   if (0) test_fcvtns_2d_2d(TyDF);
-   if (0) test_fcvtnu_2d_2d(TyDF);
-   if (0) test_fcvtns_4s_4s(TySF);
-   if (0) test_fcvtnu_4s_4s(TySF);
-   if (0) test_fcvtns_2s_2s(TySF);
-   if (0) test_fcvtnu_2s_2s(TySF);
+   if (1) test_fcvtns_d_d(TyDF);
+   if (1) test_fcvtnu_d_d(TyDF);
+   if (1) test_fcvtns_s_s(TySF);
+   if (1) test_fcvtnu_s_s(TySF);
+   if (1) test_fcvtns_2d_2d(TyDF);
+   if (1) test_fcvtnu_2d_2d(TyDF);
+   if (1) test_fcvtns_4s_4s(TySF);
+   if (1) test_fcvtnu_4s_4s(TySF);
+   if (1) test_fcvtns_2s_2s(TySF);
+   if (1) test_fcvtnu_2s_2s(TySF);
    if (1) test_fcvtns_w_s(TySF);
    if (1) test_fcvtnu_w_s(TySF);
    if (1) test_fcvtns_x_s(TySF);
@@ -5129,16 +5116,16 @@ int main ( void )
    // fcvtpu    2d,4s,2s
    // fcvtps    w_s,x_s,w_d,x_d
    // fcvtpu    w_s,x_s,w_d,x_d
-   if (0) test_fcvtps_d_d(TyDF);
-   if (0) test_fcvtpu_d_d(TyDF);
-   if (0) test_fcvtps_s_s(TySF);
-   if (0) test_fcvtpu_s_s(TySF);
-   if (0) test_fcvtps_2d_2d(TyDF);
-   if (0) test_fcvtpu_2d_2d(TyDF);
-   if (0) test_fcvtps_4s_4s(TySF);
-   if (0) test_fcvtpu_4s_4s(TySF);
-   if (0) test_fcvtps_2s_2s(TySF);
-   if (0) test_fcvtpu_2s_2s(TySF);
+   if (1) test_fcvtps_d_d(TyDF);
+   if (1) test_fcvtpu_d_d(TyDF);
+   if (1) test_fcvtps_s_s(TySF);
+   if (1) test_fcvtpu_s_s(TySF);
+   if (1) test_fcvtps_2d_2d(TyDF);
+   if (1) test_fcvtpu_2d_2d(TyDF);
+   if (1) test_fcvtps_4s_4s(TySF);
+   if (1) test_fcvtpu_4s_4s(TySF);
+   if (1) test_fcvtps_2s_2s(TySF);
+   if (1) test_fcvtpu_2s_2s(TySF);
    if (1) test_fcvtps_w_s(TySF);
    if (1) test_fcvtpu_w_s(TySF);
    if (1) test_fcvtps_x_s(TySF);
@@ -5154,16 +5141,16 @@ int main ( void )
    // fcvtzu    2d,4s,2s
    // fcvtzs    w_s,x_s,w_d,x_d
    // fcvtzu    w_s,x_s,w_d,x_d
-   if (0) test_fcvtzs_d_d(TyDF);
-   if (0) test_fcvtzu_d_d(TyDF);
-   if (0) test_fcvtzs_s_s(TySF);
-   if (0) test_fcvtzu_s_s(TySF);
-   if (0) test_fcvtzs_2d_2d(TyDF);
-   if (0) test_fcvtzu_2d_2d(TyDF);
-   if (0) test_fcvtzs_4s_4s(TySF);
-   if (0) test_fcvtzu_4s_4s(TySF);
-   if (0) test_fcvtzs_2s_2s(TySF);
-   if (0) test_fcvtzu_2s_2s(TySF);
+   if (1) test_fcvtzs_d_d(TyDF);
+   if (1) test_fcvtzu_d_d(TyDF);
+   if (1) test_fcvtzs_s_s(TySF);
+   if (1) test_fcvtzu_s_s(TySF);
+   if (1) test_fcvtzs_2d_2d(TyDF);
+   if (1) test_fcvtzu_2d_2d(TyDF);
+   if (1) test_fcvtzs_4s_4s(TySF);
+   if (1) test_fcvtzu_4s_4s(TySF);
+   if (1) test_fcvtzs_2s_2s(TySF);
+   if (1) test_fcvtzu_2s_2s(TySF);
    if (1) test_fcvtzs_w_s(TySF);
    if (1) test_fcvtzu_w_s(TySF);
    if (1) test_fcvtzs_x_s(TySF);
@@ -5179,110 +5166,110 @@ int main ( void )
    // fcvtzu    2d,4s,2s (fcvt to unsigned fixedpt, to zero) (w/ #fbits)
    // fcvtzs    w_s,x_s,w_d,x_d (fcvt to signed fixedpt,   to zero) (w/ #fbits)
    // fcvtzu    w_s,x_s,w_d,x_d (fcvt to unsigned fixedpt, to zero) (w/ #fbits)
-   if (0) test_fcvtzs_d_d_fbits1(TyDF);
-   if (0) test_fcvtzs_d_d_fbits32(TyDF);
-   if (0) test_fcvtzs_d_d_fbits64(TyDF);
-   if (0) test_fcvtzu_d_d_fbits1(TyDF);
-   if (0) test_fcvtzu_d_d_fbits32(TyDF);
-   if (0) test_fcvtzu_d_d_fbits64(TyDF);
-   if (0) test_fcvtzs_s_s_fbits1(TySF);
-   if (0) test_fcvtzs_s_s_fbits16(TySF);
-   if (0) test_fcvtzs_s_s_fbits32(TySF);
-   if (0) test_fcvtzu_s_s_fbits1(TySF);
-   if (0) test_fcvtzu_s_s_fbits16(TySF);
-   if (0) test_fcvtzu_s_s_fbits32(TySF);
-   if (0) test_fcvtzs_2d_2d_fbits1(TyDF);
-   if (0) test_fcvtzs_2d_2d_fbits32(TyDF);
-   if (0) test_fcvtzs_2d_2d_fbits64(TyDF);
-   if (0) test_fcvtzu_2d_2d_fbits1(TyDF);
-   if (0) test_fcvtzu_2d_2d_fbits32(TyDF);
-   if (0) test_fcvtzu_2d_2d_fbits64(TyDF);
-   if (0) test_fcvtzs_4s_4s_fbits1(TySF);
-   if (0) test_fcvtzs_4s_4s_fbits16(TySF);
-   if (0) test_fcvtzs_4s_4s_fbits32(TySF);
-   if (0) test_fcvtzu_4s_4s_fbits1(TySF);
-   if (0) test_fcvtzu_4s_4s_fbits16(TySF);
-   if (0) test_fcvtzu_4s_4s_fbits32(TySF);
-   if (0) test_fcvtzs_2s_2s_fbits1(TySF);
-   if (0) test_fcvtzs_2s_2s_fbits16(TySF);
-   if (0) test_fcvtzs_2s_2s_fbits32(TySF);
-   if (0) test_fcvtzu_2s_2s_fbits1(TySF);
-   if (0) test_fcvtzu_2s_2s_fbits16(TySF);
-   if (0) test_fcvtzu_2s_2s_fbits32(TySF);
-   if (0) test_fcvtzs_w_s_fbits1(TySF);
-   if (0) test_fcvtzs_w_s_fbits16(TySF);
-   if (0) test_fcvtzs_w_s_fbits32(TySF);
-   if (0) test_fcvtzu_w_s_fbits1(TySF);
-   if (0) test_fcvtzu_w_s_fbits16(TySF);
-   if (0) test_fcvtzu_w_s_fbits32(TySF);
-   if (0) test_fcvtzs_x_s_fbits1(TySF);
-   if (0) test_fcvtzs_x_s_fbits32(TySF);
-   if (0) test_fcvtzs_x_s_fbits64(TySF);
-   if (0) test_fcvtzu_x_s_fbits1(TySF);
-   if (0) test_fcvtzu_x_s_fbits32(TySF);
-   if (0) test_fcvtzu_x_s_fbits64(TySF);
-   if (0) test_fcvtzs_w_d_fbits1(TyDF);
-   if (0) test_fcvtzs_w_d_fbits16(TyDF);
-   if (0) test_fcvtzs_w_d_fbits32(TyDF);
-   if (0) test_fcvtzu_w_d_fbits1(TyDF);
-   if (0) test_fcvtzu_w_d_fbits16(TyDF);
-   if (0) test_fcvtzu_w_d_fbits32(TyDF);
-   if (0) test_fcvtzs_x_d_fbits1(TyDF);
-   if (0) test_fcvtzs_x_d_fbits32(TyDF);
-   if (0) test_fcvtzs_x_d_fbits64(TyDF);
-   if (0) test_fcvtzu_x_d_fbits1(TyDF);
-   if (0) test_fcvtzu_x_d_fbits32(TyDF);
-   if (0) test_fcvtzu_x_d_fbits64(TyDF);
+   if (1) test_fcvtzs_d_d_fbits1(TyDF);
+   if (1) test_fcvtzs_d_d_fbits32(TyDF);
+   if (1) test_fcvtzs_d_d_fbits64(TyDF);
+   if (1) test_fcvtzu_d_d_fbits1(TyDF);
+   if (1) test_fcvtzu_d_d_fbits32(TyDF);
+   if (1) test_fcvtzu_d_d_fbits64(TyDF);
+   if (1) test_fcvtzs_s_s_fbits1(TySF);
+   if (1) test_fcvtzs_s_s_fbits16(TySF);
+   if (1) test_fcvtzs_s_s_fbits32(TySF);
+   if (1) test_fcvtzu_s_s_fbits1(TySF);
+   if (1) test_fcvtzu_s_s_fbits16(TySF);
+   if (1) test_fcvtzu_s_s_fbits32(TySF);
+   if (1) test_fcvtzs_2d_2d_fbits1(TyDF);
+   if (1) test_fcvtzs_2d_2d_fbits32(TyDF);
+   if (1) test_fcvtzs_2d_2d_fbits64(TyDF);
+   if (1) test_fcvtzu_2d_2d_fbits1(TyDF);
+   if (1) test_fcvtzu_2d_2d_fbits32(TyDF);
+   if (1) test_fcvtzu_2d_2d_fbits64(TyDF);
+   if (1) test_fcvtzs_4s_4s_fbits1(TySF);
+   if (1) test_fcvtzs_4s_4s_fbits16(TySF);
+   if (1) test_fcvtzs_4s_4s_fbits32(TySF);
+   if (1) test_fcvtzu_4s_4s_fbits1(TySF);
+   if (1) test_fcvtzu_4s_4s_fbits16(TySF);
+   if (1) test_fcvtzu_4s_4s_fbits32(TySF);
+   if (1) test_fcvtzs_2s_2s_fbits1(TySF);
+   if (1) test_fcvtzs_2s_2s_fbits16(TySF);
+   if (1) test_fcvtzs_2s_2s_fbits32(TySF);
+   if (1) test_fcvtzu_2s_2s_fbits1(TySF);
+   if (1) test_fcvtzu_2s_2s_fbits16(TySF);
+   if (1) test_fcvtzu_2s_2s_fbits32(TySF);
+   if (1) test_fcvtzs_w_s_fbits1(TySF);
+   if (1) test_fcvtzs_w_s_fbits16(TySF);
+   if (1) test_fcvtzs_w_s_fbits32(TySF);
+   if (1) test_fcvtzu_w_s_fbits1(TySF);
+   if (1) test_fcvtzu_w_s_fbits16(TySF);
+   if (1) test_fcvtzu_w_s_fbits32(TySF);
+   if (1) test_fcvtzs_x_s_fbits1(TySF);
+   if (1) test_fcvtzs_x_s_fbits32(TySF);
+   if (1) test_fcvtzs_x_s_fbits64(TySF);
+   if (1) test_fcvtzu_x_s_fbits1(TySF);
+   if (1) test_fcvtzu_x_s_fbits32(TySF);
+   if (1) test_fcvtzu_x_s_fbits64(TySF);
+   if (1) test_fcvtzs_w_d_fbits1(TyDF);
+   if (1) test_fcvtzs_w_d_fbits16(TyDF);
+   if (1) test_fcvtzs_w_d_fbits32(TyDF);
+   if (1) test_fcvtzu_w_d_fbits1(TyDF);
+   if (1) test_fcvtzu_w_d_fbits16(TyDF);
+   if (1) test_fcvtzu_w_d_fbits32(TyDF);
+   if (1) test_fcvtzs_x_d_fbits1(TyDF);
+   if (1) test_fcvtzs_x_d_fbits32(TyDF);
+   if (1) test_fcvtzs_x_d_fbits64(TyDF);
+   if (1) test_fcvtzu_x_d_fbits1(TyDF);
+   if (1) test_fcvtzu_x_d_fbits32(TyDF);
+   if (1) test_fcvtzu_x_d_fbits64(TyDF);
 
    // fcvtxn    s_d (fcvt to lower prec narrow, rounding to odd)
    // fcvtxn    2s_2d,4s_2d
-   if (0) test_fcvtxn_s_d(TyDF);
-   if (0) test_fcvtxn_2s_2d(TyDF);
-   if (0) test_fcvtxn_4s_2d(TyDF);
+   if (1) test_fcvtxn_s_d(TyDF);
+   if (1) test_fcvtxn_2s_2d(TyDF);
+   if (1) test_fcvtxn_4s_2d(TyDF);
 
    // scvtf     d,s        _#fbits
    // ucvtf     d,s        _#fbits
    // scvtf     2d,4s,2s   _#fbits
    // ucvtf     2d,4s,2s   _#fbits
-   if (0) test_scvtf_d_d_fbits1(TyD);
-   if (0) test_scvtf_d_d_fbits32(TyD);
-   if (0) test_scvtf_d_d_fbits64(TyD);
-   if (0) test_ucvtf_d_d_fbits1(TyD);
-   if (0) test_ucvtf_d_d_fbits32(TyD);
-   if (0) test_ucvtf_d_d_fbits64(TyD);
-   if (0) test_scvtf_s_s_fbits1(TyS);
-   if (0) test_scvtf_s_s_fbits16(TyS);
-   if (0) test_scvtf_s_s_fbits32(TyS);
-   if (0) test_ucvtf_s_s_fbits1(TyS);
-   if (0) test_ucvtf_s_s_fbits16(TyS);
-   if (0) test_ucvtf_s_s_fbits32(TyS);
-   if (0) test_scvtf_2d_2d_fbits1(TyD);
-   if (0) test_scvtf_2d_2d_fbits32(TyD);
-   if (0) test_scvtf_2d_2d_fbits64(TyD);
-   if (0) test_ucvtf_2d_2d_fbits1(TyD);
-   if (0) test_ucvtf_2d_2d_fbits32(TyD);
-   if (0) test_ucvtf_2d_2d_fbits64(TyD);
-   if (0) test_scvtf_4s_4s_fbits1(TyS);
-   if (0) test_scvtf_4s_4s_fbits16(TyS);
-   if (0) test_scvtf_4s_4s_fbits32(TyS);
-   if (0) test_ucvtf_4s_4s_fbits1(TyS);
-   if (0) test_ucvtf_4s_4s_fbits16(TyS);
-   if (0) test_ucvtf_4s_4s_fbits32(TyS);
-   if (0) test_scvtf_2s_2s_fbits1(TyS);
-   if (0) test_scvtf_2s_2s_fbits16(TyS);
-   if (0) test_scvtf_2s_2s_fbits32(TyS);
-   if (0) test_ucvtf_2s_2s_fbits1(TyS);
-   if (0) test_ucvtf_2s_2s_fbits16(TyS);
-   if (0) test_ucvtf_2s_2s_fbits32(TyS);
+   if (1) test_scvtf_d_d_fbits1(TyD);
+   if (1) test_scvtf_d_d_fbits32(TyD);
+   if (1) test_scvtf_d_d_fbits64(TyD);
+   if (1) test_ucvtf_d_d_fbits1(TyD);
+   if (1) test_ucvtf_d_d_fbits32(TyD);
+   if (1) test_ucvtf_d_d_fbits64(TyD);
+   if (1) test_scvtf_s_s_fbits1(TyS);
+   if (1) test_scvtf_s_s_fbits16(TyS);
+   if (1) test_scvtf_s_s_fbits32(TyS);
+   if (1) test_ucvtf_s_s_fbits1(TyS);
+   if (1) test_ucvtf_s_s_fbits16(TyS);
+   if (1) test_ucvtf_s_s_fbits32(TyS);
+   if (1) test_scvtf_2d_2d_fbits1(TyD);
+   if (1) test_scvtf_2d_2d_fbits32(TyD);
+   if (1) test_scvtf_2d_2d_fbits64(TyD);
+   if (1) test_ucvtf_2d_2d_fbits1(TyD);
+   if (1) test_ucvtf_2d_2d_fbits32(TyD);
+   if (1) test_ucvtf_2d_2d_fbits64(TyD);
+   if (1) test_scvtf_4s_4s_fbits1(TyS);
+   if (1) test_scvtf_4s_4s_fbits16(TyS);
+   if (1) test_scvtf_4s_4s_fbits32(TyS);
+   if (1) test_ucvtf_4s_4s_fbits1(TyS);
+   if (1) test_ucvtf_4s_4s_fbits16(TyS);
+   if (1) test_ucvtf_4s_4s_fbits32(TyS);
+   if (1) test_scvtf_2s_2s_fbits1(TyS);
+   if (1) test_scvtf_2s_2s_fbits16(TyS);
+   if (1) test_scvtf_2s_2s_fbits32(TyS);
+   if (1) test_ucvtf_2s_2s_fbits1(TyS);
+   if (1) test_ucvtf_2s_2s_fbits16(TyS);
+   if (1) test_ucvtf_2s_2s_fbits32(TyS);
 
    // scvtf     d,s
    // ucvtf     d,s
    // scvtf     2d,4s,2s
    // ucvtf     2d,4s,2s
-   if (0) test_scvtf_d_d(TyD);
-   if (0) test_ucvtf_d_d(TyD);
-   if (0) test_scvtf_s_s(TyS);
-   if (0) test_ucvtf_s_s(TyS);
+   if (1) test_scvtf_d_d(TyD);
+   if (1) test_ucvtf_d_d(TyD);
+   if (1) test_scvtf_s_s(TyS);
+   if (1) test_ucvtf_s_s(TyS);
    if (1) test_scvtf_2d_2d(TyD);
    if (1) test_ucvtf_2d_2d(TyD);
    if (1) test_scvtf_4s_4s(TyS);
@@ -5804,11 +5791,10 @@ int main ( void )
    if (1) test_pmul_16b_16b_16b(TyB);
    if (1) test_pmul_8b_8b_8b(TyB);
 
-   // pmull{2}  8h_8b_8b,8h_16b_16b,1q_1d_1d,1q_2d_2d
+   // pmull{2}  8h_8b_8b,8h_16b_16b
+   // pmull{2} 1q_1d_1d,1q_2d_2d is in the crypto section below
    if (1) test_pmull_8h_8b_8b(TyB);
    if (1) test_pmull2_8h_16b_16b(TyB);
-   //if (0) test_pmull_1q_1d_1d(TyD);
-   //if (0) test_pmull_1q_2d_2d(TyD);
 
    // rbit    16b,8b
    // rev16   16b,8b
@@ -7394,18 +7380,14 @@ int main ( void )
 
    // ======================== CRYPTO ========================
 
-   // These tests are believed to be correct but are disabled because
-   // GNU assembler (GNU Binutils) 2.24.0.20140311 Linaro 2014.03
-   // cannot be persuaded to accept those instructions (AFAICT).
-
    // aesd       16b (aes single round decryption)
    // aese       16b (aes single round encryption)
    // aesimc     16b (aes inverse mix columns)
    // aesmc      16b (aes mix columns)
-   //if (0) test_aesd_16b_16b(TyNONE);
-   //if (0) test_aese_16b_16b(TyNONE);
-   //if (0) test_aesimc_16b_16b(TyNONE);
-   //if (0) test_aesmc_16b_16b(TyNONE);
+   if (1) DO50( test_aesd_16b_16b(TyNONE) );
+   if (1) DO50( test_aese_16b_16b(TyNONE) );
+   if (1) DO50( test_aesimc_16b_16b(TyNONE) );
+   if (1) DO50( test_aesmc_16b_16b(TyNONE) );
 
    // sha1c      q_s_4s
    // sha1h      s_s
@@ -7413,23 +7395,27 @@ int main ( void )
    // sha1p      q_s_4s
    // sha1su0    4s_4s_4s
    // sha1su1    4s_4s
-   //if (0) test_sha1c_q_s_4s(TyNONE);
-   //if (0) test_sha1h_s_s(TyNONE);
-   //if (0) test_sha1m_q_s_4s(TyNONE);
-   //if (0) test_sha1p_q_s_4s(TyNONE);
-   //if (0) test_sha1su0_4s_4s_4s(TyNONE);
-   //if (0) test_sha1su1_4s_4s(TyNONE);
+   if (1) DO50( test_sha1c_q_s_4s(TyNONE) );
+   if (1) DO50( test_sha1h_s_s(TyNONE) );
+   if (1) DO50( test_sha1m_q_s_4s(TyNONE) );
+   if (1) DO50( test_sha1p_q_s_4s(TyNONE) );
+   if (1) DO50( test_sha1su0_4s_4s_4s(TyNONE) );
+   if (1) DO50( test_sha1su1_4s_4s(TyNONE) );
 
    // sha256h2   q_q_4s
    // sha256h    q_q_4s
    // sha256su0  4s_4s
    // sha256su1  4s_4s_4s
-   //if (0) test_sha256h2_q_q_4s(TyNONE);
-   //if (0) test_sha256h_q_q_4s(TyNONE);
-   //if (0) test_sha256su0_4s_4s(TyNONE);
-   //if (0) test_sha256su1_4s_4s_4s(TyNONE);
+   if (1) DO50( test_sha256h2_q_q_4s(TyNONE) );
+   if (1) DO50( test_sha256h_q_q_4s(TyNONE) );
+   if (1) DO50( test_sha256su0_4s_4s(TyNONE) );
+   if (1) DO50( test_sha256su1_4s_4s_4s(TyNONE) );
 
-   return 0;
+   // pmull{2} 1q_1d_1d,1q_2d_2d
+   if (1) test_pmull_1q_1d_1d(TyD);
+   if (1) test_pmull2_1q_2d_2d(TyD);
+
+return 0;
 }
 
 

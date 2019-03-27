@@ -28,7 +28,10 @@ pkginclude_HEADERS = \
 	pub/libvex_guest_mips64.h \
 	pub/libvex_s390x_common.h \
 	pub/libvex_ir.h \
-	pub/libvex_trc_values.h
+	pub/libvex_trc_values.h \
+	pub/libvex_inner.h
+# libvex_inner.h is special: it is a public header for valgrind core,
+# but should not be used by the end user
 
 noinst_HEADERS = \
 	priv/main_globals.h \
@@ -68,6 +71,10 @@ else
 CFLAGS_FOR_GENOFFSETS = $(CFLAGS)
 endif
 
+# for VEX building, use the LTO versions, in case they differ from non lto versions
+AR = ${LTO_AR}
+RANLIB = ${LTO_RANLIB}
+
 # This is very uggerly.  Need to sed out both "xyzzyN" and
 # "xyzzy$N" since gcc on different targets emits the constants
 # differently -- with a leading $ on x86/amd64 but none on ppc32/64.
@@ -86,7 +93,7 @@ pub/libvex_guest_offsets.h: auxprogs/genoffsets.c \
 	rm -f auxprogs/genoffsets.s
 	$(mkdir_p) auxprogs pub
 	$(CC) $(CFLAGS_FOR_GENOFFSETS) \
-	      $(LIBVEX_CFLAGS) \
+	      $(LIBVEX_CFLAGS_NO_LTO) \
 	      $(AM_CFLAGS_@VGCONF_PLATFORM_PRI_CAPS@) \
 				-O -S -o auxprogs/genoffsets.s \
 					 $(srcdir)/auxprogs/genoffsets.c
@@ -99,12 +106,18 @@ pub/libvex_guest_offsets.h: auxprogs/genoffsets.c \
 	rm -f auxprogs/genoffsets.s
 
 #----------------------------------------------------------------------------
-# libvex-<platform>.a
+# libvex-<platform>-<os>.a : containing all VEX objects, including
+# a main_main.o compiled in single arch (guest==host).
+# libvexmultiarch-<platform>-<os>.a, only containing multiarch_main_main.o,
+# which is main_main.c compiled so that any guest/host combination
+# can be done at runtime.
 #----------------------------------------------------------------------------
 
-pkglib_LIBRARIES  = libvex-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a
+pkglib_LIBRARIES  = libvex-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a \
+	libvexmultiarch-@VGCONF_ARCH_PRI@-@VGCONF_OS@.a
 if VGCONF_HAVE_PLATFORM_SEC
-pkglib_LIBRARIES += libvex-@VGCONF_ARCH_SEC@-@VGCONF_OS@.a
+pkglib_LIBRARIES += libvex-@VGCONF_ARCH_SEC@-@VGCONF_OS@.a \
+	libvexmultiarch-@VGCONF_ARCH_SEC@-@VGCONF_OS@.a
 endif
 
 LIBVEX_SOURCES_COMMON = \
@@ -137,6 +150,7 @@ LIBVEX_SOURCES_COMMON = \
 	priv/host_generic_simd256.c \
 	priv/host_generic_maddf.c \
 	priv/host_generic_reg_alloc2.c \
+	priv/host_generic_reg_alloc3.c \
 	priv/host_x86_defs.c \
 	priv/host_x86_isel.c \
 	priv/host_amd64_defs.c \
@@ -153,9 +167,14 @@ LIBVEX_SOURCES_COMMON = \
 	priv/host_mips_defs.c \
 	priv/host_mips_isel.c
 
-LIBVEX_CFLAGS = \
+LIBVEXMULTIARCH_SOURCES = priv/multiarch_main_main.c
+
+LIBVEX_CFLAGS_NO_LTO = \
 	-Wbad-function-cast \
 	-fstrict-aliasing
+
+LIBVEX_CFLAGS = ${LTO_CFLAGS} \
+	${LIBVEX_CFLAGS_NO_LTO}
 
 libvex_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES  = $(LIBVEX_SOURCES_COMMON)
 libvex_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CPPFLAGS = \
@@ -167,6 +186,21 @@ libvex_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES  = $(LIBVEX_SOURCES_COMMON)
 libvex_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CPPFLAGS = \
         $(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@) -Ipriv
 libvex_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS   = \
+        $(AM_CFLAGS_@VGCONF_PLATFORM_SEC_CAPS@) $(LIBVEX_CFLAGS)
+endif
+
+libvexmultiarch_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_SOURCES  = \
+	$(LIBVEXMULTIARCH_SOURCES)
+libvexmultiarch_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CPPFLAGS = \
+        $(AM_CPPFLAGS_@VGCONF_PLATFORM_PRI_CAPS@) -Ipriv
+libvexmultiarch_@VGCONF_ARCH_PRI@_@VGCONF_OS@_a_CFLAGS   = \
+        $(AM_CFLAGS_@VGCONF_PLATFORM_PRI_CAPS@) $(LIBVEX_CFLAGS)
+if VGCONF_HAVE_PLATFORM_SEC
+libvexmultiarch_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_SOURCES  = \
+	$(LIBVEXMULTIARCH_SOURCES)
+libvexmultiarch_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CPPFLAGS = \
+        $(AM_CPPFLAGS_@VGCONF_PLATFORM_SEC_CAPS@) -Ipriv
+libvexmultiarch_@VGCONF_ARCH_SEC@_@VGCONF_OS@_a_CFLAGS   = \
         $(AM_CFLAGS_@VGCONF_PLATFORM_SEC_CAPS@) $(LIBVEX_CFLAGS)
 endif
 

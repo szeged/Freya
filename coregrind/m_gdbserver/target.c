@@ -44,7 +44,7 @@ static
 char *image_ptid(unsigned long ptid)
 {
   static char result[50];    // large enough
-  VG_(sprintf) (result, "id %ld", ptid);
+  VG_(sprintf) (result, "id %lu", ptid);
   return result;
 }
 #define get_thread(inf) ((struct thread_info *)(inf))
@@ -74,7 +74,7 @@ void valgrind_update_threads (int pid)
   /* call add_thread for all valgrind threads not known in gdb all_threads */
   for (tid = 1; tid < VG_N_THREADS; tid++) {
 
-#define LOCAL_THREAD_TRACE " ti* %p vgtid %d status %s as gdb ptid %s lwpid %d\n", \
+#define LOCAL_THREAD_TRACE " ti* %p vgtid %u status %s as gdb ptid %s lwpid %d\n", \
         ti, tid, VG_(name_of_ThreadStatus) (ts->status), \
         image_ptid (ptid), ts->os_state.lwpid
 
@@ -153,18 +153,49 @@ static CORE_ADDR stop_pc;
 */
 static CORE_ADDR resume_pc;
 
-static int vki_signal_to_report;
+static vki_siginfo_t vki_signal_to_report;
+static vki_siginfo_t vki_signal_to_deliver;
 
-void gdbserver_signal_encountered (Int vki_sigNo)
+void gdbserver_signal_encountered (const vki_siginfo_t *info)
 {
-   vki_signal_to_report = vki_sigNo;
+   vki_signal_to_report = *info;
+   vki_signal_to_deliver = *info;
 }
 
-static int vki_signal_to_deliver;
-Bool gdbserver_deliver_signal (Int vki_sigNo)
+void gdbserver_pending_signal_to_report (vki_siginfo_t *info)
 {
-   return vki_sigNo == vki_signal_to_deliver;
+   *info = vki_signal_to_report;
 }
+
+Bool gdbserver_deliver_signal (vki_siginfo_t *info)
+{
+   if (info->si_signo != vki_signal_to_deliver.si_signo)
+      dlog(1, "GDB changed signal  info %d to_report %d to_deliver %d\n",
+           info->si_signo, vki_signal_to_report.si_signo,
+           vki_signal_to_deliver.si_signo);
+   *info = vki_signal_to_deliver;
+   return vki_signal_to_deliver.si_signo != 0;
+}
+
+static Bool before_syscall;
+static Int sysno_to_report = -1;
+void gdbserver_syscall_encountered (Bool before, Int sysno)
+{
+   before_syscall = before;
+   sysno_to_report = sysno;
+}
+
+Int valgrind_stopped_by_syscall (void)
+{
+   return sysno_to_report;
+}
+
+Bool valgrind_stopped_before_syscall()
+{
+   vg_assert (sysno_to_report >= 0);
+   return before_syscall;
+}
+
 
 static unsigned char exit_status_to_report;
 static int exit_code_to_report;
@@ -178,7 +209,10 @@ void gdbserver_process_exit_encountered (unsigned char status, Int code)
 static
 const HChar* sym (Addr addr)
 {
-   return VG_(describe_IP) (addr, NULL);
+   // Tracing/debugging so cur_ep is reasonable.
+   const DiEpoch cur_ep = VG_(current_DiEpoch)();
+
+   return VG_(describe_IP) (cur_ep, addr, NULL);
 }
 
 ThreadId vgdb_interrupted_tid = 0;
@@ -238,7 +272,16 @@ void valgrind_resume (struct thread_resume *resume_info)
            C2v(stopped_data_address));
       VG_(set_watchpoint_stop_address) ((Addr) 0);
    }
-   vki_signal_to_deliver = resume_info->sig;
+   if (valgrind_stopped_by_syscall () >= 0) {
+      dlog(1, "clearing stopped by syscall %d\n",
+           valgrind_stopped_by_syscall ());
+      gdbserver_syscall_encountered (False, -1);
+   }
+
+   vki_signal_to_deliver.si_signo = resume_info->sig;
+   /* signal was reported to GDB, GDB told us to resume execution.
+      So, reset the signal to report to 0. */
+   VG_(memset) (&vki_signal_to_report, 0, sizeof(vki_signal_to_report));
    
    stepping = resume_info->step;
    resume_pc = (*the_low_target.get_pc) ();
@@ -279,7 +322,7 @@ unsigned char valgrind_wait (char *ourstatus)
       if (*ourstatus == 'X') {
          sig = target_signal_from_host(exit_code_to_report);
          exit_code_to_report = 0;
-         dlog(1, "exit valgrind_wait status X signal %d\n", sig);
+         dlog(1, "exit valgrind_wait status X signal %u\n", sig);
          return sig;
       }
    }
@@ -288,12 +331,10 @@ unsigned char valgrind_wait (char *ourstatus)
       and with a signal TRAP (i.e. a breakpoint), unless there is
       a signal to report. */
    *ourstatus = 'T';
-   if (vki_signal_to_report == 0)
+   if (vki_signal_to_report.si_signo == 0)
       sig = TARGET_SIGNAL_TRAP;
-   else {
-      sig = target_signal_from_host(vki_signal_to_report);
-      vki_signal_to_report = 0;
-   }
+   else
+      sig = target_signal_from_host(vki_signal_to_report.si_signo);
    
    if (vgdb_interrupted_tid != 0)
       tst = VG_(get_ThreadState) (vgdb_interrupted_tid);
@@ -308,7 +349,7 @@ unsigned char valgrind_wait (char *ourstatus)
    stop_pc = (*the_low_target.get_pc) ();
    
    dlog(1,
-        "exit valgrind_wait status T ptid %s stop_pc %s signal %d\n", 
+        "exit valgrind_wait status T ptid %s stop_pc %s signal %u\n", 
         image_ptid (wptid), sym (stop_pc), sig);
    return sig;
 }
@@ -339,7 +380,7 @@ void fetch_register (int regno)
       if (mod && VG_(debugLog_getLevel)() > 1) {
          char bufimage [2*size + 1];
          heximage (bufimage, buf, size);
-         dlog(2, "fetched register %d size %d name %s value %s tid %d status %s\n", 
+         dlog(3, "fetched register %d size %d name %s value %s tid %u status %s\n", 
               regno, size, the_low_target.reg_defs[regno].name, bufimage, 
               tid, VG_(name_of_ThreadStatus) (tst->status));
       }
@@ -407,7 +448,7 @@ void usr_store_inferior_registers (int regno)
             heximage (bufimage, buf, size);
             dlog(2, 
                  "stored register %d size %d name %s value %s "
-                 "tid %d status %s\n", 
+                 "tid %u status %s\n", 
                  regno, size, the_low_target.reg_defs[regno].name, bufimage, 
                  tid, VG_(name_of_ThreadStatus) (tst->status));
          }
@@ -449,7 +490,7 @@ Bool hostvisibility = False;
 int valgrind_read_memory (CORE_ADDR memaddr, unsigned char *myaddr, int len)
 {
    const void *sourceaddr = C2v (memaddr);
-   dlog(2, "reading memory %p size %d\n", sourceaddr, len);
+   dlog(3, "reading memory %p size %d\n", sourceaddr, len);
    if (VG_(am_is_valid_for_client) ((Addr) sourceaddr, 
                                     len, VKI_PROT_READ)
        || (hostvisibility 
@@ -463,11 +504,12 @@ int valgrind_read_memory (CORE_ADDR memaddr, unsigned char *myaddr, int len)
    }
 }
 
-int valgrind_write_memory (CORE_ADDR memaddr, const unsigned char *myaddr, int len)
+int valgrind_write_memory (CORE_ADDR memaddr, 
+                           const unsigned char *myaddr, int len)
 {
    Bool is_valid_client_memory;
    void *targetaddr = C2v (memaddr);
-   dlog(2, "writing memory %p size %d\n", targetaddr, len);
+   dlog(3, "writing memory %p size %d\n", targetaddr, len);
    is_valid_client_memory 
       = VG_(am_is_valid_for_client) ((Addr)targetaddr, len, VKI_PROT_WRITE);
    if (is_valid_client_memory
@@ -668,18 +710,73 @@ Bool valgrind_get_tls_addr (ThreadState *tst,
 
    // Check we can read at least 2 address at the beginning of dtv.
    CHECK_DEREF(dtv, 2*sizeof(CORE_ADDR), "dtv 2 first entries");
-   dlog (2, "tid %d dtv %p\n", tst->tid, (void*)dtv);
+   dlog (2, "tid %u dtv %p\n", tst->tid, (void*)dtv);
 
    // Check we can read the modid
    CHECK_DEREF(lm+lm_modid_offset, sizeof(unsigned long int), "link_map modid");
    modid = *(unsigned long int *)(lm+lm_modid_offset);
+   dlog (2, "tid %u modid %lu\n", tst->tid, modid);
 
    // Check we can access the dtv entry for modid
    CHECK_DEREF(dtv + 2 * modid, sizeof(CORE_ADDR), "dtv[2*modid]");
 
-   // And finally compute the address of the tls variable.
-   *tls_addr = *(dtv + 2 * modid) + offset;
-   
+   // Compute the base address of the tls block.
+   *tls_addr = *(dtv + 2 * modid);
+
+   if (*tls_addr & 1) {
+      /* This means that computed address is not valid, most probably
+         because given module uses Static TLS.
+         However, the best we can is to try to compute address using
+         static TLS. This is what libthread_db does.
+         Ref. GLIBC/nptl_db/td_thr_tlsbase.c:td_thr_tlsbase().
+      */
+
+      CORE_ADDR tls_offset_addr;
+      PtrdiffT tls_offset;
+
+      dlog(2, "tls_addr (%p & 1) => computing tls_addr using static TLS\n",
+           (void*) *tls_addr);
+
+      /* Assumes that tls_offset is placed right before tls_modid.
+         To check the assumption, start a gdb on none/tests/tls and do:
+           p &((struct link_map*)0x0)->l_tls_modid
+           p &((struct link_map*)0x0)->l_tls_offset
+         Instead of assuming this, we could calculate this similarly to
+         lm_modid_offset, by extending getplatformoffset to support querying
+         more than one offset.
+      */
+      tls_offset_addr = lm + lm_modid_offset - sizeof(PtrdiffT);
+
+      // Check we can read the tls_offset.
+      CHECK_DEREF(tls_offset_addr, sizeof(PtrdiffT), "link_map tls_offset");
+      tls_offset = *(PtrdiffT *)(tls_offset_addr);
+      dlog(2, "tls_offset_addr %p tls_offset %ld\n",
+           (void*)tls_offset_addr, (long)tls_offset);
+
+      /* Following two values represent platform dependent constants
+         NO_TLS_OFFSET and FORCED_DYNAMIC_TLS_OFFSET, respectively. */
+      if ((tls_offset == -1) || (tls_offset == -2)) {
+         dlog(2, "link_map tls_offset is not valid for static TLS\n");
+         return False;
+      }
+
+      // This calculation is also platform dependent.
+#if defined(VGA_mips32) || defined(VGA_mips64)
+      *tls_addr = ((CORE_ADDR)dtv_loc + 2 * sizeof(CORE_ADDR) + tls_offset);
+#elif defined(VGA_ppc64be) || defined(VGA_ppc64le)
+      *tls_addr = ((CORE_ADDR)dtv_loc + sizeof(CORE_ADDR) + tls_offset);
+#elif defined(VGA_x86) || defined(VGA_amd64) || defined(VGA_s390x)
+      *tls_addr = (CORE_ADDR)dtv_loc - tls_offset - sizeof(CORE_ADDR);
+#else
+      // ppc32, arm, arm64
+      dlog(0, "target.c is missing platform code for static TLS\n");
+      return False;
+#endif
+   }
+
+   // Finally, add tls variable offset to tls block base address.
+   *tls_addr += offset;
+
    return True;
 
 #undef CHECK_DEREF
@@ -753,7 +850,7 @@ void set_desired_inferior (int use_general)
   {
      ThreadState *tst = (ThreadState *) inferior_target_data (current_inferior);
      ThreadId tid = tst->tid;
-     dlog(1, "set_desired_inferior use_general %d found %p tid %d lwpid %d\n",
+     dlog(1, "set_desired_inferior use_general %d found %p tid %u lwpid %d\n",
           use_general, found, tid, tst->os_state.lwpid);
   }
 }

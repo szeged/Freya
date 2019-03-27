@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -48,7 +48,7 @@
 /*---------------------------------------------------------*/
 
 /* Convert one amd64 insn to IR.  See the type DisOneInstrFn in
-   bb_to_IR.h. */
+   guest_generic_bb_to_IR.h. */
 extern
 DisResult disInstr_AMD64 ( IRSB*        irbb,
                            Bool         (*resteerOkFn) ( void*, Addr ),
@@ -168,13 +168,19 @@ extern void  amd64g_dirtyhelper_CPUID_baseline ( VexGuestAMD64State* st );
 extern void  amd64g_dirtyhelper_CPUID_sse3_and_cx16 ( VexGuestAMD64State* st );
 extern void  amd64g_dirtyhelper_CPUID_sse42_and_cx16 ( VexGuestAMD64State* st );
 extern void  amd64g_dirtyhelper_CPUID_avx_and_cx16 ( VexGuestAMD64State* st );
+extern void  amd64g_dirtyhelper_CPUID_avx2 ( VexGuestAMD64State* st );
 
 extern void  amd64g_dirtyhelper_FINIT ( VexGuestAMD64State* );
 
-extern void      amd64g_dirtyhelper_FXSAVE_ALL_EXCEPT_XMM
-                    ( VexGuestAMD64State*, HWord );
-extern VexEmNote amd64g_dirtyhelper_FXRSTOR_ALL_EXCEPT_XMM
-                    ( VexGuestAMD64State*, HWord );
+extern void amd64g_dirtyhelper_XSAVE_COMPONENT_0
+               ( VexGuestAMD64State* gst, HWord addr );
+extern void amd64g_dirtyhelper_XSAVE_COMPONENT_1_EXCLUDING_XMMREGS 
+               ( VexGuestAMD64State* gst, HWord addr );
+
+extern VexEmNote amd64g_dirtyhelper_XRSTOR_COMPONENT_0
+                    ( VexGuestAMD64State* gst, HWord addr );
+extern VexEmNote amd64g_dirtyhelper_XRSTOR_COMPONENT_1_EXCLUDING_XMMREGS 
+                    ( VexGuestAMD64State* gst, HWord addr );
 
 extern ULong amd64g_dirtyhelper_RDTSC ( void );
 extern void  amd64g_dirtyhelper_RDTSCP ( VexGuestAMD64State* st );
@@ -315,6 +321,15 @@ extern void amd64g_dirtyhelper_AESKEYGENASSIST (
 #define AMD64G_CC_MASK_A    (1ULL << AMD64G_CC_SHIFT_A)
 #define AMD64G_CC_MASK_C    (1ULL << AMD64G_CC_SHIFT_C)
 #define AMD64G_CC_MASK_P    (1ULL << AMD64G_CC_SHIFT_P)
+
+/* additional rflags masks */
+#define AMD64G_CC_SHIFT_ID  21
+#define AMD64G_CC_SHIFT_AC  18
+#define AMD64G_CC_SHIFT_D   10
+
+#define AMD64G_CC_MASK_ID   (1ULL << AMD64G_CC_SHIFT_ID)
+#define AMD64G_CC_MASK_AC   (1ULL << AMD64G_CC_SHIFT_AC)
+#define AMD64G_CC_MASK_D    (1ULL << AMD64G_CC_SHIFT_D)
 
 /* FPU flag masks */
 #define AMD64G_FC_SHIFT_C3   14
@@ -525,6 +540,12 @@ enum {
 
     AMD64G_CC_OP_BLSR32,  /* 59 */
     AMD64G_CC_OP_BLSR64,  /* 60 DEP1 = res, DEP2 = arg, NDEP = unused */
+
+    AMD64G_CC_OP_ADCX32,  /* 61 DEP1 = argL, DEP2 = argR ^ oldCarry, .. */
+    AMD64G_CC_OP_ADCX64,  /* 62 .. NDEP = old flags */
+
+    AMD64G_CC_OP_ADOX32,  /* 63 DEP1 = argL, DEP2 = argR ^ oldOverflow, .. */
+    AMD64G_CC_OP_ADOX64,  /* 64 .. NDEP = old flags */
 
     AMD64G_CC_OP_NUMBER
 };

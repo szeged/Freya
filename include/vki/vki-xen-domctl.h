@@ -1,3 +1,30 @@
+/*
+   This file is part of Valgrind, a dynamic binary instrumentation
+   framework.
+
+   Copyright (C) 2012-2017 Citrix
+
+   This program is free software; you can redistribute it and/or
+   modify it under the terms of the GNU General Public License as
+   published by the Free Software Foundation; either version 2 of the
+   License, or (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful, but
+   WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+   General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, write to the Free Software
+   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA
+   02111-1307, USA.
+
+   The GNU General Public License is contained in the file COPYING.
+*/
+
+/* Contributed by Andrew Cooper <andrew.cooper3@citrix.com>
+   and Ian Campbell <ian.campbell@citrix.com> */
+
 #ifndef __VKI_XEN_DOMCTL_H
 #define __VKI_XEN_DOMCTL_H
 
@@ -5,9 +32,12 @@
  * The domctl interface is versioned via the interface_version
  * field. This structures in this header supports domctl interfaces:
  *
- * - 00000007: Xen 4.1
- * - 00000008: Xen 4.2
- * - 00000009: Xen 4.3
+ * - 0x00000007: Xen 4.1
+ * - 0x00000008: Xen 4.2
+ * - 0x00000009: Xen 4.3 & 4.4
+ * - 0x0000000a: Xen 4.5
+ * - 0x0000000b: Xen 4.6
+ * - 0x0000000c: Xen 4.7
  *
  * When adding a new subop be sure to include the variants used by all
  * of the above, both here and in syswrap-xen.c
@@ -71,6 +101,7 @@
 #define VKI_XEN_DOMCTL_debug_op                      54
 #define VKI_XEN_DOMCTL_gethvmcontext_partial         55
 #define VKI_XEN_DOMCTL_mem_event_op                  56
+#define VKI_XEN_DOMCTL_vm_event_op                   56 /* name change in 4.6 */
 #define VKI_XEN_DOMCTL_mem_sharing_op                57
 #define VKI_XEN_DOMCTL_disable_migrate               58
 #define VKI_XEN_DOMCTL_gettscinfo                    59
@@ -86,6 +117,9 @@
 #define VKI_XEN_DOMCTL_getnodeaffinity               69
 #define VKI_XEN_DOMCTL_set_max_evtchn                70
 #define VKI_XEN_DOMCTL_cacheflush                    71
+#define VKI_XEN_DOMCTL_get_vcpu_msrs                 72
+#define VKI_XEN_DOMCTL_set_vcpu_msrs                 73
+#define VKI_XEN_DOMCTL_monitor_op                    77 /* new in 4.6 */
 #define VKI_XEN_DOMCTL_gdbsx_guestmemio            1000
 #define VKI_XEN_DOMCTL_gdbsx_pausevcpu             1001
 #define VKI_XEN_DOMCTL_gdbsx_unpausevcpu           1002
@@ -156,6 +190,8 @@ struct vki_xen_domctl_getdomaininfo_00000009 {
 typedef struct vki_xen_domctl_getdomaininfo_00000009 vki_xen_domctl_getdomaininfo_00000009_t;
 DEFINE_VKI_XEN_GUEST_HANDLE(vki_xen_domctl_getdomaininfo_00000009_t);
 
+/* vki_xen_domctl_getdomaininfo_0000000a is the same as 00000009 */
+
 /* Get/set the NUMA node(s) with which the guest has affinity with. */
 /* XEN_DOMCTL_setnodeaffinity */
 /* XEN_DOMCTL_getnodeaffinity */
@@ -170,9 +206,18 @@ struct vki_xen_domctl_getpageframeinfo3 {
     VKI_XEN_GUEST_HANDLE_64(vki_xen_pfn_t) array; /* IN/OUT */
 };
 
-struct vki_xen_domctl_vcpuaffinity {
+struct vki_xen_domctl_vcpuaffinity_00000009 {
     vki_uint32_t  vcpu;              /* IN */
     struct vki_xenctl_bitmap cpumap; /* IN/OUT */
+};
+
+struct vki_xen_domctl_vcpuaffinity_0000000a {
+    vki_uint32_t  vcpu;              /* IN */
+#define VKI_XEN_VCPUAFFINITY_HARD   (1U<<0)
+#define VKI_XEN_VCPUAFFINITY_SOFT   (1U<<1)
+    vki_uint32_t  flags;              /* IN */
+    struct vki_xenctl_bitmap cpumap_hard; /* IN/OUT */
+    struct vki_xenctl_bitmap cpumap_soft; /* IN/OUT */
 };
 
 struct vki_xen_domctl_shadow_op_stats {
@@ -236,6 +281,7 @@ struct vki_xen_domctl_scheduler_op {
 #define VKI_XEN_SCHEDULER_CREDIT   5
 #define VKI_XEN_SCHEDULER_CREDIT2  6
 #define VKI_XEN_SCHEDULER_ARINC653 7
+#define VKI_XEN_SCHEDULER_RTDS     8
     vki_uint32_t cmd;       /* VKI_XEN_DOMCTL_SCHEDOP_* */
 #define VKI_XEN_DOMCTL_SCHEDOP_putinfo 0
 #define VKI_XEN_DOMCTL_SCHEDOP_getinfo 1
@@ -254,11 +300,27 @@ struct vki_xen_domctl_scheduler_op {
         struct xen_domctl_sched_credit2 {
             vki_uint16_t weight;
         } credit2;
+        struct xen_domctl_sched_rtds {
+            vki_uint32_t period;
+            vki_uint32_t budget;
+        } rtds;
     } u;
 };
 
 struct vki_xen_domctl_max_vcpus {
     vki_uint32_t max;           /* maximum number of vcpus */
+};
+
+/* XEN_DOMCTL_irq_permission */
+struct vki_xen_domctl_irq_permission {
+    vki_uint8_t pirq;
+    vki_uint8_t allow_access;    /* flag to specify enable/disable of IRQ access */
+};
+
+struct vki_xen_domctl_iomem_permission {
+    vki_xen_uint64_aligned_t first_mfn;/* first page (physical page number) in range */
+    vki_xen_uint64_aligned_t nr_mfns;  /* number of pages in range (>0) */
+    vki_uint8_t  allow_access;     /* allow (!0) or deny (0) access to range? */
 };
 
 struct vki_xen_domctl_ioport_permission {
@@ -293,6 +355,22 @@ struct vki_xen_guest_tsc_info {
 typedef struct vki_xen_guest_tsc_info vki_xen_guest_tsc_info_t;
 DEFINE_VKI_XEN_GUEST_HANDLE(vki_xen_guest_tsc_info_t);
 
+struct vki_xen_domctl_tsc_info_00000007 {
+    VKI_XEN_GUEST_HANDLE_64(vki_xen_guest_tsc_info_t) out_info; /* OUT */
+    vki_xen_guest_tsc_info_t info; /* IN */
+};
+
+/* 4.6 removed the output pointer */
+struct vki_xen_domctl_tsc_info_0000000b {
+    /* IN/OUT */
+    vki_uint32_t tsc_mode;
+    vki_uint32_t gtsc_khz;
+    vki_uint32_t incarnation;
+    vki_uint32_t pad;
+    vki_xen_uint64_aligned_t elapsed_nsec;
+};
+
+
 struct vki_xen_domctl_hvmcontext {
     vki_uint32_t size; /* IN/OUT size of buffer */
     VKI_XEN_GUEST_HANDLE_64(vki_uint8) buffer; /* IN/OUT */
@@ -308,10 +386,49 @@ struct vki_xen_domctl_hvmcontext_partial {
 typedef struct vki_xen_domctl_hvmcontext_partial vki_xen_domctl_hvmcontext_partial_t;
 DEFINE_VKI_XEN_GUEST_HANDLE(vki_xen_domctl_hvmcontext_partial_t);
 
-struct vki_xen_domctl_tsc_info {
-    VKI_XEN_GUEST_HANDLE_64(vki_xen_guest_tsc_info_t) out_info; /* OUT */
-    vki_xen_guest_tsc_info_t info; /* IN */
+
+struct vki_xen_domctl_pin_mem_cacheattr {
+    vki_xen_uint64_aligned_t start, end; /* IN */
+    vki_uint32_t type;                   /* IN */
 };
+
+struct vki_xen_domctl_ext_vcpucontext_00000008 {
+    vki_uint32_t             vcpu; /* IN */
+
+    /* IN  for XEN_DOMCTL_set_ext_vcpucontext
+     * OUT for XEN_DOMCTL_get_ext_vcpucontext */
+    vki_uint32_t             size;
+#if defined(__i386__) || defined(__x86_64__)
+    vki_xen_uint64_aligned_t syscall32_callback_eip;
+    vki_xen_uint64_aligned_t sysenter_callback_eip;
+    vki_uint16_t             syscall32_callback_cs;
+    vki_uint16_t             sysenter_callback_cs;
+    vki_uint8_t              syscall32_disables_events;
+    vki_uint8_t              sysenter_disables_events;
+    vki_xen_uint64_aligned_t mcg_cap;
+#endif
+};
+
+struct vki_xen_domctl_ext_vcpucontext_00000009 {
+    vki_uint32_t             vcpu; /* IN */
+
+    /* IN  for XEN_DOMCTL_set_ext_vcpucontext
+     * OUT for XEN_DOMCTL_get_ext_vcpucontext */
+    vki_uint32_t             size;
+#if defined(__i386__) || defined(__x86_64__)
+    vki_xen_uint64_aligned_t syscall32_callback_eip;
+    vki_xen_uint64_aligned_t sysenter_callback_eip;
+    vki_uint16_t             syscall32_callback_cs;
+    vki_uint16_t             sysenter_callback_cs;
+    vki_uint8_t              syscall32_disables_events;
+    vki_uint8_t              sysenter_disables_events;
+    vki_uint64_t             caps;
+    vki_uint64_t             mci_ctl2_bank0;
+    vki_uint64_t             mci_ctl2_bank1;
+#endif
+};
+
+/* vki_xen_domctl_ext_vcpucontext_0000000a is the same as 00000009 */
 
 struct vki_xen_domctl_vcpuextstate {
     vki_uint32_t         vcpu;
@@ -324,17 +441,43 @@ struct vki_xen_domctl_address_size {
     vki_uint32_t size;
 };
 
+/* vki_xen_domctl_assign_device_00000007 is the same up to version 0x0000000b */
+struct vki_xen_domctl_assign_device_00000007 {
+    vki_uint32_t  machine_sbdf;   /* machine PCI ID of assigned device */
+};
+
+#define VKI_XEN_DOMCTL_DEV_PCI      0
+#define VKI_XEN_DOMCTL_DEV_DT       1
+struct vki_xen_domctl_assign_device_0000000b {
+    vki_uint32_t dev;   /* XEN_DOMCTL_DEV_* */
+    union {
+        struct {
+            vki_uint32_t machine_sbdf;   /* machine PCI ID of assigned device */
+        } pci;
+        struct {
+            vki_uint32_t size; /* Length of the path */
+            VKI_XEN_GUEST_HANDLE_64(vki_uint8) path; /* path to the device tree node */
+        } dt;
+    } u;
+    /* IN */
+//#define XEN_DOMCTL_DEV_RDM_RELAXED      1
+    vki_uint32_t  flag;   /* flag of assigned device */
+};
+
 struct vki_xen_domctl_debug_op {
     vki_uint32_t op;   /* IN */
     vki_uint32_t vcpu; /* IN */
 };
 typedef struct vki_xen_domctl_debug_op vki_xen_domctl_debug_op_t;
 
-struct vki_xen_domctl_mem_event_op {
+struct vki_xen_domctl_mem_event_op_00000007 {
     vki_uint32_t op; /* IN */
     vki_uint32_t mode; /* IN */
     vki_uint32_t port; /* OUT */
 };
+
+/* only a name change in 4.6 */
+typedef struct vki_xen_domctl_mem_event_op_00000007 vki_xen_domctl_vm_event_op_0000000b;
 
 struct vki_xen_domctl_set_access_required {
     vki_uint8_t access_required; /* IN */
@@ -347,6 +490,90 @@ struct vki_xen_domctl_set_max_evtchn {
 struct vki_xen_domctl_cacheflush {
     /* IN: page range to flush. */
     vki_xen_pfn_t start_pfn, nr_pfns;
+};
+
+struct vki_xen_domctl_vcpu_msr {
+    vki_uint32_t             index;
+    vki_uint32_t             reserved;
+    vki_xen_uint64_aligned_t value;
+};
+typedef struct vki_xen_domctl_vcpu_msr vki_xen_domctl_vcpu_msr_t;
+DEFINE_VKI_XEN_GUEST_HANDLE(vki_xen_domctl_vcpu_msr_t);
+
+struct vki_xen_domctl_vcpu_msrs {
+    vki_uint32_t vcpu;
+    vki_uint32_t msr_count;
+    VKI_XEN_GUEST_HANDLE_64(vki_xen_domctl_vcpu_msr_t) msrs;
+};
+
+#define VKI_XEN_DOMCTL_MONITOR_OP_ENABLE            0
+#define VKI_XEN_DOMCTL_MONITOR_OP_DISABLE           1
+#define VKI_XEN_DOMCTL_MONITOR_OP_GET_CAPABILITIES  2
+
+#define VKI_XEN_DOMCTL_MONITOR_EVENT_WRITE_CTRLREG         0
+#define VKI_XEN_DOMCTL_MONITOR_EVENT_MOV_TO_MSR            1
+#define VKI_XEN_DOMCTL_MONITOR_EVENT_SINGLESTEP            2
+#define VKI_XEN_DOMCTL_MONITOR_EVENT_SOFTWARE_BREAKPOINT   3
+#define VKI_XEN_DOMCTL_MONITOR_EVENT_GUEST_REQUEST         4
+
+struct vki_xen_domctl_monitor_op_0000000b {
+    vki_uint32_t op; /* vki_xen_DOMCTL_MONITOR_OP_* */
+
+    /*
+     * When used with ENABLE/DISABLE this has to be set to
+     * the requested vki_xen_DOMCTL_MONITOR_EVENT_* value.
+     * With GET_CAPABILITIES this field returns a bitmap of
+     * events supported by the platform, in the format
+     * (1 << vki_xen_DOMCTL_MONITOR_EVENT_*).
+     */
+    vki_uint32_t event;
+
+    /*
+     * Further options when issuing vki_xen_DOMCTL_MONITOR_OP_ENABLE.
+     */
+    union {
+        struct {
+            /* Which control register */
+            vki_uint8_t index;
+            /* Pause vCPU until response */
+            vki_uint8_t sync;
+            /* Send event only on a change of value */
+            vki_uint8_t onchangeonly;
+        } mov_to_cr;
+
+        struct {
+            /* Enable the capture of an extended set of MSRs */
+            vki_uint8_t extended_capture;
+        } mov_to_msr;
+
+        struct {
+            /* Pause vCPU until response */
+            vki_uint8_t sync;
+        } guest_request;
+    } u;
+};
+
+
+struct vki_xen_domctl_monitor_op {
+    vki_uint32_t op;
+#define VKI_XEN_DOMCTL_MONITOR_OP_ENABLE            0
+#define VKI_XEN_DOMCTL_MONITOR_OP_DISABLE           1
+#define VKI_XEN_DOMCTL_MONITOR_OP_GET_CAPABILITIES  2
+#define VKI_XEN_DOMCTL_MONITOR_OP_EMULATE_EACH_REP  3
+    vki_uint32_t event;
+    union {
+        struct {
+            vki_uint8_t index;
+            vki_uint8_t sync;
+            vki_uint8_t onchangeonly;
+        } mov_to_cr;
+        struct {
+            vki_uint8_t extended_capture;
+        } mov_to_msr;
+        struct {
+            vki_uint8_t sync;
+        } guest_request;
+    } u;
 };
 
 struct vki_xen_domctl {
@@ -363,7 +590,8 @@ struct vki_xen_domctl {
         //struct vki_xen_domctl_getpageframeinfo2 getpageframeinfo2;
         struct vki_xen_domctl_getpageframeinfo3 getpageframeinfo3;
         struct vki_xen_domctl_nodeaffinity      nodeaffinity;
-        struct vki_xen_domctl_vcpuaffinity      vcpuaffinity;
+        struct vki_xen_domctl_vcpuaffinity_00000009 vcpuaffinity_00000009;
+        struct vki_xen_domctl_vcpuaffinity_0000000a vcpuaffinity_0000000a;
         struct vki_xen_domctl_shadow_op         shadow_op;
         struct vki_xen_domctl_max_mem           max_mem;
         struct vki_xen_domctl_vcpucontext       vcpucontext;
@@ -372,34 +600,39 @@ struct vki_xen_domctl {
         struct vki_xen_domctl_scheduler_op      scheduler_op;
         //struct vki_xen_domctl_setdomainhandle   setdomainhandle;
         //struct vki_xen_domctl_setdebugging      setdebugging;
-        //struct vki_xen_domctl_irq_permission    irq_permission;
-        //struct vki_xen_domctl_iomem_permission  iomem_permission;
+        struct vki_xen_domctl_irq_permission    irq_permission;
+        struct vki_xen_domctl_iomem_permission  iomem_permission;
         struct vki_xen_domctl_ioport_permission ioport_permission;
         struct vki_xen_domctl_hypercall_init    hypercall_init;
         //struct vki_xen_domctl_arch_setup        arch_setup;
         struct vki_xen_domctl_settimeoffset     settimeoffset;
         //struct vki_xen_domctl_disable_migrate   disable_migrate;
-        struct vki_xen_domctl_tsc_info          tsc_info;
+        struct vki_xen_domctl_tsc_info_00000007   tsc_info_00000007;
+        struct vki_xen_domctl_tsc_info_0000000b   tsc_info_0000000b;
         //struct vki_xen_domctl_real_mode_area    real_mode_area;
         struct vki_xen_domctl_hvmcontext        hvmcontext;
         struct vki_xen_domctl_hvmcontext_partial hvmcontext_partial;
         struct vki_xen_domctl_address_size      address_size;
         //struct vki_xen_domctl_sendtrigger       sendtrigger;
         //struct vki_xen_domctl_get_device_group  get_device_group;
-        //struct vki_xen_domctl_assign_device     assign_device;
+        struct vki_xen_domctl_assign_device_00000007 assign_device_00000007;
+        struct vki_xen_domctl_assign_device_0000000b assign_device_0000000b;
         //struct vki_xen_domctl_bind_pt_irq       bind_pt_irq;
         //struct vki_xen_domctl_memory_mapping    memory_mapping;
         //struct vki_xen_domctl_ioport_mapping    ioport_mapping;
-        //struct vki_xen_domctl_pin_mem_cacheattr pin_mem_cacheattr;
-        //struct vki_xen_domctl_ext_vcpucontext   ext_vcpucontext;
+        struct vki_xen_domctl_pin_mem_cacheattr pin_mem_cacheattr;
+        struct vki_xen_domctl_ext_vcpucontext_00000008 ext_vcpucontext_00000008;
+        struct vki_xen_domctl_ext_vcpucontext_00000009 ext_vcpucontext_00000009;
         //struct vki_xen_domctl_set_target        set_target;
         //struct vki_xen_domctl_subscribe         subscribe;
         struct vki_xen_domctl_debug_op          debug_op;
-        struct vki_xen_domctl_mem_event_op      mem_event_op;
+        struct vki_xen_domctl_mem_event_op_00000007 mem_event_op_00000007;
+        vki_xen_domctl_vm_event_op_0000000b vm_event_op_0000000b;
         //struct vki_xen_domctl_mem_sharing_op    mem_sharing_op;
 #if defined(__i386__) || defined(__x86_64__)
         struct vki_xen_domctl_cpuid             cpuid;
         struct vki_xen_domctl_vcpuextstate      vcpuextstate;
+        struct vki_xen_domctl_vcpu_msrs         vcpu_msrs;
 #endif
         struct vki_xen_domctl_set_access_required access_required;
         //struct vki_xen_domctl_audit_p2m         audit_p2m;
@@ -410,6 +643,7 @@ struct vki_xen_domctl {
         struct vki_xen_domctl_cacheflush        cacheflush;
         //struct vki_xen_domctl_gdbsx_pauseunp_vcpu gdbsx_pauseunp_vcpu;
         //struct vki_xen_domctl_gdbsx_domstatus   gdbsx_domstatus;
+        struct vki_xen_domctl_monitor_op_0000000b monitor_op_0000000b;
         vki_uint8_t                         pad[128];
     } u;
 };

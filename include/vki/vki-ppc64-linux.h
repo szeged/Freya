@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2013 Julian Seward
+   Copyright (C) 2005-2017 Julian Seward
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -685,6 +685,9 @@ struct vki_ucontext {
   struct vki_sigcontext uc_mcontext;  /* last for extensibility */
 };
 
+// CAB: TODO
+typedef char vki_modify_ldt_t;
+
 //----------------------------------------------------------------------
 // From linux-2.6.13/include/asm-ppc64/ipcbuf.h
 //----------------------------------------------------------------------
@@ -793,6 +796,13 @@ struct vki_shminfo64 {
 
 #define	VKI_ENOSYS       38  /* Function not implemented */
 #define	VKI_EOVERFLOW    75  /* Value too large for defined data type */
+
+//----------------------------------------------------------------------
+// From linux-3.19.0/arch/powerpc/include/uapi/asm/ioctls.h
+//----------------------------------------------------------------------
+
+#define VKI_TIOCGSERIAL     0x541E
+#define VKI_TIOCSSERIAL     0x541F
 
 //----------------------------------------------------------------------
 // end

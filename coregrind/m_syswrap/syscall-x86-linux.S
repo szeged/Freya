@@ -7,7 +7,7 @@
   This file is part of Valgrind, a dynamic binary instrumentation
   framework.
 
-  Copyright (C) 2000-2013 Julian Seward 
+  Copyright (C) 2000-2017 Julian Seward 
      jseward@acm.org
 
   This program is free software; you can redistribute it and/or
@@ -28,9 +28,10 @@
   The GNU General Public License is contained in the file COPYING.
 */
 
+#include "pub_core_basics_asm.h"
+
 #if defined(VGP_x86_linux)
 
-#include "pub_core_basics_asm.h"
 #include "pub_core_vkiscnums_asm.h"
 #include "libvex_guest_offsets.h"
 		
@@ -78,11 +79,20 @@
 	
 .globl ML_(do_syscall_for_client_WRK)
 ML_(do_syscall_for_client_WRK):
+	.cfi_startproc
 	/* save callee-saved regs */
 	push	%esi
+	.cfi_adjust_cfa_offset 4
+	.cfi_offset %esi, -8
 	push	%edi
+	.cfi_adjust_cfa_offset 4
+	.cfi_offset %esi, -12
 	push	%ebx
+	.cfi_adjust_cfa_offset 4
+	.cfi_offset %esi, -16
 	push	%ebp
+	.cfi_adjust_cfa_offset 4
+	.cfi_offset %esi, -20
 #define FSZ	((4+1)*4)	/* 4 args + ret addr */
 
 1:	/* Even though we can't take a signal until the sigprocmask completes,
@@ -131,20 +141,30 @@ ML_(do_syscall_for_client_WRK):
 5:	/* now safe from signals */
 	movl	$0, %eax	/* SUCCESS */
 	popl	%ebp
+	.cfi_adjust_cfa_offset -4
 	popl	%ebx
+	.cfi_adjust_cfa_offset -4
 	popl	%edi
+	.cfi_adjust_cfa_offset -4
 	popl	%esi
+	.cfi_adjust_cfa_offset -4
 	ret
+	.cfi_adjust_cfa_offset 4*4
 
 7:	/* failure: return 0x8000 | error code */
 	negl	%eax
 	andl	$0x7FFF, %eax
 	orl	$0x8000, %eax
 	popl	%ebp
+	.cfi_adjust_cfa_offset -4
 	popl	%ebx
+	.cfi_adjust_cfa_offset -4
 	popl	%edi
+	.cfi_adjust_cfa_offset -4
 	popl	%esi
+	.cfi_adjust_cfa_offset -4
 	ret
+	.cfi_endproc
 #undef FSZ
 
 	
@@ -164,11 +184,11 @@ ML_(blksys_complete):	.long 3b
 ML_(blksys_committed):	.long 4b
 ML_(blksys_finished):	.long 5b
 .previous
-	
-/* Let the linker know we don't need an executable stack */
-.section .note.GNU-stack,"",@progbits
 
 #endif // defined(VGP_x86_linux)
+
+/* Let the linker know we don't need an executable stack */
+MARK_STACK_NO_EXEC
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -40,120 +40,89 @@
 #include "libvex.h"                      // VexArch
 #include "host_generic_regs.h"           // HReg
 
-/* Num registers used for function calls */
-#define PPC_N_REGPARMS 8
-
 
 /* --------- Registers. --------- */
 
-/* The usual HReg abstraction.  There are 32 real int regs,
-   32 real float regs, and 32 real vector regs. 
-*/
+#define ST_IN static inline
 
-extern void ppHRegPPC ( HReg );
+#define GPR(_mode64, _enc, _ix64, _ix32) \
+  mkHReg(False,  (_mode64) ? HRcInt64 : HRcInt32, \
+         (_enc), (_mode64) ? (_ix64) : (_ix32))
 
-extern HReg hregPPC_GPR0  ( Bool mode64 ); // scratch reg / zero reg
-extern HReg hregPPC_GPR1  ( Bool mode64 ); // Stack Frame Pointer
-extern HReg hregPPC_GPR2  ( Bool mode64 ); // not used: TOC pointer
-extern HReg hregPPC_GPR3  ( Bool mode64 );
-extern HReg hregPPC_GPR4  ( Bool mode64 );
-extern HReg hregPPC_GPR5  ( Bool mode64 );
-extern HReg hregPPC_GPR6  ( Bool mode64 );
-extern HReg hregPPC_GPR7  ( Bool mode64 );
-extern HReg hregPPC_GPR8  ( Bool mode64 );
-extern HReg hregPPC_GPR9  ( Bool mode64 );
-extern HReg hregPPC_GPR10 ( Bool mode64 );
-extern HReg hregPPC_GPR11 ( Bool mode64 );
-extern HReg hregPPC_GPR12 ( Bool mode64 );
-extern HReg hregPPC_GPR13 ( Bool mode64 );
-extern HReg hregPPC_GPR14 ( Bool mode64 );
-extern HReg hregPPC_GPR15 ( Bool mode64 );
-extern HReg hregPPC_GPR16 ( Bool mode64 );
-extern HReg hregPPC_GPR17 ( Bool mode64 );
-extern HReg hregPPC_GPR18 ( Bool mode64 );
-extern HReg hregPPC_GPR19 ( Bool mode64 );
-extern HReg hregPPC_GPR20 ( Bool mode64 );
-extern HReg hregPPC_GPR21 ( Bool mode64 );
-extern HReg hregPPC_GPR22 ( Bool mode64 );
-extern HReg hregPPC_GPR23 ( Bool mode64 );
-extern HReg hregPPC_GPR24 ( Bool mode64 );
-extern HReg hregPPC_GPR25 ( Bool mode64 );
-extern HReg hregPPC_GPR26 ( Bool mode64 );
-extern HReg hregPPC_GPR27 ( Bool mode64 );
-extern HReg hregPPC_GPR28 ( Bool mode64 );
-extern HReg hregPPC_GPR29 ( Bool mode64 ); // reserved for dispatcher
-extern HReg hregPPC_GPR30 ( Bool mode64 ); // used as VMX spill temp
-extern HReg hregPPC_GPR31 ( Bool mode64 ); // GuestStatePtr (callee-saved)
+#define FPR(_mode64, _enc, _ix64, _ix32) \
+  mkHReg(False,  HRcFlt64, \
+         (_enc), (_mode64) ? (_ix64) : (_ix32))
 
-extern HReg hregPPC_FPR0  ( void );
-extern HReg hregPPC_FPR1  ( void );
-extern HReg hregPPC_FPR2  ( void );
-extern HReg hregPPC_FPR3  ( void );
-extern HReg hregPPC_FPR4  ( void );
-extern HReg hregPPC_FPR5  ( void );
-extern HReg hregPPC_FPR6  ( void );
-extern HReg hregPPC_FPR7  ( void );
-extern HReg hregPPC_FPR8  ( void );
-extern HReg hregPPC_FPR9  ( void );
-extern HReg hregPPC_FPR10 ( void );
-extern HReg hregPPC_FPR11 ( void );
-extern HReg hregPPC_FPR12 ( void );
-extern HReg hregPPC_FPR13 ( void );
-extern HReg hregPPC_FPR14 ( void );
-extern HReg hregPPC_FPR15 ( void );
-extern HReg hregPPC_FPR16 ( void );
-extern HReg hregPPC_FPR17 ( void );
-extern HReg hregPPC_FPR18 ( void );
-extern HReg hregPPC_FPR19 ( void );
-extern HReg hregPPC_FPR20 ( void );
-extern HReg hregPPC_FPR21 ( void );
-extern HReg hregPPC_FPR22 ( void );
-extern HReg hregPPC_FPR23 ( void );
-extern HReg hregPPC_FPR24 ( void );
-extern HReg hregPPC_FPR25 ( void );
-extern HReg hregPPC_FPR26 ( void );
-extern HReg hregPPC_FPR27 ( void );
-extern HReg hregPPC_FPR28 ( void );
-extern HReg hregPPC_FPR29 ( void );
-extern HReg hregPPC_FPR30 ( void );
-extern HReg hregPPC_FPR31 ( void );
+#define VR(_mode64, _enc, _ix64, _ix32) \
+  mkHReg(False,  HRcVec128, \
+         (_enc), (_mode64) ? (_ix64) : (_ix32))
 
-extern HReg hregPPC_VR0  ( void );
-extern HReg hregPPC_VR1  ( void );
-extern HReg hregPPC_VR2  ( void );
-extern HReg hregPPC_VR3  ( void );
-extern HReg hregPPC_VR4  ( void );
-extern HReg hregPPC_VR5  ( void );
-extern HReg hregPPC_VR6  ( void );
-extern HReg hregPPC_VR7  ( void );
-extern HReg hregPPC_VR8  ( void );
-extern HReg hregPPC_VR9  ( void );
-extern HReg hregPPC_VR10 ( void );
-extern HReg hregPPC_VR11 ( void );
-extern HReg hregPPC_VR12 ( void );
-extern HReg hregPPC_VR13 ( void );
-extern HReg hregPPC_VR14 ( void );
-extern HReg hregPPC_VR15 ( void );
-extern HReg hregPPC_VR16 ( void );
-extern HReg hregPPC_VR17 ( void );
-extern HReg hregPPC_VR18 ( void );
-extern HReg hregPPC_VR19 ( void );
-extern HReg hregPPC_VR20 ( void );
-extern HReg hregPPC_VR21 ( void );
-extern HReg hregPPC_VR22 ( void );
-extern HReg hregPPC_VR23 ( void );
-extern HReg hregPPC_VR24 ( void );
-extern HReg hregPPC_VR25 ( void );
-extern HReg hregPPC_VR26 ( void );
-extern HReg hregPPC_VR27 ( void );
-extern HReg hregPPC_VR28 ( void );
-extern HReg hregPPC_VR29 ( void );
-extern HReg hregPPC_VR30 ( void );
-extern HReg hregPPC_VR31 ( void );
+ST_IN HReg hregPPC_GPR14 ( Bool mode64 ) { return GPR(mode64, 14,   0,  0); }
+ST_IN HReg hregPPC_GPR15 ( Bool mode64 ) { return GPR(mode64, 15,   1,  1); }
+ST_IN HReg hregPPC_GPR16 ( Bool mode64 ) { return GPR(mode64, 16,   2,  2); }
+ST_IN HReg hregPPC_GPR17 ( Bool mode64 ) { return GPR(mode64, 17,   3,  3); }
+ST_IN HReg hregPPC_GPR18 ( Bool mode64 ) { return GPR(mode64, 18,   4,  4); }
+ST_IN HReg hregPPC_GPR19 ( Bool mode64 ) { return GPR(mode64, 19,   5,  5); }
+ST_IN HReg hregPPC_GPR20 ( Bool mode64 ) { return GPR(mode64, 20,   6,  6); }
+ST_IN HReg hregPPC_GPR21 ( Bool mode64 ) { return GPR(mode64, 21,   7,  7); }
+ST_IN HReg hregPPC_GPR22 ( Bool mode64 ) { return GPR(mode64, 22,   8,  8); }
+ST_IN HReg hregPPC_GPR23 ( Bool mode64 ) { return GPR(mode64, 23,   9,  9); }
+ST_IN HReg hregPPC_GPR24 ( Bool mode64 ) { return GPR(mode64, 24,  10, 10); }
+ST_IN HReg hregPPC_GPR25 ( Bool mode64 ) { return GPR(mode64, 25,  11, 11); }
+ST_IN HReg hregPPC_GPR26 ( Bool mode64 ) { return GPR(mode64, 26,  12, 12); }
+ST_IN HReg hregPPC_GPR27 ( Bool mode64 ) { return GPR(mode64, 27,  13, 13); }
+ST_IN HReg hregPPC_GPR28 ( Bool mode64 ) { return GPR(mode64, 28,  14, 14); }
+
+ST_IN HReg hregPPC_GPR3  ( Bool mode64 ) { return GPR(mode64,  3,  15, 15); }
+ST_IN HReg hregPPC_GPR4  ( Bool mode64 ) { return GPR(mode64,  4,  16, 16); }
+ST_IN HReg hregPPC_GPR5  ( Bool mode64 ) { return GPR(mode64,  5,  17, 17); }
+ST_IN HReg hregPPC_GPR6  ( Bool mode64 ) { return GPR(mode64,  6,  18, 18); }
+ST_IN HReg hregPPC_GPR7  ( Bool mode64 ) { return GPR(mode64,  7,  19, 19); }
+ST_IN HReg hregPPC_GPR8  ( Bool mode64 ) { return GPR(mode64,  8,  20, 20); }
+ST_IN HReg hregPPC_GPR9  ( Bool mode64 ) { return GPR(mode64,  9,  21, 21); }
+ST_IN HReg hregPPC_GPR10 ( Bool mode64 ) { return GPR(mode64, 10,  22, 22); }
+
+// r11 and r12 are only allocatable in 32-bit mode.  Hence the 64-bit
+// index numbering doesn't advance for these two.
+ST_IN HReg hregPPC_GPR11 ( Bool mode64 ) { return GPR(mode64, 11,  22, 23); }
+ST_IN HReg hregPPC_GPR12 ( Bool mode64 ) { return GPR(mode64, 12,  22, 24); }
+
+ST_IN HReg hregPPC_FPR14 ( Bool mode64 ) { return FPR(mode64, 14,  23, 25); }
+ST_IN HReg hregPPC_FPR15 ( Bool mode64 ) { return FPR(mode64, 15,  24, 26); }
+ST_IN HReg hregPPC_FPR16 ( Bool mode64 ) { return FPR(mode64, 16,  25, 27); }
+ST_IN HReg hregPPC_FPR17 ( Bool mode64 ) { return FPR(mode64, 17,  26, 28); }
+ST_IN HReg hregPPC_FPR18 ( Bool mode64 ) { return FPR(mode64, 18,  27, 29); }
+ST_IN HReg hregPPC_FPR19 ( Bool mode64 ) { return FPR(mode64, 19,  28, 30); }
+ST_IN HReg hregPPC_FPR20 ( Bool mode64 ) { return FPR(mode64, 20,  29, 31); }
+ST_IN HReg hregPPC_FPR21 ( Bool mode64 ) { return FPR(mode64, 21,  30, 32); }
+
+ST_IN HReg hregPPC_VR20  ( Bool mode64 ) { return VR (mode64, 20,  31, 33); }
+ST_IN HReg hregPPC_VR21  ( Bool mode64 ) { return VR (mode64, 21,  32, 34); }
+ST_IN HReg hregPPC_VR22  ( Bool mode64 ) { return VR (mode64, 22,  33, 35); }
+ST_IN HReg hregPPC_VR23  ( Bool mode64 ) { return VR (mode64, 23,  34, 36); }
+ST_IN HReg hregPPC_VR24  ( Bool mode64 ) { return VR (mode64, 24,  35, 37); }
+ST_IN HReg hregPPC_VR25  ( Bool mode64 ) { return VR (mode64, 25,  36, 38); }
+ST_IN HReg hregPPC_VR26  ( Bool mode64 ) { return VR (mode64, 26,  37, 39); }
+ST_IN HReg hregPPC_VR27  ( Bool mode64 ) { return VR (mode64, 27,  38, 40); }
+
+ST_IN HReg hregPPC_GPR1  ( Bool mode64 ) { return GPR(mode64,  1,  39, 41); }
+ST_IN HReg hregPPC_GPR29 ( Bool mode64 ) { return GPR(mode64, 29,  40, 42); }
+ST_IN HReg hregPPC_GPR30 ( Bool mode64 ) { return GPR(mode64, 30,  41, 43); }
+ST_IN HReg hregPPC_GPR31 ( Bool mode64 ) { return GPR(mode64, 31,  42, 44); }
+ST_IN HReg hregPPC_VR29  ( Bool mode64 ) { return VR (mode64, 29,  43, 45); }
+
+#undef ST_IN
+#undef GPR
+#undef FPR
+#undef VR
 
 #define StackFramePtr(_mode64) hregPPC_GPR1(_mode64)
 #define GuestStatePtr(_mode64) hregPPC_GPR31(_mode64)
 
+/* Num registers used for function calls */
+#define PPC_N_REGPARMS 8
+
+extern UInt ppHRegPPC ( HReg );
 
 
 /* --------- Condition codes --------- */
@@ -322,6 +291,8 @@ typedef
       Pun_NOT,
       Pun_CLZ32,
       Pun_CLZ64,
+      Pun_CTZ32,
+      Pun_CTZ64,
       Pun_EXTSW
    }
    PPCUnaryOp;
@@ -365,6 +336,24 @@ typedef
       /* Ternary */
       Pfp_MADDD,  Pfp_MSUBD,
       Pfp_MADDS,  Pfp_MSUBS,
+      Pfp_FPADDQ, Pfp_FPADDQRNDODD,
+      Pfp_FPSUBQ, Pfp_FPSUBQRNDODD,
+      Pfp_FPMULQ, Pfp_FPMULQRNDODD,
+      Pfp_FPDIVQ, Pfp_FPDIVQRNDODD,
+      Pfp_FPMULADDQ, Pfp_FPMULADDQRNDODD,
+      Pfp_FPMULSUBQ, Pfp_FPMULSUBQRNDODD,
+      Pfp_FPNEGMULADDQ, Pfp_FPNEGMULADDQRNDODD,
+      Pfp_FPNEGMULSUBQ, Pfp_FPNEGMULSUBQRNDODD,
+      Pfp_FPSQRTQ, Pfp_FPSQRTQRNDODD,
+      Pfp_FPQTOD, Pfp_FPQTODRNDODD,
+      Pfp_FPQTOW, Pfp_FPQTOWRNDODD,
+      Pfp_FPDTOQ,
+      Pfp_IDSTOQ,
+      Pfp_IDUTOQ,
+      Pfp_TRUNCFPQTOISD,
+      Pfp_TRUNCFPQTOISW,
+      Pfp_TRUNCFPQTOIUD,
+      Pfp_TRUNCFPQTOIUW,
       Pfp_DFPADD, Pfp_DFPADDQ,
       Pfp_DFPSUB, Pfp_DFPSUBQ,
       Pfp_DFPMUL, Pfp_DFPMULQ,
@@ -440,11 +429,51 @@ typedef
       /* BCD Arithmetic */
       Pav_BCDAdd, Pav_BCDSub,
 
+      /* Conversion signed 128-bit value to signed BCD 128-bit */
+      Pav_I128StoBCD128,
+
+      /* Conversion signed BCD 128-bit to signed 128-bit value */
+      Pav_BCD128toI128S,
+
       /* zero count */
       Pav_ZEROCNTBYTE, Pav_ZEROCNTWORD, Pav_ZEROCNTHALF, Pav_ZEROCNTDBL,
 
+      /* trailing zero count */
+      Pav_TRAILINGZEROCNTBYTE, Pav_TRAILINGZEROCNTWORD,
+      Pav_TRAILINGZEROCNTHALF, Pav_TRAILINGZEROCNTDBL,
+
       /* Vector bit matrix transpose by byte */
       Pav_BITMTXXPOSE,
+
+      /* Vector Half-precision format to single precision conversion */
+      Pav_F16toF32x4,
+
+      /* Vector Single precision format to Half-precision conversion */
+      Pav_F32toF16x4,
+
+      /* Vector Half-precision format to Double precision conversion */
+      Pav_F16toF64x2,
+
+      /* Vector Double precision format to Half-precision conversion */
+      Pav_F64toF16x2,
+
+      /* 128 bit mult by 10 */
+      Pav_MulI128by10,
+
+      /* 128 bit mult by 10, carry out */
+      Pav_MulI128by10Carry,
+
+      /* 128 bit mult by 10 plus carry in */
+      Pav_MulI128by10E,
+
+      /* 128 bit mult by 10 plus carry in, carry out */
+      Pav_MulI128by10ECarry,
+
+      /* F128 to I128 */
+      Pav_F128toI128S,
+
+      /* Round F128 to F128 */
+      Pav_ROUNDFPQ,
    }
    PPCAvOp;
 
@@ -497,6 +526,9 @@ typedef
 
       Pin_FpUnary,    /* FP unary op */
       Pin_FpBinary,   /* FP binary op */
+      Pin_Fp128Unary,   /* FP unary op for 128-bit floating point */
+      Pin_Fp128Binary,  /* FP binary op for 128-bit floating point */
+      Pin_Fp128Trinary, /* FP trinary op for 128-bit floating point */
       Pin_FpMulAcc,   /* FP multipy-accumulate style op */
       Pin_FpLdSt,     /* FP load/store */
       Pin_FpSTFIW,    /* stfiwx */
@@ -512,6 +544,7 @@ typedef
       Pin_AvUnary,    /* AV unary general reg=>reg */
 
       Pin_AvBinary,   /* AV binary general reg,reg=>reg */
+      Pin_AvBinaryInt,/* AV binary  reg,int=>reg */
       Pin_AvBin8x16,  /* AV binary, 8x4 */
       Pin_AvBin16x8,  /* AV binary, 16x4 */
       Pin_AvBin32x4,  /* AV binary, 32x4 */
@@ -530,7 +563,7 @@ typedef
       Pin_AvCipherV128Unary,  /* AV Vector unary Cipher */
       Pin_AvCipherV128Binary, /* AV Vector binary Cipher */
       Pin_AvHashV128Binary, /* AV Vector binary Hash */
-      Pin_AvBCDV128Trinary, /* BCD Arithmetic */
+      Pin_AvBCDV128Binary,  /* BCD Arithmetic */
       Pin_Dfp64Unary,   /* DFP64  unary op */
       Pin_Dfp128Unary,  /* DFP128 unary op */
       Pin_DfpShift,     /* Decimal floating point shift by immediate value */
@@ -731,6 +764,23 @@ typedef
          } FpBinary;
          struct {
             PPCFpOp op;
+            HReg dst;
+            HReg src;
+         } Fp128Unary;
+         struct {
+            PPCFpOp op;
+            HReg dst;
+            HReg srcL;
+            HReg srcR;
+         } Fp128Binary;
+         struct {
+            PPCFpOp op;
+            HReg dst;
+            HReg srcL;
+            HReg srcR;
+         } Fp128Trinary;
+         struct {
+            PPCFpOp op;
             HReg    dst;
             HReg    srcML;
             HReg    srcMR;
@@ -806,6 +856,12 @@ typedef
             HReg    srcL;
             HReg    srcR;
          } AvBinary;
+         struct {
+            PPCAvOp op;
+            HReg    dst;
+            HReg    src;
+            PPCRI*  val;
+         } AvBinaryInt;
          struct {
             PPCAvOp op;
             HReg    dst;
@@ -898,8 +954,7 @@ typedef
             HReg       dst;
             HReg      src1;
             HReg      src2;
-            PPCRI*      ps;
-         } AvBCDV128Trinary;
+         } AvBCDV128Binary;
          struct {
             PPCAvOp   op;
             HReg      dst;
@@ -1057,6 +1112,11 @@ extern PPCInstr* PPCInstr_Set        ( PPCCondCode cond, HReg dst );
 extern PPCInstr* PPCInstr_MfCR       ( HReg dst );
 extern PPCInstr* PPCInstr_MFence     ( void );
 
+extern PPCInstr* PPCInstr_Fp128Unary    ( PPCFpOp op, HReg dst, HReg src );
+extern PPCInstr* PPCInstr_Fp128Binary   ( PPCFpOp op, HReg dst, HReg srcL, HReg srcR );
+extern PPCInstr* PPCInstr_Fp128Trinary  ( PPCFpOp op, HReg dst, HReg srcL,
+                                          HReg srcR);
+
 extern PPCInstr* PPCInstr_FpUnary    ( PPCFpOp op, HReg dst, HReg src );
 extern PPCInstr* PPCInstr_FpBinary   ( PPCFpOp op, HReg dst, HReg srcL, HReg srcR );
 extern PPCInstr* PPCInstr_FpMulAcc   ( PPCFpOp op, HReg dst, HReg srcML, 
@@ -1075,6 +1135,7 @@ extern PPCInstr* PPCInstr_RdWrLR     ( Bool wrLR, HReg gpr );
 extern PPCInstr* PPCInstr_AvLdSt     ( Bool isLoad, UChar sz, HReg, PPCAMode* );
 extern PPCInstr* PPCInstr_AvUnary    ( PPCAvOp op, HReg dst, HReg src );
 extern PPCInstr* PPCInstr_AvBinary   ( PPCAvOp op, HReg dst, HReg srcL, HReg srcR );
+extern PPCInstr* PPCInstr_AvBinaryInt( PPCAvOp op, HReg dst, HReg src, PPCRI* val );
 extern PPCInstr* PPCInstr_AvBin8x16  ( PPCAvOp op, HReg dst, HReg srcL, HReg srcR );
 extern PPCInstr* PPCInstr_AvBin16x8  ( PPCAvOp op, HReg dst, HReg srcL, HReg srcR );
 extern PPCInstr* PPCInstr_AvBin32x4  ( PPCAvOp op, HReg dst, HReg srcL, HReg srcR );
@@ -1094,9 +1155,8 @@ extern PPCInstr* PPCInstr_AvCipherV128Binary ( PPCAvOp op, HReg dst,
                                                HReg srcL, HReg srcR );
 extern PPCInstr* PPCInstr_AvHashV128Binary ( PPCAvOp op, HReg dst,
                                              HReg src, PPCRI* s_field );
-extern PPCInstr* PPCInstr_AvBCDV128Trinary ( PPCAvOp op, HReg dst,
-                                             HReg src1, HReg src2,
-                                             PPCRI* ps );
+extern PPCInstr* PPCInstr_AvBCDV128Binary ( PPCAvOp op, HReg dst,
+                                            HReg src1, HReg src2 );
 extern PPCInstr* PPCInstr_Dfp64Unary  ( PPCFpOp op, HReg dst, HReg src );
 extern PPCInstr* PPCInstr_Dfp64Binary ( PPCFpOp op, HReg dst, HReg srcL,
                                         HReg srcR );
@@ -1141,7 +1201,6 @@ extern void ppPPCInstr(const PPCInstr*, Bool mode64);
    of the underlying instruction set. */
 extern void getRegUsage_PPCInstr ( HRegUsage*, const PPCInstr*, Bool mode64 );
 extern void mapRegs_PPCInstr     ( HRegRemap*, PPCInstr* , Bool mode64);
-extern Bool isMove_PPCInstr      ( const PPCInstr*, HReg*, HReg* );
 extern Int          emit_PPCInstr   ( /*MB_MOD*/Bool* is_profInc,
                                       UChar* buf, Int nbuf, const PPCInstr* i, 
                                       Bool mode64,
@@ -1155,8 +1214,10 @@ extern void genSpill_PPC  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offsetB, Bool mode64 );
 extern void genReload_PPC ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offsetB, Bool mode64 );
+extern PPCInstr* genMove_PPC(HReg from, HReg to, Bool mode64);
 
-extern void         getAllocableRegs_PPC ( Int*, HReg**, Bool mode64 );
+extern const RRegUniverse* getRRegUniverse_PPC ( Bool mode64 );
+
 extern HInstrArray* iselSB_PPC           ( const IRSB*,
                                            VexArch,
                                            const VexArchInfo*,

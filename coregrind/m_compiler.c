@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2014-2014 Florian Krohm
+   Copyright (C) 2014-2017 Florian Krohm
       florian@eich-krohm.de
 
    This program is free software; you can redistribute it and/or
@@ -39,6 +39,8 @@
 #include "config.h"
 #include "pub_core_basics.h"
 #include "pub_core_libcbase.h"
+#include "pub_core_libcassert.h"
+#include "pub_core_debuglog.h"
 
 #ifndef HAVE_BUILTIN_POPCOUT
 
@@ -217,6 +219,102 @@ _intel_fast_memset(void *dest, int value, SizeT num)
 }
 
 #endif
+
+
+/*====================================================================*/
+/*=== gcc -fsanitize=undefined helper function support             ===*/
+/*====================================================================*/
+
+void __ubsan_handle_type_mismatch ( void );
+void __ubsan_handle_type_mismatch ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_type_mismatch_v1 ( void );
+void __ubsan_handle_type_mismatch_v1 ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_mul_overflow ( void );
+void __ubsan_handle_mul_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_add_overflow ( void );
+void __ubsan_handle_add_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_sub_overflow ( void );
+void __ubsan_handle_sub_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_divrem_overflow ( void );
+void __ubsan_handle_divrem_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_negate_overflow ( void );
+void __ubsan_handle_negate_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_pointer_overflow ( void );
+void __ubsan_handle_pointer_overflow ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_out_of_bounds ( void );
+void __ubsan_handle_out_of_bounds ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_shift_out_of_bounds ( void );
+void __ubsan_handle_shift_out_of_bounds ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_vla_bound_not_positive ( void );
+void __ubsan_handle_vla_bound_not_positive ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_nonnull_arg ( void );
+void __ubsan_handle_nonnull_arg ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
+
+void __ubsan_handle_invalid_builtin ( void );
+void __ubsan_handle_invalid_builtin ( void )
+{
+   VG_(debugLog)(0, "main:ubsan", "In %s", __func__);
+   vg_assert(0);
+}
 
 /*--------------------------------------------------------------------*/
 /*--- end                                                          ---*/

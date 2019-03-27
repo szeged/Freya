@@ -8,7 +8,7 @@
    This file is part of Helgrind, a Valgrind tool for detecting errors
    in threaded programs.
 
-   Copyright (C) 2007-2013 OpenWorks Ltd
+   Copyright (C) 2007-2017 OpenWorks Ltd
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -92,8 +92,36 @@ typedef
       /* Place where parent was when this thread was created. */
       ExeContext* created_at;
       Bool        announced;
+      /* != 0 if SP fixup needed for unwind : it contains a delta SP value
+         to use when evh__mem_help_c(read|write)_X is called in the 
+         'middle of an instruction' (e.g. in a push)
+         after the SP was changed, but before the push has been completed. */
+      Word        first_sp_delta;
       /* Index for generating references in error messages. */
       Int         errmsg_index;
+
+      /* Nesting level of pthread_create(). New memory allocated is untracked
+         when this value is > 0: race reporting is suppressed there. DRD does
+         the same thing implicitly. This is necessary because for example
+         Solaris libc caches many objects and reuses them for different threads
+         and that confuses Helgrind. With libvki it would be possible to
+         explicitly use VG_USERREQ__HG_CLEAN_MEMORY on such objects.
+         Also mutex activity is ignored so that they do not impose false
+         ordering between creator and created thread. */
+      Int pthread_create_nesting_level;
+
+      /* Nesting level of synchronization functions called by the client.
+         Loads and stores are ignored when its value > 0.
+         Currently this is used solely for suppressing races of primitive
+         synchronization objects themselves - mutexes, condition variables,
+         read-write locks and their associated sleep queues.
+         See also documentation for command line option
+         --ignore-thread-creation. */
+      Int synchr_nesting;
+
+#if defined(VGO_solaris)
+      Int      bind_guard_flag; /* Bind flag from the runtime linker. */
+#endif /* VGO_solaris */
    }
    Thread;
 

@@ -6,7 +6,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2004-2013 OpenWorks LLP
+   Copyright (C) 2004-2017 OpenWorks LLP
       info@open-works.net
 
    This program is free software; you can redistribute it and/or
@@ -39,46 +39,49 @@ extern UInt arm_hwcaps;
 
 /* --------- Registers. --------- */
 
-/* The usual HReg abstraction.
-   There are 16 general purpose regs.
-*/
+#define ST_IN static inline
+ST_IN HReg hregARM_R4  ( void ) { return mkHReg(False, HRcInt32,  4,  0);  }
+ST_IN HReg hregARM_R5  ( void ) { return mkHReg(False, HRcInt32,  5,  1);  }
+ST_IN HReg hregARM_R6  ( void ) { return mkHReg(False, HRcInt32,  6,  2);  }
+ST_IN HReg hregARM_R7  ( void ) { return mkHReg(False, HRcInt32,  7,  3);  }
+ST_IN HReg hregARM_R10 ( void ) { return mkHReg(False, HRcInt32,  10, 4);  }
+ST_IN HReg hregARM_R11 ( void ) { return mkHReg(False, HRcInt32,  11, 5);  }
 
-extern void ppHRegARM ( HReg );
+ST_IN HReg hregARM_R0  ( void ) { return mkHReg(False, HRcInt32,  0,  6);  }
+ST_IN HReg hregARM_R1  ( void ) { return mkHReg(False, HRcInt32,  1,  7);  }
+ST_IN HReg hregARM_R2  ( void ) { return mkHReg(False, HRcInt32,  2,  8);  }
+ST_IN HReg hregARM_R3  ( void ) { return mkHReg(False, HRcInt32,  3,  9);  }
+ST_IN HReg hregARM_R9  ( void ) { return mkHReg(False, HRcInt32,  9,  10); }
 
-extern HReg hregARM_R0  ( void );
-extern HReg hregARM_R1  ( void );
-extern HReg hregARM_R2  ( void );
-extern HReg hregARM_R3  ( void );
-extern HReg hregARM_R4  ( void );
-extern HReg hregARM_R5  ( void );
-extern HReg hregARM_R6  ( void );
-extern HReg hregARM_R7  ( void );
-extern HReg hregARM_R8  ( void );
-extern HReg hregARM_R9  ( void );
-extern HReg hregARM_R10 ( void );
-extern HReg hregARM_R11 ( void );
-extern HReg hregARM_R12 ( void );
-extern HReg hregARM_R13 ( void );
-extern HReg hregARM_R14 ( void );
-extern HReg hregARM_R15 ( void );
-extern HReg hregARM_D8  ( void );
-extern HReg hregARM_D9  ( void );
-extern HReg hregARM_D10 ( void );
-extern HReg hregARM_D11 ( void );
-extern HReg hregARM_D12 ( void );
-extern HReg hregARM_S26 ( void );
-extern HReg hregARM_S27 ( void );
-extern HReg hregARM_S28 ( void );
-extern HReg hregARM_S29 ( void );
-extern HReg hregARM_S30 ( void );
-extern HReg hregARM_Q8  ( void );
-extern HReg hregARM_Q9  ( void );
-extern HReg hregARM_Q10 ( void );
-extern HReg hregARM_Q11 ( void );
-extern HReg hregARM_Q12 ( void );
-extern HReg hregARM_Q13 ( void );
-extern HReg hregARM_Q14 ( void );
-extern HReg hregARM_Q15 ( void );
+ST_IN HReg hregARM_D8  ( void ) { return mkHReg(False, HRcFlt64,  8,  11); }
+ST_IN HReg hregARM_D9  ( void ) { return mkHReg(False, HRcFlt64,  9,  12); }
+ST_IN HReg hregARM_D10 ( void ) { return mkHReg(False, HRcFlt64,  10, 13); }
+ST_IN HReg hregARM_D11 ( void ) { return mkHReg(False, HRcFlt64,  11, 14); }
+ST_IN HReg hregARM_D12 ( void ) { return mkHReg(False, HRcFlt64,  12, 15); }
+
+ST_IN HReg hregARM_S26 ( void ) { return mkHReg(False, HRcFlt32,  26, 16); }
+ST_IN HReg hregARM_S27 ( void ) { return mkHReg(False, HRcFlt32,  27, 17); }
+ST_IN HReg hregARM_S28 ( void ) { return mkHReg(False, HRcFlt32,  28, 18); }
+ST_IN HReg hregARM_S29 ( void ) { return mkHReg(False, HRcFlt32,  29, 19); }
+ST_IN HReg hregARM_S30 ( void ) { return mkHReg(False, HRcFlt32,  30, 20); }
+
+ST_IN HReg hregARM_Q8  ( void ) { return mkHReg(False, HRcVec128, 8,  21); }
+ST_IN HReg hregARM_Q9  ( void ) { return mkHReg(False, HRcVec128, 9,  22); }
+ST_IN HReg hregARM_Q10 ( void ) { return mkHReg(False, HRcVec128, 10, 23); }
+ST_IN HReg hregARM_Q11 ( void ) { return mkHReg(False, HRcVec128, 11, 24); }
+ST_IN HReg hregARM_Q12 ( void ) { return mkHReg(False, HRcVec128, 12, 25); }
+
+ST_IN HReg hregARM_R8  ( void ) { return mkHReg(False, HRcInt32,  8,  26); }
+ST_IN HReg hregARM_R12 ( void ) { return mkHReg(False, HRcInt32,  12, 27); }
+ST_IN HReg hregARM_R13 ( void ) { return mkHReg(False, HRcInt32,  13, 28); }
+ST_IN HReg hregARM_R14 ( void ) { return mkHReg(False, HRcInt32,  14, 29); }
+ST_IN HReg hregARM_R15 ( void ) { return mkHReg(False, HRcInt32,  15, 30); }
+ST_IN HReg hregARM_Q13 ( void ) { return mkHReg(False, HRcVec128, 13, 31); }
+ST_IN HReg hregARM_Q14 ( void ) { return mkHReg(False, HRcVec128, 14, 32); }
+ST_IN HReg hregARM_Q15 ( void ) { return mkHReg(False, HRcVec128, 15, 33); }
+#undef ST_IN
+
+extern UInt ppHRegARM ( HReg );
 
 /* Number of registers used arg passing in function calls */
 #define ARM_N_ARGREGS 4   /* r0, r1, r2, r3 */
@@ -588,9 +591,12 @@ typedef
       ARMin_VCMovD,
       ARMin_VCMovS,
       ARMin_VCvtSD,
+      ARMin_VXferQ,
       ARMin_VXferD,
       ARMin_VXferS,
       ARMin_VCvtID,
+      ARMin_VRIntR,
+      ARMin_VMinMaxNum,
       ARMin_FPSCR,
       ARMin_MFence,
       ARMin_CLREX,
@@ -821,6 +827,13 @@ typedef
             HReg dst;
             HReg src;
          } VCvtSD;
+         /* Transfer a NEON Q reg to/from two D registers (VMOV x 2) */
+         struct {
+            Bool toQ;
+            HReg qD;
+            HReg dHi;
+            HReg dLo;
+         } VXferQ;
          /* Transfer a VFP D reg to/from two integer registers (VMOV) */
          struct {
             Bool toD;
@@ -842,6 +855,22 @@ typedef
             HReg dst;
             HReg src;
          } VCvtID;
+         /* Round a F32 or F64 value to the nearest integral value,
+            according to the FPSCR.RM.  For ARM >= V8 hosts only. */
+         struct {
+            Bool isF64;
+            HReg dst;
+            HReg src;
+         } VRIntR;
+         /* Do Min/Max of F32 or F64 values, propagating the numerical arg
+            if the other is a qNaN.  For ARM >= V8 hosts only. */
+         struct {
+            Bool isF64;
+            Bool isMax;
+            HReg dst;
+            HReg srcL;
+            HReg srcR;
+         } VMinMaxNum;
          /* Move a 32-bit value to/from the FPSCR (FMXR, FMRX) */
          struct {
             Bool toFPSCR;
@@ -991,10 +1020,14 @@ extern ARMInstr* ARMInstr_VCmpD    ( HReg argL, HReg argR );
 extern ARMInstr* ARMInstr_VCMovD   ( ARMCondCode, HReg dst, HReg src );
 extern ARMInstr* ARMInstr_VCMovS   ( ARMCondCode, HReg dst, HReg src );
 extern ARMInstr* ARMInstr_VCvtSD   ( Bool sToD, HReg dst, HReg src );
+extern ARMInstr* ARMInstr_VXferQ   ( Bool toQ, HReg qD, HReg dHi, HReg dLo );
 extern ARMInstr* ARMInstr_VXferD   ( Bool toD, HReg dD, HReg rHi, HReg rLo );
 extern ARMInstr* ARMInstr_VXferS   ( Bool toS, HReg fD, HReg rLo );
 extern ARMInstr* ARMInstr_VCvtID   ( Bool iToD, Bool syned,
                                      HReg dst, HReg src );
+extern ARMInstr* ARMInstr_VRIntR   ( Bool isF64, HReg dst, HReg src );
+extern ARMInstr* ARMInstr_VMinMaxNum ( Bool isF64, Bool isMax,
+                                       HReg dst, HReg srcL, HReg srcR );
 extern ARMInstr* ARMInstr_FPSCR    ( Bool toFPSCR, HReg iReg );
 extern ARMInstr* ARMInstr_MFence   ( void );
 extern ARMInstr* ARMInstr_CLREX    ( void );
@@ -1023,7 +1056,6 @@ extern void ppARMInstr ( const ARMInstr* );
    of the underlying instruction set. */
 extern void getRegUsage_ARMInstr ( HRegUsage*, const ARMInstr*, Bool );
 extern void mapRegs_ARMInstr     ( HRegRemap*, ARMInstr*, Bool );
-extern Bool isMove_ARMInstr      ( const ARMInstr*, HReg*, HReg* );
 extern Int  emit_ARMInstr        ( /*MB_MOD*/Bool* is_profInc,
                                    UChar* buf, Int nbuf, const ARMInstr* i, 
                                    Bool mode64,
@@ -1037,8 +1069,10 @@ extern void genSpill_ARM  ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offset, Bool );
 extern void genReload_ARM ( /*OUT*/HInstr** i1, /*OUT*/HInstr** i2,
                             HReg rreg, Int offset, Bool );
+extern ARMInstr* genMove_ARM(HReg from, HReg to, Bool);
 
-extern void getAllocableRegs_ARM ( Int*, HReg** );
+extern const RRegUniverse* getRRegUniverse_ARM ( void );
+
 extern HInstrArray* iselSB_ARM   ( const IRSB*, 
                                    VexArch,
                                    const VexArchInfo*,

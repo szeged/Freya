@@ -7,7 +7,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2007-2013 OpenWorks LLP
+   Copyright (C) 2007-2017 OpenWorks LLP
       info@open-works.co.uk
 
    This program is free software; you can redistribute it and/or
@@ -38,9 +38,9 @@
 /* See pub_tool_xarray.h for details of what this is all about. */
 
 struct _XArray {
-   void* (*alloc_fn) ( const HChar*, SizeT ); /* alloc fn (nofail) */
+   Alloc_Fn_t alloc_fn;                /* alloc fn (nofail) */
    const HChar* cc;                    /* cost centre for alloc */
-   void  (*free_fn) ( void* );         /* free fn */
+   Free_Fn_t free_fn;                  /* free fn */
    Int   (*cmpFn) ( const void*, const void* ); /* cmp fn (may be NULL) */
    Word  elemSzB;   /* element size in bytes */
    void* arr;       /* pointer to elements */
@@ -50,9 +50,9 @@ struct _XArray {
 };
 
 
-XArray* VG_(newXA) ( void*(*alloc_fn)(const HChar*,SizeT), 
+XArray* VG_(newXA) ( Alloc_Fn_t alloc_fn,
                      const HChar* cc,
-                     void(*free_fn)(void*),
+                     Free_Fn_t free_fn,
                      Word elemSzB )
 {
    XArray* xa;
@@ -128,9 +128,31 @@ void VG_(setCmpFnXA) ( XArray* xa, XACmpFn_t compar )
 inline void* VG_(indexXA) ( const XArray* xa, Word n )
 {
    vg_assert(xa);
-   vg_assert(n >= 0);
-   vg_assert(n < xa->usedsizeE);
+   /* vg_assert(n >= 0); If n negative, the UWord conversion will make
+      it bigger than usedsizeE, which is verified to be non negative when
+      xa is modified. */
+   vg_assert((UWord)n < (UWord)xa->usedsizeE);
    return ((char*)xa->arr) + n * xa->elemSzB;
+}
+
+void VG_(hintSizeXA) ( XArray* xa, Word n)
+{
+   /* Currently, we support giving a size hint only just after the
+      call to VG_(newXA). So, we could instead have done
+      a function VG_(newXA_with_SizeHint). The separate VG_(hintSizeXA)
+      function is however chosen as we might one day accept to
+      give a size hint after having added elements. That could be useful
+      for reducing the size of an xarray to just the size currently needed
+      or to give a size hint when it is known that a lot more elements
+      are needed or when the final nr of elements is known. */
+   vg_assert(xa);
+   vg_assert(xa->usedsizeE == 0);
+   vg_assert(xa->totsizeE == 0);
+   vg_assert(!xa->arr);
+   if (n > 0) {
+      xa->arr = xa->alloc_fn(xa->cc, n * xa->elemSzB);
+      xa->totsizeE = n;
+   }
 }
 
 static inline void ensureSpaceXA ( XArray* xa )
@@ -258,6 +280,9 @@ Bool VG_(lookupXA) ( const XArray* xa, const void* key,
    return VG_(lookupXA_UNSAFE)(xa, key, first, last, xa->cmpFn);
 }
 
+/* FIXME: This function should return an unsigned value because the number
+   of elements cannot be negative. Unfortunately, making the change causes
+   a lot of ripple. */
 Word VG_(sizeXA) ( const XArray* xa )
 {
    vg_assert(xa);
@@ -350,6 +375,16 @@ void VG_(xaprintf)( XArray* dst, const HChar* format, ... )
    va_end(vargs);
 }
 
+Bool VG_(strIsMemberXA)(const XArray* xa, const HChar* str )
+{
+   Word i;
+   HChar** members = (HChar**)xa->arr;
+
+   for (i = 0; i < xa->usedsizeE; i++)
+      if (VG_(strcmp)(str, members[i]) == 0)
+         return True;
+   return False;
+}
 
 /*--------------------------------------------------------------------*/
 /*--- end                                               m_xarray.c ---*/

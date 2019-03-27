@@ -15,14 +15,24 @@
 #include <string.h>
 #include <assert.h>
 #include <unistd.h>
-#include <pthread.h>
-#include <semaphore.h>
+#include "safe-pthread.h"
+#include "safe-semaphore.h"
 
 #if !defined(__APPLE__)
 
+#if defined(__sun__)
+/* Fake __GLIBC_PREREQ on Solaris. Pretend glibc >= 2.4. */
+# define __GLIBC_PREREQ
+#else
 #if !defined(__GLIBC_PREREQ)
 # error "This program needs __GLIBC_PREREQ (in /usr/include/features.h)"
 #endif
+#endif /* __sun__ */
+
+typedef union {
+   pthread_spinlock_t spinlock;
+   pthread_rwlock_t rwlock;
+} spin_rw_lock;
 
 short unprotected = 0;
 
@@ -88,7 +98,12 @@ int main ( void )
    "\n---------------- pthread_mutex_lock et al ----------------\n\n");
 
    /* make pthread_mutex_init fail */
+#if defined(__sun__)
+   pthread_mutexattr_init( &mxa );
+   memset( mxa.__pthread_mutexattrp, 0xFF, 5 * sizeof(int) );
+#else
    memset( &mxa, 0xFF, sizeof(mxa) );
+#endif
    r= pthread_mutex_init( &mx, &mxa );
 #  if __GLIBC_PREREQ(2,4)
    assert(r); /* glibc >= 2.4: the call should fail */
@@ -193,7 +208,12 @@ int main ( void )
    r= pthread_rwlock_unlock( &rwl2 ); assert(!r);
    /* unlock it again, get an error */
    fprintf(stderr, "(3)    ERROR on next line\n");
-   r= pthread_rwlock_unlock( &rwl2 ); assert(!r);
+   r= pthread_rwlock_unlock( &rwl2 );
+#if defined(__sun__)
+   assert(r);
+#else
+   assert(!r);
+#endif
 
    /* same game with r-locks */
    r= pthread_rwlock_init( &rwl2, NULL ); assert(!r);
@@ -209,12 +229,31 @@ int main ( void )
    r= pthread_rwlock_unlock( &rwl2 ); assert(!r);
    /* unlock it again, get an error */
    fprintf(stderr, "(8)    ERROR on next line\n");
-   r= pthread_rwlock_unlock( &rwl2 ); assert(!r);
+   r= pthread_rwlock_unlock( &rwl2 );
+#if defined(__sun__)
+   assert(r);
+#else
+   assert(!r);
+#endif
 
    /* Lock rwl3 so the locked-lock-at-dealloc check can complain about
       it. */
    r= pthread_rwlock_init( &rwl3, NULL ); assert(!r);
    r= pthread_rwlock_rdlock( &rwl3 ); assert(!r);
+
+   /* --------- pthread_spin_* --------- */
+
+   fprintf(stderr,
+   "\n---------------- pthread_spin_* ----------------\n\n");
+
+   /* The following sequence verifies correct wrapping of pthread_spin_init()
+      and pthread_spin_destroy(). */
+   spin_rw_lock srwl1;
+   pthread_spin_init(&srwl1.spinlock, PTHREAD_PROCESS_PRIVATE);
+   pthread_spin_destroy(&srwl1.spinlock);
+
+   pthread_rwlock_init(&srwl1.rwlock, NULL);
+   pthread_rwlock_destroy(&srwl1.rwlock);
 
    /* ------------- sem_* ------------- */
 

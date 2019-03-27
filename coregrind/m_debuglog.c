@@ -8,7 +8,7 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2000-2013 Julian Seward 
+   Copyright (C) 2000-2017 Julian Seward 
       jseward@acm.org
 
    This program is free software; you can redistribute it and/or
@@ -56,6 +56,9 @@
 #include "pub_core_vkiscnums.h"  /* for syscall numbers */
 #include "pub_core_debuglog.h"   /* our own iface */
 #include "pub_core_clreq.h"      /* for RUNNING_ON_VALGRIND */
+#if defined(VGO_solaris)
+#include "pub_core_vki.h"        /* for EINTR and ERESTART */
+#endif
 
 static Bool clo_xml;
 
@@ -127,7 +130,7 @@ static UInt local_sys_write_stderr ( const HChar* buf, Int n )
       "addq  $256, %%rsp\n"     /* restore stack ptr */
       : /*wr*/
       : /*rd*/    "r" (block)
-      : /*trash*/ "rax", "rdi", "rsi", "rdx", "memory", "cc"
+      : /*trash*/ "rax", "rdi", "rsi", "rdx", "memory", "cc", "rcx", "r11"
    );
    if (block[0] < 0) 
       block[0] = -1;
@@ -143,7 +146,8 @@ static UInt local_sys_getpid ( void )
       "movl %%eax, %0\n"   /* set __res = %eax */
       : "=mr" (__res)
       :
-      : "rax" );
+      : "rax", "rcx", "r11"
+   );
    return __res;
 }
 
@@ -212,7 +216,7 @@ static UInt local_sys_write_stderr ( const HChar* buf, Int n )
       :
       : "b" (block)
       : "cc","memory","cr0","ctr",
-        "r0","r2","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12"
+        "r0","r3","r4","r5","r6","r7","r8","r9","r10","r11","r12"
    );
    if (block[0] < 0)
       block[0] = -1;
@@ -228,7 +232,7 @@ static UInt local_sys_getpid ( void )
       : "=&r" (__res)
       : "i" (__NR_getpid)
       : "cc","memory","cr0","ctr",
-        "r0","r2","r4","r5","r6","r7","r8","r9","r10","r11","r12"
+        "r0","r4","r5","r6","r7","r8","r9","r10","r11","r12"
    );
    return (UInt)__res;
 }
@@ -433,80 +437,133 @@ static UInt local_sys_getpid ( void )
    return (UInt)(__res);
 }
 
-#elif defined(VGP_mips32_linux)
+#elif defined(VGP_mips32_linux) || defined(VGP_mips64_linux)
 
 static UInt local_sys_write_stderr ( const HChar* buf, Int n )
 {
-   volatile Int block[2];
-   block[0] = (Int)buf;
-   block[1] = n;
+   register RegWord v0 asm("2");
+   register RegWord a0 asm("4");
+   register RegWord a1 asm("5");
+   register RegWord a2 asm("6");
+   v0 = __NR_write;
+   a2 = n;
+   a1 = (RegWord)(Addr)buf;
+   a0 = 2; // stderr
    __asm__ volatile (
-      "li   $4, 2\n\t"        /* stderr */
-      "lw   $5, 0(%0)\n\t"    /* buf */
-      "lw   $6, 4(%0)\n\t"    /* n */
-      "move $7, $0\n\t"
-      "li   $2, %1\n\t"       /* set v0 = __NR_write */
-      "syscall\n\t"           /* write() */
-      "nop\n\t"
+      "syscall            \n\t"
+      "addiu   $4, $0, -1 \n\t"
+      "movn    $2, $4, $7 \n\t"
+     : "+d" (v0), "+d" (a0), "+d" (a1), "+d" (a2)
+     :
+     : "$1", "$3", "$7", "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15",
+       "$24", "$25", "$31"
+   );
+   return v0;
+}
+
+static UInt local_sys_getpid ( void )
+{
+   register RegWord v0 asm("2");
+   v0 = __NR_getpid;
+   __asm__ volatile (
+      "syscall \n\t"
+     : "+d" (v0)
+     :
+     : "$1", "$3", "$4", "$5", "$6", "$7", "$8", "$9", "$10", "$11", "$12",
+       "$13", "$14", "$15", "$24", "$25", "$31"
+   );
+   return v0;
+}
+
+#elif defined(VGP_x86_solaris)
+static UInt local_sys_write_stderr ( const HChar* buf, Int n )
+{
+   UInt res, err;
+   Bool restart;
+
+   do {
+      /* The Solaris kernel does not restart syscalls automatically so it is
+         done here. */
+      __asm__ __volatile__ (
+         "movl  %[n], %%eax\n"          /* push n */
+         "pushl %%eax\n"
+         "movl  %[buf], %%eax\n"        /* push buf */
+         "pushl %%eax\n"
+         "movl  $2, %%eax\n"            /* push stderr */
+         "pushl %%eax\n"
+         "movl  $"VG_STRINGIFY(__NR_write)", %%eax\n"
+         "pushl %%eax\n"                /* push fake return address */
+         "int   $0x91\n"                /* write(stderr, buf, n) */
+         "movl  $0, %%edx\n"            /* assume no error */
+         "jnc   1f\n"                   /* jump if no error */
+         "movl  $1, %%edx\n"            /* set error flag */
+         "1: "
+         "addl  $16, %%esp\n"           /* pop x4 */
+         : "=&a" (res), "=d" (err)
+         : [buf] "g" (buf), [n] "g" (n)
+         : "cc");
+      restart = err && (res == VKI_EINTR || res == VKI_ERESTART);
+   } while (restart);
+
+   return res;
+}
+
+static UInt local_sys_getpid ( void )
+{
+   UInt res;
+
+   /* The getpid() syscall never returns EINTR or ERESTART so there is no need
+      for restarting it. */
+   __asm__ __volatile__ (
+      "movl $"VG_STRINGIFY(__NR_getpid)", %%eax\n"
+      "int  $0x91\n"                    /* getpid() */
+      : "=a" (res)
       :
-      : "r" (block), "n" (__NR_write)
-      : "2", "4", "5", "6", "7"
-   );
-   if (block[0] < 0)
-      block[0] = -1;
-   return (UInt)block[0];
+      : "edx", "cc");
+
+   return res;
 }
 
-static UInt local_sys_getpid ( void )
-{
-   UInt __res;
-   __asm__ volatile (
-      "li   $2, %1\n\t"       /* set v0 = __NR_getpid */
-      "syscall\n\t"      /* getpid() */
-      "nop\n\t"
-      "move  %0, $2\n"
-      : "=r" (__res)
-      : "n" (__NR_getpid)
-      : "$2" );
-   return __res;
-}
-
-#elif defined(VGP_mips64_linux)
-
+#elif defined(VGP_amd64_solaris)
 static UInt local_sys_write_stderr ( const HChar* buf, Int n )
 {
-   volatile Long block[2];
-   block[0] = (Long)buf;
-   block[1] = n;
-   __asm__ volatile (
-      "li   $4, 2\n\t"      /* std output*/
-      "ld   $5, 0(%0)\n\t"  /*$5 = buf*/
-      "ld   $6, 8(%0)\n\t"  /*$6 = n */
-      "move $7, $0\n\t"
-      "li   $2, %1\n\t"     /* set v0 = __NR_write */
-      "\tsyscall\n"
-      "\tnop\n"
-      : /*wr*/
-      : /*rd*/  "r" (block), "n" (__NR_write)
-      : "2", "4", "5", "6", "7"
-   );
-   if (block[0] < 0)
-      block[0] = -1;
-   return (UInt)(Int)block[0];
+   ULong res, err;
+   Bool restart;
+
+   do {
+      /* The Solaris kernel does not restart syscalls automatically so it is
+         done here. */
+      __asm__ __volatile__ (
+         "movq  $2, %%rdi\n"            /* push stderr */
+         "movq  $"VG_STRINGIFY(__NR_write)", %%rax\n"
+         "syscall\n"                    /* write(stderr, buf, n) */
+         "movq  $0, %%rdx\n"            /* assume no error */
+         "jnc   1f\n"                   /* jump if no error */
+         "movq  $1, %%rdx\n"            /* set error flag */
+         "1: "
+         : "=a" (res), "=d" (err)
+         : "S" (buf), "d" (n)
+         : "cc");
+      restart = err && (res == VKI_EINTR || res == VKI_ERESTART);
+   } while (restart);
+
+   return res;
 }
- 
+
 static UInt local_sys_getpid ( void )
 {
-   ULong __res;
-   __asm__ volatile (
-      "li   $2, %1\n\t"  /* set v0 = __NR_getpid */
-      "syscall\n\t"      /* getpid() */
-      "nop\n\t"
-      "move  %0, $2\n"
-      : "=r" (__res)
-      : "n" (__NR_getpid)
-      : "$2" );
-   return (UInt)(__res);
+   UInt res;
+
+   /* The getpid() syscall never returns EINTR or ERESTART so there is no need
+      for restarting it. */
+   __asm__ __volatile__ (
+      "movq $"VG_STRINGIFY(__NR_getpid)", %%rax\n"
+      "syscall\n"                       /* getpid() */
+      : "=a" (res)
+      :
+      : "edx", "cc");
+
+   return res;
 }
 
 #else
@@ -819,6 +876,7 @@ VG_(debugLog_vprintf) (
       is_sizet = False;
       if (format[i] == 'z') {
          is_sizet = True;
+         ++i;
       } else {
          while (format[i] == 'l') {
             i++;
@@ -958,10 +1016,17 @@ VG_(debugLog_vprintf) (
             /* Silently limit the precision to 10 digits. */
             if (precision > 10) precision = 10;
 
-            /* If fracional part is not printed (precision == 0), may have to
-               round up */
-            if (precision == 0 && frac >= 0.5)
+            /* Determine fractional part, possibly round up */
+            ULong factor = 1;
+            for (cnt = 0; cnt < precision; ++cnt)
+               factor *= 10;
+            ULong frval = frac * factor;
+            if ((frac * factor - frval) > 0.5)    // round up
+               frval += 1;
+            /* Check rounding. */
+            if (frval == factor)
                ipval += 1;
+            frval %= factor;
 
             /* Find out how many characters are needed to print the number */
 
@@ -998,14 +1063,6 @@ VG_(debugLog_vprintf) (
                send('.', send_arg2);
                ret += 1;
 
-               // Fractional part
-               ULong factor = 1;
-               for (cnt = 0; cnt < precision; ++cnt)
-                  factor *= 10;
-               ULong frval = frac * factor;
-               if ((frac * factor - frval) > 0.5)    // round up
-                  frval += 1;
-               frval %= factor;
                ret += myvprintf_int64(send, send_arg2, VG_MSG_ZJUSTIFY, 10,
                                       precision, False, frval);
             }

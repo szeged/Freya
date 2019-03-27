@@ -39,13 +39,20 @@ my %patterns = (
     "thread #([0-9]+)"      => "x",
     "0x([0-9a-zA-Z]+)"      => "........",
     "Using Valgrind-([^\\s]*)"    => "X.Y.X",
-    "Copyright \\(C\\) ([0-9]{4}-[0-9]{4}).*" => "XXXX-YYYY"
+    "Copyright \\(C\\) ([0-9]{4}-[0-9]{4}).*" => "XXXX-YYYY",
+    '<fn>pthread_.*(@\*)</fn>'  => ""
 );
 
 # List of XML sections to be ignored.
 my %ignore_sections = (
     "<errorcounts>" => "</errorcounts>",
-    "<suppcounts>"  => "</suppcounts>"
+    "<suppcounts>"  => "</suppcounts>",
+    "pthread_create_WRK</fn>" => "<obj>"
+);
+
+# List of XML sections to be quietly ignored.
+my %quiet_ignore_sections = (
+    "pthread_create_WRK</fn>" => "<obj>"
 );
 
 
@@ -64,9 +71,9 @@ sub file_matches ($$) {
 
 
 my $frame_buf = "";
-my ($file, $lineno, $in_frame, $keep_frame, $num_discarded, $ignore_line);
+my ($file, $lineno, $in_frame, $keep_frame, $num_discarded, $ignore_line, $quiet_ignore_line);
 
-$in_frame = $keep_frame = $num_discarded = $ignore_line = 0;
+$in_frame = $keep_frame = $num_discarded = $ignore_line = $quiet_ignore_line = 0;
 
 line: 
 while (<STDIN>) {
@@ -77,8 +84,11 @@ while (<STDIN>) {
     if ($ignore_line) {
         foreach my $tag (keys %ignore_sections) {
             if ($line =~ $ignore_sections{$tag}) {
-                print "$tag...$ignore_sections{$tag}\n";
+                if ($quiet_ignore_line == 0) {
+                    print "$tag...$ignore_sections{$tag}\n";
+                }
                 $ignore_line = 0;
+                $quiet_ignore_line = 0;
                 next line;
             }
         }
@@ -86,6 +96,12 @@ while (<STDIN>) {
         foreach my $tag (keys %ignore_sections) {
             if ($line =~ $tag) {
                 $ignore_line = 1;
+            }
+        }
+        # Determine if this section is also in the quiet list.
+        foreach my $tag (keys %quiet_ignore_sections) {
+            if ($line =~ $tag) {
+                $quiet_ignore_line = 1;
             }
         }
     }
@@ -97,7 +113,8 @@ while (<STDIN>) {
 # Massage line by applying PATTERNS.
     foreach my $key (keys %patterns) {
         if ($line =~ $key) {
-                $line =~ s/$1/$patterns{$key}/g;
+           my $matched = quotemeta($1);
+           $line =~ s/$matched/$patterns{$key}/g;
         }
     }
 

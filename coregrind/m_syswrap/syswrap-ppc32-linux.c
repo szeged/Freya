@@ -7,8 +7,8 @@
    This file is part of Valgrind, a dynamic binary instrumentation
    framework.
 
-   Copyright (C) 2005-2013 Nicholas Nethercote <njn@valgrind.org>
-   Copyright (C) 2005-2013 Cerion Armour-Brown <cerion@open-works.co.uk>
+   Copyright (C) 2005-2017 Nicholas Nethercote <njn@valgrind.org>
+   Copyright (C) 2005-2017 Cerion Armour-Brown <cerion@open-works.co.uk>
 
    This program is free software; you can redistribute it and/or
    modify it under the terms of the GNU General Public License as
@@ -33,7 +33,6 @@
 #include "pub_core_basics.h"
 #include "pub_core_vki.h"
 #include "pub_core_vkiscnums.h"
-#include "pub_core_libcsetjmp.h"    // to keep _threadstate.h happy
 #include "pub_core_threadstate.h"
 #include "pub_core_aspacemgr.h"
 #include "pub_core_debuglog.h"
@@ -49,7 +48,6 @@
 #include "pub_core_syscall.h"
 #include "pub_core_syswrap.h"
 #include "pub_core_tooliface.h"
-#include "pub_core_stacks.h"        // VG_(register_stack)
 
 #include "priv_types_n_macros.h"
 #include "priv_syswrap-generic.h"   /* for decls of generic wrappers */
@@ -148,14 +146,7 @@ asm(
 #define __NR_CLONE        VG_STRINGIFY(__NR_clone)
 #define __NR_EXIT         VG_STRINGIFY(__NR_exit)
 
-extern
-ULong do_syscall_clone_ppc32_linux ( Word (*fn)(void *), 
-                                     void* stack, 
-                                     Int   flags, 
-                                     void* arg,
-                                     Int*  child_tid, 
-                                     Int*  parent_tid, 
-                                     vki_modify_ldt_t * );
+// See priv_syswrap-linux.h for arg profile.
 asm(
 ".text\n"
 ".globl do_syscall_clone_ppc32_linux\n"
@@ -218,145 +209,6 @@ asm(
 #undef __NR_CLONE
 #undef __NR_EXIT
 
-// forward declarations
-static void setup_child ( ThreadArchState*, ThreadArchState* );
-
-/* 
-   When a client clones, we need to keep track of the new thread.  This means:
-   1. allocate a ThreadId+ThreadState+stack for the the thread
-
-   2. initialize the thread's new VCPU state
-
-   3. create the thread using the same args as the client requested,
-   but using the scheduler entrypoint for IP, and a separate stack
-   for SP.
- */
-static SysRes do_clone ( ThreadId ptid, 
-                         UInt flags, Addr sp, 
-                         Int *parent_tidptr, 
-                         Int *child_tidptr, 
-                         Addr child_tls)
-{
-   const Bool debug = False;
-
-   ThreadId     ctid = VG_(alloc_ThreadState)();
-   ThreadState* ptst = VG_(get_ThreadState)(ptid);
-   ThreadState* ctst = VG_(get_ThreadState)(ctid);
-   ULong        word64;
-   UWord*       stack;
-   SysRes       res;
-   vki_sigset_t blockall, savedmask;
-
-   VG_(sigfillset)(&blockall);
-
-   vg_assert(VG_(is_running_thread)(ptid));
-   vg_assert(VG_(is_valid_tid)(ctid));
-
-   stack = (UWord*)ML_(allocstack)(ctid);
-   if (stack == NULL) {
-      res = VG_(mk_SysRes_Error)( VKI_ENOMEM );
-      goto out;
-   }
-
-//?   /* make a stack frame */
-//?   stack -= 16;
-//?   *(UWord *)stack = 0;
-
-
-   /* Copy register state
-
-      Both parent and child return to the same place, and the code
-      following the clone syscall works out which is which, so we
-      don't need to worry about it.
-
-      The parent gets the child's new tid returned from clone, but the
-      child gets 0.
-
-      If the clone call specifies a NULL SP for the new thread, then
-      it actually gets a copy of the parent's SP.
-
-      The child's TLS register (r2) gets set to the tlsaddr argument
-      if the CLONE_SETTLS flag is set.
-   */
-   setup_child( &ctst->arch, &ptst->arch );
-
-   /* Make sys_clone appear to have returned Success(0) in the
-      child. */
-   { UInt old_cr = LibVEX_GuestPPC32_get_CR( &ctst->arch.vex );
-     /* %r3 = 0 */
-     ctst->arch.vex.guest_GPR3 = 0;
-     /* %cr0.so = 0 */
-     LibVEX_GuestPPC32_put_CR( old_cr & ~(1<<28), &ctst->arch.vex );
-   }
-
-   if (sp != 0)
-      ctst->arch.vex.guest_GPR1 = sp;
-
-   ctst->os_state.parent = ptid;
-
-   /* inherit signal mask */
-   ctst->sig_mask = ptst->sig_mask;
-   ctst->tmp_sig_mask = ptst->sig_mask;
-
-   /* Start the child with its threadgroup being the same as the
-      parent's.  This is so that any exit_group calls that happen
-      after the child is created but before it sets its
-      os_state.threadgroup field for real (in thread_wrapper in
-      syswrap-linux.c), really kill the new thread.  a.k.a this avoids
-      a race condition in which the thread is unkillable (via
-      exit_group) because its threadgroup is not set.  The race window
-      is probably only a few hundred or a few thousand cycles long.
-      See #226116. */
-   ctst->os_state.threadgroup = ptst->os_state.threadgroup;
-
-   ML_(guess_and_register_stack) (sp, ctst);
-
-   /* Assume the clone will succeed, and tell any tool that wants to
-      know that this thread has come into existence.  If the clone
-      fails, we'll send out a ll_exit notification for it at the out:
-      label below, to clean up. */
-   vg_assert(VG_(owns_BigLock_LL)(ptid));
-   VG_TRACK ( pre_thread_ll_create, ptid, ctid );
-
-   if (flags & VKI_CLONE_SETTLS) {
-      if (debug)
-         VG_(printf)("clone child has SETTLS: tls at %#lx\n", child_tls);
-      ctst->arch.vex.guest_GPR2 = child_tls;
-   }
-
-   flags &= ~VKI_CLONE_SETTLS;
-
-   /* start the thread with everything blocked */
-   VG_(sigprocmask)(VKI_SIG_SETMASK, &blockall, &savedmask);
-
-   /* Create the new thread */
-   word64 = do_syscall_clone_ppc32_linux(
-               ML_(start_thread_NORETURN), stack, flags, &VG_(threads)[ctid],
-               child_tidptr, parent_tidptr, NULL
-            );
-   /* High half word64 is syscall return value.  Low half is
-      the entire CR, from which we need to extract CR0.SO. */
-   /* VG_(printf)("word64 = 0x%llx\n", word64); */
-   res = VG_(mk_SysRes_ppc32_linux)( 
-            /*val*/(UInt)(word64 >> 32), 
-            /*errflag*/ (((UInt)word64) >> 28) & 1 
-         );
-
-   VG_(sigprocmask)(VKI_SIG_SETMASK, &savedmask, NULL);
-
-  out:
-   if (sr_isError(res)) {
-      /* clone failed */
-      VG_(cleanup_thread)(&ctst->arch);
-      ctst->status = VgTs_Empty;
-      /* oops.  Better tell the tool the thread exited in a hurry :-) */
-      VG_TRACK( pre_thread_ll_exit, ctid );
-   }
-
-   return res;
-}
-
-
 
 /* ---------------------------------------------------------------------
    More thread stuff
@@ -365,16 +217,6 @@ static SysRes do_clone ( ThreadId ptid,
 void VG_(cleanup_thread) ( ThreadArchState* arch )
 {
 }  
-
-void setup_child ( /*OUT*/ ThreadArchState *child,
-                   /*IN*/  ThreadArchState *parent )
-{
-   /* We inherit our parent's guest state. */
-   child->vex = parent->vex;
-   child->vex_shadow1 = parent->vex_shadow1;
-   child->vex_shadow2 = parent->vex_shadow2;
-}
-
 
 /* ---------------------------------------------------------------------
    PRE/POST wrappers for ppc32/Linux-specific syscalls
@@ -395,7 +237,6 @@ DECL_TEMPLATE(ppc32_linux, sys_stat64);
 DECL_TEMPLATE(ppc32_linux, sys_lstat64);
 DECL_TEMPLATE(ppc32_linux, sys_fstatat64);
 DECL_TEMPLATE(ppc32_linux, sys_fstat64);
-DECL_TEMPLATE(ppc32_linux, sys_clone);
 DECL_TEMPLATE(ppc32_linux, sys_sigreturn);
 DECL_TEMPLATE(ppc32_linux, sys_rt_sigreturn);
 DECL_TEMPLATE(ppc32_linux, sys_sigsuspend);
@@ -406,8 +247,8 @@ PRE(sys_mmap)
 {
    SysRes r;
 
-   PRINT("sys_mmap ( %#lx, %llu, %ld, %ld, %ld, %ld )",
-         ARG1, (ULong)ARG2, ARG3, ARG4, ARG5, ARG6 );
+   PRINT("sys_mmap ( %#lx, %lu, %lu, %lu, %lu, %lu )",
+         ARG1, ARG2, ARG3, ARG4, ARG5, ARG6 );
    PRE_REG_READ6(long, "mmap",
                  unsigned long, start, unsigned long, length,
                  unsigned long, prot,  unsigned long, flags,
@@ -425,8 +266,8 @@ PRE(sys_mmap2)
    // Exactly like old_mmap() except:
    //  - the file offset is specified in 4K units rather than bytes,
    //    so that it can be used for files bigger than 2^32 bytes.
-   PRINT("sys_mmap2 ( %#lx, %llu, %ld, %ld, %ld, %ld )",
-         ARG1, (ULong)ARG2, ARG3, ARG4, ARG5, ARG6 );
+   PRINT("sys_mmap2 ( %#lx, %lu, %lu, %lu, %lu, %lu )",
+         ARG1, ARG2, ARG3, ARG4, ARG5, ARG6 );
    PRE_REG_READ6(long, "mmap2",
                  unsigned long, start, unsigned long, length,
                  unsigned long, prot,  unsigned long, flags,
@@ -456,7 +297,7 @@ POST(sys_stat64)
 
 PRE(sys_lstat64)
 {
-   PRINT("sys_lstat64 ( %#lx(%s), %#lx )",ARG1,(char*)ARG1,ARG2);
+   PRINT("sys_lstat64 ( %#lx(%s), %#lx )", ARG1, (HChar*)ARG1, ARG2);
    PRE_REG_READ2(long, "lstat64", char *, file_name, struct stat64 *, buf);
    PRE_MEM_RASCIIZ( "lstat64(file_name)", ARG1 );
    PRE_MEM_WRITE( "lstat64(buf)", ARG2, sizeof(struct vki_stat64) );
@@ -472,7 +313,8 @@ POST(sys_lstat64)
 
 PRE(sys_fstatat64)
 {
-  PRINT("sys_fstatat64 ( %ld, %#lx(%s), %#lx )",ARG1,ARG2,(char*)ARG2,ARG3);
+   PRINT("sys_fstatat64 ( %ld, %#lx(%s), %#lx )", SARG1, ARG2, (HChar*)ARG2,
+         ARG3);
    PRE_REG_READ3(long, "fstatat64",
                  int, dfd, char *, file_name, struct stat64 *, buf);
    PRE_MEM_RASCIIZ( "fstatat64(file_name)", ARG2 );
@@ -486,7 +328,7 @@ POST(sys_fstatat64)
 
 PRE(sys_fstat64)
 {
-  PRINT("sys_fstat64 ( %ld, %#lx )",ARG1,ARG2);
+  PRINT("sys_fstat64 ( %lu, %#lx )", ARG1, ARG2);
   PRE_REG_READ2(long, "fstat64", unsigned long, fd, struct stat64 *, buf);
   PRE_MEM_WRITE( "fstat64(buf)", ARG2, sizeof(struct vki_stat64) );
 }
@@ -530,91 +372,6 @@ POST(sys_fstat64)
 //.. 	 PRE_MEM_READ( "old_select(timeout)", a5, sizeof(struct vki_timeval) );
 //..    }
 //.. }
-
-PRE(sys_clone)
-{
-   UInt cloneflags;
-
-   PRINT("sys_clone ( %lx, %#lx, %#lx, %#lx, %#lx )",ARG1,ARG2,ARG3,ARG4,ARG5);
-   PRE_REG_READ5(int, "clone",
-                 unsigned long, flags,
-                 void *,        child_stack,
-                 int *,         parent_tidptr,
-                 void *,        child_tls,
-                 int *,         child_tidptr);
-
-   if (ARG1 & VKI_CLONE_PARENT_SETTID) {
-      PRE_MEM_WRITE("clone(parent_tidptr)", ARG3, sizeof(Int));
-      if (!VG_(am_is_valid_for_client)(ARG3, sizeof(Int), 
-                                             VKI_PROT_WRITE)) {
-         SET_STATUS_Failure( VKI_EFAULT );
-         return;
-      }
-   }
-   if (ARG1 & (VKI_CLONE_CHILD_SETTID | VKI_CLONE_CHILD_CLEARTID)) {
-      PRE_MEM_WRITE("clone(child_tidptr)", ARG5, sizeof(Int));
-      if (!VG_(am_is_valid_for_client)(ARG5, sizeof(Int), 
-                                             VKI_PROT_WRITE)) {
-         SET_STATUS_Failure( VKI_EFAULT );
-         return;
-      }
-   }
-
-   cloneflags = ARG1;
-
-   if (!ML_(client_signal_OK)(ARG1 & VKI_CSIGNAL)) {
-      SET_STATUS_Failure( VKI_EINVAL );
-      return;
-   }
-
-   /* Only look at the flags we really care about */
-   switch (cloneflags & (VKI_CLONE_VM | VKI_CLONE_FS 
-                         | VKI_CLONE_FILES | VKI_CLONE_VFORK)) {
-   case VKI_CLONE_VM | VKI_CLONE_FS | VKI_CLONE_FILES:
-      /* thread creation */
-      SET_STATUS_from_SysRes(
-         do_clone(tid,
-                  ARG1,         /* flags */
-                  (Addr)ARG2,   /* child SP */
-                  (Int *)ARG3,  /* parent_tidptr */
-                  (Int *)ARG5,  /* child_tidptr */
-                  (Addr)ARG4)); /* child_tls */
-      break;
-
-   case VKI_CLONE_VFORK | VKI_CLONE_VM: /* vfork */
-      /* FALLTHROUGH - assume vfork == fork */
-      cloneflags &= ~(VKI_CLONE_VFORK | VKI_CLONE_VM);
-
-   case 0: /* plain fork */
-      SET_STATUS_from_SysRes(
-         ML_(do_fork_clone)(tid,
-                       cloneflags,      /* flags */
-                       (Int *)ARG3,     /* parent_tidptr */
-                       (Int *)ARG5));   /* child_tidptr */
-      break;
-
-   default:
-      /* should we just ENOSYS? */
-      VG_(message)(Vg_UserMsg, "Unsupported clone() flags: 0x%lx\n", ARG1);
-      VG_(message)(Vg_UserMsg, "\n");
-      VG_(message)(Vg_UserMsg, "The only supported clone() uses are:\n");
-      VG_(message)(Vg_UserMsg, " - via a threads library (LinuxThreads or NPTL)\n");
-      VG_(message)(Vg_UserMsg, " - via the implementation of fork or vfork\n");
-      VG_(unimplemented)
-         ("Valgrind does not support general clone().");
-   }
-
-   if (SUCCESS) {
-      if (ARG1 & VKI_CLONE_PARENT_SETTID)
-         POST_MEM_WRITE(ARG3, sizeof(Int));
-      if (ARG1 & (VKI_CLONE_CHILD_SETTID | VKI_CLONE_CHILD_CLEARTID))
-         POST_MEM_WRITE(ARG5, sizeof(Int));
-
-      /* Thread creation was successful; let the child have the chance
-         to run */
-      *flags |= SfYieldAfter;
-   }
-}
 
 PRE(sys_sigreturn)
 {
@@ -810,7 +567,7 @@ PRE(sys_sigsuspend)
       that takes a pointer to the signal mask so supports more signals.
     */
    *flags |= SfMayBlock;
-   PRINT("sys_sigsuspend ( %ld )", ARG1 );
+   PRINT("sys_sigsuspend ( %lu )", ARG1 );
    PRE_REG_READ1(int, "sigsuspend", vki_old_sigset_t, mask);
 }
 
@@ -1000,7 +757,7 @@ static SyscallTableEntry syscall_table[] = {
    GENX_(__NR_fsync,             sys_fsync),             // 118
    PLAX_(__NR_sigreturn,         sys_sigreturn),         // 119 ?/Linux
 //.. 
-   PLAX_(__NR_clone,             sys_clone),             // 120
+   LINX_(__NR_clone,             sys_clone),             // 120
 //..    //   (__NR_setdomainname,     sys_setdomainname),     // 121 */*(?)
    GENXY(__NR_uname,             sys_newuname),          // 122
 //..    PLAX_(__NR_modify_ldt,        sys_modify_ldt),        // 123
@@ -1195,7 +952,7 @@ static SyscallTableEntry syscall_table[] = {
    PLAXY(__NR_spu_run,            sys_spu_run),               // 278
    PLAX_(__NR_spu_create,         sys_spu_create),            // 279
 
-   LINX_(__NR_pselect6,          sys_pselect6),          // 280
+   LINXY(__NR_pselect6,          sys_pselect6),          // 280
    LINXY(__NR_ppoll,             sys_ppoll),             // 281
 
    LINXY(__NR_openat,            sys_openat),            // 286
@@ -1255,14 +1012,16 @@ static SyscallTableEntry syscall_table[] = {
    LINXY(__NR_accept4,           sys_accept4),          // 344
 
    LINX_(__NR_clock_adjtime,     sys_clock_adjtime),    // 347
-
+   LINX_(__NR_syncfs,            sys_syncfs),           // 348
    LINXY(__NR_sendmmsg,          sys_sendmmsg),         // 349
 
    LINXY(__NR_process_vm_readv,  sys_process_vm_readv), // 351
    LINX_(__NR_process_vm_writev, sys_process_vm_writev),// 352
 
    LINXY(__NR_getrandom,         sys_getrandom),        // 359
-   LINXY(__NR_memfd_create,      sys_memfd_create)      // 360
+   LINXY(__NR_memfd_create,      sys_memfd_create),     // 360
+
+   LINXY(__NR_statx,             sys_statx),            // 383
 };
 
 SyscallTableEntry* ML_(get_linux_syscall_entry) ( UInt sysno )
