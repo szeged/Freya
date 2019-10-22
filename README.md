@@ -1,4 +1,4 @@
-Valgrind 3.14 with Freya
+Valgrind 3.15 with Freya
 ========================
 
 Build steps:
